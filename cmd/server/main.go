@@ -1,102 +1,68 @@
 package main
 
 import (
-	"crypto/tls"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
-	"golang.org/x/crypto/acme/autocert"
 	"gopkg.in/yaml.v3"
 
-	"github.com/krisbaumgartner/omnisave/internal/server"
+	"github.com/krisbaumgartner/omnisave/internal/omnisave/httpapi"
+	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
+	sqlitestorage "github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
 )
 
 type Config struct {
-	RootDir  string `yaml:"root_dir"`
-	Token    string `yaml:"token"`
-	Domain   string `yaml:"domain"`
-	CacheDir string `yaml:"cache_dir"`
-	DBPath   string `yaml:"db_path"`
+	ListenAddr  string `yaml:"listen_addr"`
+	Token       string `yaml:"token"`
+	DBPath      string `yaml:"db_path"`
+	ArtifactDir string `yaml:"artifact_dir"`
 }
 
 func main() {
-	cfgPath := "server.yaml"
+	configPath := "server.yaml"
 	if len(os.Args) > 1 {
-		cfgPath = os.Args[1]
+		configPath = os.Args[1]
 	}
 
-	data, err := os.ReadFile(cfgPath)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		log.Fatalf("read config: %v", err)
 	}
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	var config Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
 		log.Fatalf("parse config: %v", err)
 	}
-	if cfg.Token == "" {
+	if config.Token == "" {
 		log.Fatal("token must be set in config")
 	}
-	if cfg.RootDir == "" {
-		cfg.RootDir = "./saves"
+	if config.ListenAddr == "" {
+		config.ListenAddr = ":8080"
 	}
-	if cfg.DBPath == "" {
-		cfg.DBPath = "./omnisave.db"
+	if config.DBPath == "" {
+		config.DBPath = "./omnisave.db"
+	}
+	if config.ArtifactDir == "" {
+		config.ArtifactDir = "./artifacts"
 	}
 
-	storage, err := server.NewStorage(cfg.RootDir)
+	repository, err := sqlitestorage.Open(config.DBPath, config.ArtifactDir)
 	if err != nil {
-		log.Fatalf("storage: %v", err)
+		log.Fatalf("open storage: %v", err)
+	}
+	defer repository.Close()
+
+	saves := omnisaveservice.New(repository)
+	handler := httpapi.BearerAuth(config.Token, httpapi.New(saves))
+	server := &http.Server{
+		Addr:              config.ListenAddr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	db, err := server.NewDB(cfg.DBPath)
-	if err != nil {
-		log.Fatalf("db: %v", err)
-	}
-
-	api := &server.API{DB: db, Storage: storage}
-	mux := http.NewServeMux()
-	api.RegisterRoutes(mux, cfg.Token)
-
-	if cfg.Domain == "" {
-		addr := ":8080"
-		log.Printf("Starting plain HTTP server on %s (no TLS)", addr)
-		if err := http.ListenAndServe(addr, mux); err != nil {
-			log.Fatalf("server: %v", err)
-		}
-		return
-	}
-
-	// HTTPS with Let's Encrypt autocert.
-	// NOTE: The server must be reachable on port 443 from the internet
-	// for the ACME HTTP-01 challenge to succeed.
-	if cfg.CacheDir == "" {
-		cfg.CacheDir = "./certs"
-	}
-	m := &autocert.Manager{
-		Cache:      autocert.DirCache(cfg.CacheDir),
-		Prompt:     autocert.AcceptTOS,
-		HostPolicy: autocert.HostWhitelist(cfg.Domain),
-	}
-
-	// Port 80: handle ACME challenges + redirect to HTTPS.
-	go func() {
-		log.Printf("Starting HTTP redirect server on :80")
-		if err := http.ListenAndServe(":80", m.HTTPHandler(nil)); err != nil {
-			log.Printf("HTTP redirect server: %v", err)
-		}
-	}()
-
-	tlsCfg := &tls.Config{GetCertificate: m.GetCertificate}
-	srv := &http.Server{
-		Addr:      ":443",
-		TLSConfig: tlsCfg,
-		Handler:   mux,
-	}
-	log.Printf("Starting HTTPS server on :443 for domain %s", cfg.Domain)
-	if err := srv.ListenAndServeTLS("", ""); err != nil {
-		fmt.Fprintf(os.Stderr, "server: %v\n", err)
-		os.Exit(1)
+	log.Printf("OmniSave API listening on %s", config.ListenAddr)
+	if err := server.ListenAndServe(); err != nil {
+		log.Fatalf("server: %v", err)
 	}
 }

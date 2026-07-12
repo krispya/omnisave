@@ -1,7 +1,7 @@
 package="OmniSave"
 version="1.0.0-0001"
 os_min_ver="7.0-1"
-description="Game save sync server — keeps versioned Retroarch battery saves in sync across devices."
+description="Stores versioned OmniSave records and artifacts."
 displayname="OmniSave"
 maintainer="Kris Baumgartner"
 arch="x86_64"

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ── Build stage ──────────────────────────────────────────────────────────────
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26-alpine AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -16,7 +16,7 @@ RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=builder /omnisave-server .
 
-VOLUME ["/config", "/saves"]
-EXPOSE 80 443 8080
+VOLUME ["/config", "/data"]
+EXPOSE 8080
 
 ENTRYPOINT ["/app/omnisave-server", "/config/server.yaml"]

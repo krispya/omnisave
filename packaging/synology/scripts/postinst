@@ -6,16 +6,15 @@ ETC_DIR="/var/packages/${PACKAGE}/etc"
 CONFIG="${ETC_DIR}/server.yaml"
 
 mkdir -p "${ETC_DIR}"
-mkdir -p "/volume1/omnisave/saves"
+mkdir -p "/volume1/omnisave/data/artifacts"
 
 # Write a default config if one doesn't already exist.
 if [ ! -f "${CONFIG}" ]; then
     cat > "${CONFIG}" << 'EOF'
-root_dir: /volume1/omnisave/saves
+listen_addr: :8080
 token: CHANGE_ME
-domain: ""      # Set to your domain for automatic HTTPS via Let's Encrypt
-cache_dir: /volume1/omnisave/certs
-db_path: /volume1/omnisave/omnisave.db
+db_path: /volume1/omnisave/data/omnisave.db
+artifact_dir: /volume1/omnisave/data/artifacts
 EOF
     echo ""
     echo "================================================"
