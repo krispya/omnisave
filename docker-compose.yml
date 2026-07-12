@@ -1,0 +1,13 @@
+services:
+  omnisave:
+    image: omnisave-server:latest
+    container_name: omnisave
+    restart: unless-stopped
+    ports:
+      - "80:80"      # ACME challenge + HTTP redirect (only needed for TLS)
+      - "443:443"    # HTTPS (only needed for TLS)
+      - "8080:8080"  # Plain HTTP (used when domain: is empty in server.yaml)
+    volumes:
+      - /volume1/omnisave/config:/config   # server.yaml + omnisave.db go here
+      - /volume1/omnisave/saves:/saves     # versioned .srm files go here
+      - /volume1/omnisave/certs:/certs     # Let's Encrypt cert cache

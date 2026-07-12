@@ -1,0 +1,4 @@
+server_url: https://nas.example.com
+token: your-secret-token-here
+retroarch_saves_dir: ""   # Auto-detected from retroarch.cfg if empty
+# client_id is auto-generated on first run and saved back to this file

@@ -1,0 +1,9 @@
+root_dir: /volume1/saves
+token: your-secret-token-here
+domain: nas.example.com       # Leave empty for plain HTTP (local dev/testing)
+cache_dir: /volume1/omnisave-certs
+db_path: /volume1/omnisave.db
+
+# NOTE: When domain is set, the server must be reachable on port 443 from
+# the internet for Let's Encrypt ACME HTTP-01 challenge to succeed.
+# Port 80 is also used for the ACME challenge handler and HTTP→HTTPS redirect.
