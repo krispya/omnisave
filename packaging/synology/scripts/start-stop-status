@@ -1,0 +1,55 @@
+#!/bin/sh
+
+PACKAGE="OmniSave"
+BINARY="/var/packages/${PACKAGE}/target/bin/omnisave-server"
+CONFIG="/var/packages/${PACKAGE}/etc/server.yaml"
+PIDFILE="/var/packages/${PACKAGE}/var/omnisave.pid"
+LOGFILE="/var/log/${PACKAGE}.log"
+
+start() {
+    if [ -f "${PIDFILE}" ] && kill -0 "$(cat "${PIDFILE}")" 2>/dev/null; then
+        echo "${PACKAGE} is already running."
+        exit 0
+    fi
+
+    if [ ! -f "${CONFIG}" ]; then
+        echo "Config not found at ${CONFIG}. Please create it before starting."
+        exit 1
+    fi
+
+    mkdir -p "$(dirname "${PIDFILE}")"
+    "${BINARY}" "${CONFIG}" >> "${LOGFILE}" 2>&1 &
+    echo $! > "${PIDFILE}"
+    echo "${PACKAGE} started (PID $(cat "${PIDFILE}"))."
+}
+
+stop() {
+    if [ ! -f "${PIDFILE}" ]; then
+        echo "${PACKAGE} is not running."
+        exit 0
+    fi
+    PID="$(cat "${PIDFILE}")"
+    kill "${PID}" 2>/dev/null && rm -f "${PIDFILE}"
+    echo "${PACKAGE} stopped."
+}
+
+status() {
+    if [ -f "${PIDFILE}" ] && kill -0 "$(cat "${PIDFILE}")" 2>/dev/null; then
+        echo "${PACKAGE} is running (PID $(cat "${PIDFILE}"))."
+        exit 0
+    else
+        echo "${PACKAGE} is not running."
+        exit 1
+    fi
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    status)  status ;;
+    restart) stop; start ;;
+    *)
+        echo "Usage: $0 {start|stop|status|restart}"
+        exit 1
+        ;;
+esac
