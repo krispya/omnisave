@@ -4,16 +4,16 @@ TEST_FILTER_PACKAGES = $(addsuffix /...,$(shell find . -type d -name '$(F)' 2>/d
 TEST_GOAL_PACKAGES = $(addprefix ./,$(TEST_GOALS))
 TEST_PACKAGES = $(if $(F),$(TEST_FILTER_PACKAGES),$(TEST_GOAL_PACKAGES))
 
+web-install:
+	npm install
+
+web-build:
+	npm run web:build
+
 build-server:
 	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/omnisave-server ./cmd/server
 
-build-client:
-	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/omnisave-client ./cmd/client
-
-build-client-arm64:
-	GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o bin/omnisave-client-arm64 ./cmd/client
-
-build-all: build-server build-client build-client-arm64
+build-all: web-build build-server
 
 test:
 	@if [ -n "$(F)" ] && [ -z "$(TEST_FILTER_PACKAGES)" ]; then \
@@ -41,7 +41,7 @@ docker-export: docker-build
 
 # ── Synology SPK ──────────────────────────────────────────────────────────────
 
-package-spk: build-server
+package-spk: web-build build-server
 	$(eval SPK_STAGE := $(shell mktemp -d))
 	$(eval SPK_TARGET := $(SPK_STAGE)/target/bin)
 	mkdir -p $(SPK_TARGET)
@@ -49,6 +49,7 @@ package-spk: build-server
 	# Binary
 	cp bin/omnisave-server $(SPK_TARGET)/omnisave-server
 	chmod +x $(SPK_TARGET)/omnisave-server
+	cp -r web/dist $(SPK_STAGE)/target/web
 
 	# Inner package.tgz
 	tar -czf $(SPK_STAGE)/package.tgz -C $(SPK_STAGE) target
@@ -67,5 +68,5 @@ package-spk: build-server
 	@echo "SPK written to dist/omnisave-$(VERSION)-x86_64.spk"
 	@echo "Install in DSM: Package Center → Manual Install"
 
-.PHONY: build-server build-client build-client-arm64 build-all test \
+.PHONY: web-install web-build build-server build-all test \
         docker-build docker-export package-spk

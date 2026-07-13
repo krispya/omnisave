@@ -18,6 +18,7 @@ type Config struct {
 	Token       string `yaml:"token"`
 	DBPath      string `yaml:"db_path"`
 	ArtifactDir string `yaml:"artifact_dir"`
+	WebDir      string `yaml:"web_dir"`
 }
 
 func main() {
@@ -46,6 +47,9 @@ func main() {
 	if config.ArtifactDir == "" {
 		config.ArtifactDir = "./artifacts"
 	}
+	if config.WebDir == "" {
+		config.WebDir = "./web/dist"
+	}
 
 	repository, err := sqlitestorage.Open(config.DBPath, config.ArtifactDir)
 	if err != nil {
@@ -54,10 +58,12 @@ func main() {
 	defer repository.Close()
 
 	saves := omnisaveservice.New(repository)
-	handler := httpapi.BearerAuth(config.Token, httpapi.New(saves))
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/", httpapi.BearerAuth(config.Token, httpapi.New(saves)))
+	mux.Handle("/", http.FileServer(http.Dir(config.WebDir)))
 	server := &http.Server{
 		Addr:              config.ListenAddr,
-		Handler:           handler,
+		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

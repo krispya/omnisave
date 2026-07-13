@@ -1,0 +1,16 @@
+# Build and packaging outputs
+/bin/
+/dist/
+
+# Go test and coverage outputs
+*.test
+coverage.out
+
+# Local server data and secrets
+/server.yaml
+/omnisave.db
+/omnisave.db-*
+/artifacts/
+
+# OS metadata
+.DS_Store

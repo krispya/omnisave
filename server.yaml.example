@@ -2,5 +2,6 @@ listen_addr: :8080
 token: your-secret-token-here
 db_path: /data/omnisave.db
 artifact_dir: /data/artifacts
+web_dir: /app/web
 
 # Terminate HTTPS in a reverse proxy before exposing the API externally.
