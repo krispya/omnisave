@@ -15,6 +15,7 @@ listen_addr: :8080
 token: CHANGE_ME
 db_path: /volume1/omnisave/data/omnisave.db
 artifact_dir: /volume1/omnisave/data/artifacts
+web_dir: /var/packages/OmniSave/target/web
 EOF
     echo ""
     echo "================================================"
