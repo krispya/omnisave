@@ -1,0 +1,24 @@
+{
+  "name": "root",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter './apps/*' run dev",
+    "build": "pnpm --filter './packages/*' run build && pnpm --filter './apps/*' run build",
+    "test": "pnpm -r run test",
+    "lint": "oxlint .",
+    "format": "prettier --config .config/prettier/base.json --ignore-path .config/prettier/prettierignore --write ."
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "oxlint": "^1.73.0",
+    "oxlint-tsgolint": "^0.24.0",
+    "prettier": "^3.9.5"
+  },
+  "packageManager": "pnpm@11.13.0",
+  "engines": {
+    "pnpm": ">=11.0.0",
+    "node": ">=26.0.0"
+  }
+}
