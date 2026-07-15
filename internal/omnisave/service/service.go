@@ -88,7 +88,7 @@ func (s *service) AddRevision(ctx context.Context, saveID string, input omnisave
 	revision := omnisave.Revision{
 		ID:         uuid.NewString(),
 		OmniSaveID: saveID,
-		ParentIDs:  slices.Clone(input.ParentIDs),
+		ParentIDs:  append([]string{}, input.ParentIDs...),
 		CreatedAt:  time.Now().UTC(),
 		Artifact: omnisave.Artifact{
 			Format: input.Format,

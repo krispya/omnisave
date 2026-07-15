@@ -14,7 +14,7 @@ dist
 coverage.out
 
 # Local server data and secrets
-/server.yaml
+/config/server.local.yaml
 /omnisave.db
 /omnisave.db-*
 /artifacts/

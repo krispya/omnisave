@@ -22,7 +22,7 @@ type Config struct {
 }
 
 func main() {
-	configPath := "server.yaml"
+	configPath := "config/server.local.yaml"
 	if len(os.Args) > 1 {
 		configPath = os.Args[1]
 	}
@@ -48,7 +48,7 @@ func main() {
 		config.ArtifactDir = "./artifacts"
 	}
 	if config.WebDir == "" {
-		config.WebDir = "./web/dist"
+		config.WebDir = "./apps/dash/dist"
 	}
 
 	repository, err := sqlitestorage.Open(config.DBPath, config.ArtifactDir)
