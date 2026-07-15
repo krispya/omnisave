@@ -19,13 +19,16 @@ import (
 func TestNetworkClientStory(t *testing.T) {
 	handler := httpapi.New(omnisaveservice.New(storagetest.NewMemoryRepository()))
 
-	createBody := bytes.NewBufferString(`{"game_id":"pokemon-emerald-usa","slot":"default"}`)
+	createBody := bytes.NewBufferString(`{"game_id":"pokemon-emerald-usa"}`)
 	response := request(t, handler, http.MethodPost, "/api/v1/omnisaves", "application/json", createBody)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("create returned %d: %s", response.Code, response.Body.String())
 	}
 	var save omnisave.OmniSave
 	decodeResponse(t, response, &save)
+	if save.Slot != "slot-1" {
+		t.Fatalf("expected the first slot, got %q", save.Slot)
+	}
 
 	revisionBody := &bytes.Buffer{}
 	writer := multipart.NewWriter(revisionBody)
