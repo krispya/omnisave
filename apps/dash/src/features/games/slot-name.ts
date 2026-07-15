@@ -11,6 +11,10 @@ export function formatSlotName(slot: string) {
   return number ? `Slot ${number}` : slot;
 }
 
+export function displaySlotName(save: Pick<OmniSave, 'slot' | 'display_name'>) {
+  return save.display_name?.trim() || formatSlotName(save.slot);
+}
+
 export function nextSlotName(saves: Pick<OmniSave, 'slot'>[]) {
   const usedNumbers = new Set(saves.map((save) => slotNumber(save.slot)));
   let number = 1;

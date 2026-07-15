@@ -1,7 +1,7 @@
 import { useEffect, useId, type ReactNode } from 'react';
 import type { OmniSave } from '../../lib/omnisave-api.js';
 import type { GameSummary } from './game-library.js';
-import { formatSlotName } from './slot-name.js';
+import { displaySlotName } from './slot-name.js';
 
 type DeleteDialogProps = {
   title: string;
@@ -96,7 +96,7 @@ export function DeleteSlotDialog({ save, ...state }: DeleteStateProps & { save: 
   return (
     <DeleteDialog
       {...state}
-      title={`Delete ${formatSlotName(save.slot)}?`}
+      title={`Delete ${displaySlotName(save)}?`}
       description={
         <>
           This permanently deletes this save slot, its revision history, and any unshared artifacts.

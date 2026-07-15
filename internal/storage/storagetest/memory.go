@@ -47,6 +47,16 @@ func (r *MemoryRepository) GetOmniSave(_ context.Context, id string) (*omnisave.
 	return &save, nil
 }
 
+func (r *MemoryRepository) UpdateOmniSaveDisplayName(_ context.Context, id, displayName string) error {
+	save, ok := r.saves[id]
+	if !ok {
+		return storage.ErrNotFound
+	}
+	save.DisplayName = displayName
+	r.saves[id] = save
+	return nil
+}
+
 func (r *MemoryRepository) DeleteOmniSave(_ context.Context, id string) error {
 	if _, ok := r.saves[id]; !ok {
 		return storage.ErrNotFound

@@ -1,5 +1,5 @@
 import type { OmniSave, Revision } from '../../lib/omnisave-api.js';
-import { formatSlotName } from './slot-name.js';
+import { displaySlotName } from './slot-name.js';
 
 type RevisionPanelProps = {
   save: OmniSave;
@@ -41,7 +41,7 @@ export function RevisionPanel({ save, revisions, loading, error }: RevisionPanel
           <p className="text-sm font-medium text-white">Revisions</p>
           <h2 className="mt-1 truncate text-sm text-neutral-400">{displayName(save)}</h2>
           <p className="mt-1 truncate font-mono text-xs text-slate-500">
-            {formatSlotName(save.slot)} · {shortID(save.id)}
+            {displaySlotName(save)} · {shortID(save.id)}
           </p>
         </div>
         <span className="shrink-0 text-xs text-neutral-500">

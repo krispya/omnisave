@@ -88,6 +88,36 @@ func TestNetworkClientStory(t *testing.T) {
 	}
 }
 
+func TestUpdateOmniSaveDisplayName(t *testing.T) {
+	handler := httpapi.New(omnisaveservice.New(storagetest.NewMemoryRepository()))
+
+	response := request(t, handler, http.MethodPost, "/api/v1/omnisaves", "application/json",
+		bytes.NewBufferString(`{"game_id":"pokemon-emerald-usa"}`))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create returned %d: %s", response.Code, response.Body.String())
+	}
+	var created omnisave.OmniSave
+	decodeResponse(t, response, &created)
+
+	response = request(t, handler, http.MethodPatch, "/api/v1/omnisaves/"+created.ID, "application/json",
+		bytes.NewBufferString(`{"display_name":"  Before the final boss  "}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("update returned %d: %s", response.Code, response.Body.String())
+	}
+	var updated omnisave.OmniSave
+	decodeResponse(t, response, &updated)
+	if updated.DisplayName != "Before the final boss" || updated.Slot != "slot-1" {
+		t.Fatalf("unexpected updated save: %v", updated)
+	}
+
+	response = request(t, handler, http.MethodGet, "/api/v1/omnisaves/"+created.ID, "", nil)
+	var stored omnisave.OmniSave
+	decodeResponse(t, response, &stored)
+	if stored.DisplayName != "Before the final boss" {
+		t.Fatalf("display name was not persisted: %v", stored)
+	}
+}
+
 func TestBearerAuth(t *testing.T) {
 	protected := httpapi.BearerAuth("secret", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

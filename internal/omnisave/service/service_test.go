@@ -39,6 +39,27 @@ func TestCreateOmniSave(t *testing.T) {
 	}
 }
 
+func TestUpdateOmniSaveDisplayName(t *testing.T) {
+	ctx := context.Background()
+	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	created, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald-usa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	displayName := "  Before the final boss  "
+	updated, err := saves.Update(ctx, created.ID, omnisave.UpdateOmniSave{DisplayName: &displayName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.DisplayName != "Before the final boss" || updated.Slot != "slot-1" {
+		t.Fatalf("unexpected updated save: %v", updated)
+	}
+	if _, err := saves.Update(ctx, created.ID, omnisave.UpdateOmniSave{}); !errors.Is(err, omnisave.ErrInvalid) {
+		t.Fatalf("an update without mutable fields should be invalid, got %v", err)
+	}
+}
+
 func TestListOmniSaves(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
