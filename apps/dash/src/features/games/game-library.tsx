@@ -1,10 +1,20 @@
-import type { OmniSave } from '../../lib/omnisave-api.js';
+import { Suspense, useEffect, useState, type ReactNode } from 'react';
+import {
+  loadGameMedia,
+  type CatalogGame,
+  type GameMedia,
+  type OmniSave,
+} from '../../lib/omnisave-api.js';
 import { DeleteOptions } from './delete-options.js';
+import { useCatalogGame } from './game-catalog-cache.js';
 
 export type GameSummary = {
   id: string;
   label: string;
   platform?: string;
+  publisher?: string;
+  description?: string;
+  media: GameMedia[];
   saves: OmniSave[];
   updatedAt: string;
 };
@@ -50,6 +60,7 @@ export function groupOmniSavesByGame(saves: OmniSave[]) {
       id: save.game_id,
       label: save.metadata?.label ?? save.game_id,
       platform: save.metadata?.platform,
+      media: [],
       saves: [save],
       updatedAt: save.created_at,
     });
@@ -58,8 +69,41 @@ export function groupOmniSavesByGame(saves: OmniSave[]) {
   return [...games.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
-export function GameArtwork({ game, className = '' }: { game: GameSummary; className?: string }) {
+function withCatalog(game: GameSummary, catalog: CatalogGame | null): GameSummary {
+  if (!catalog) return game;
+  return {
+    ...game,
+    label: catalog.title,
+    platform: catalog.platform ?? game.platform,
+    publisher: catalog.publisher,
+    description: catalog.description,
+    media: catalog.media,
+  };
+}
+
+export function ResolvedGame({
+  game,
+  token,
+  children,
+}: {
+  game: GameSummary;
+  token: string;
+  children: (game: GameSummary) => ReactNode;
+}) {
+  return children(withCatalog(game, useCatalogGame(token, game.id)));
+}
+
+export function GameArtwork({
+  game,
+  token,
+  className = '',
+}: {
+  game: GameSummary;
+  token: string;
+  className?: string;
+}) {
   const artworkStyle = artworkStyles[artworkIndex(game.id)];
+  const cover = game.media.find((media) => media.kind === 'cover');
 
   return (
     <div
@@ -75,17 +119,63 @@ export function GameArtwork({ game, className = '' }: { game: GameSummary; class
           {game.platform}
         </span>
       ) : null}
+      {cover ? (
+        <GameMediaImage
+          token={token}
+          media={cover}
+          alt=""
+          className="absolute inset-0 size-full object-cover"
+        />
+      ) : null}
     </div>
   );
 }
 
+export function GameMediaImage({
+  token,
+  media,
+  alt,
+  className = '',
+}: {
+  token: string;
+  media: GameMedia;
+  alt: string;
+  className?: string;
+}) {
+  const [source, setSource] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectURL = '';
+    setSource('');
+    void loadGameMedia(token, media.url, controller.signal)
+      .then((blob) => {
+        objectURL = URL.createObjectURL(blob);
+        setSource(objectURL);
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) setSource('');
+      });
+    return () => {
+      controller.abort();
+      if (objectURL) URL.revokeObjectURL(objectURL);
+    };
+  }, [media.url, token]);
+
+  return source ? <img src={source} alt={alt} className={className} /> : null;
+}
+
 export function GameLibrary({
   games,
+  token,
   onOpenGame,
+  onRequestFixMatch,
   onRequestDelete,
 }: {
   games: GameSummary[];
+  token: string;
   onOpenGame: (game: GameSummary) => void;
+  onRequestFixMatch: (game: GameSummary) => void;
   onRequestDelete: (game: GameSummary) => void;
 }) {
   if (games.length === 0) {
@@ -102,30 +192,87 @@ export function GameLibrary({
   return (
     <div className="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
       {games.map((game) => (
-        <article key={game.id} className="group min-w-0">
-          <div className="relative">
-            <button type="button" onClick={() => onOpenGame(game)} className="block w-full">
-              <GameArtwork
-                game={game}
-                className="aspect-[3/4] w-full shadow-md shadow-black/30 ring-1 ring-white/10 transition duration-150 group-hover:scale-[1.02] group-hover:shadow-xl group-hover:shadow-black/50 group-hover:ring-[#e5a00d]"
+        <Suspense key={game.id} fallback={<GameCardSkeleton />}>
+          <ResolvedGame game={game} token={token}>
+            {(resolved) => (
+              <GameCard
+                game={resolved}
+                token={token}
+                onOpenGame={onOpenGame}
+                onRequestFixMatch={onRequestFixMatch}
+                onRequestDelete={onRequestDelete}
               />
-            </button>
-            <DeleteOptions
-              label={game.label}
-              className="absolute right-2 bottom-2 z-10 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
-              onDelete={() => onRequestDelete(game)}
-            />
-          </div>
-          <button type="button" onClick={() => onOpenGame(game)} className="block w-full text-left">
-            <h2 className="mt-2.5 truncate text-[13px] font-medium text-neutral-200 group-hover:text-white">
-              {game.label}
-            </h2>
-            <p className="mt-1 text-xs text-slate-500">
-              {game.saves.length} {game.saves.length === 1 ? 'save' : 'saves'}
-            </p>
-          </button>
-        </article>
+            )}
+          </ResolvedGame>
+        </Suspense>
       ))}
+    </div>
+  );
+}
+
+function GameCard({
+  game,
+  token,
+  onOpenGame,
+  onRequestFixMatch,
+  onRequestDelete,
+}: {
+  game: GameSummary;
+  token: string;
+  onOpenGame: (game: GameSummary) => void;
+  onRequestFixMatch: (game: GameSummary) => void;
+  onRequestDelete: (game: GameSummary) => void;
+}) {
+  return (
+    <article className="group min-w-0">
+      <div className="relative">
+        <button type="button" onClick={() => onOpenGame(game)} className="block w-full">
+          <GameArtwork
+            game={game}
+            token={token}
+            className="aspect-[3/4] w-full shadow-md shadow-black/30 ring-1 ring-white/10 transition duration-150 group-hover:scale-[1.02] group-hover:shadow-xl group-hover:shadow-black/50 group-hover:ring-[#e5a00d]"
+          />
+        </button>
+        <DeleteOptions
+          label={game.label}
+          className="absolute right-2 bottom-2 z-10 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
+          onFixMatch={() => onRequestFixMatch(game)}
+          onDelete={() => onRequestDelete(game)}
+        />
+      </div>
+      <button type="button" onClick={() => onOpenGame(game)} className="block w-full text-left">
+        <h2 className="mt-2.5 truncate text-[13px] font-medium text-neutral-200 group-hover:text-white">
+          {game.label}
+        </h2>
+        <p className="mt-1 text-xs text-slate-500">
+          {game.saves.length} {game.saves.length === 1 ? 'save' : 'saves'}
+        </p>
+      </button>
+    </article>
+  );
+}
+
+function GameCardSkeleton() {
+  return (
+    <article className="min-w-0" aria-label="Loading game metadata">
+      <div className="catalog-shimmer aspect-[3/4] rounded-md" />
+      <div className="catalog-shimmer mt-3 h-3 w-3/4 rounded-full" />
+      <div className="catalog-shimmer mt-2 h-2.5 w-1/3 rounded-full" />
+    </article>
+  );
+}
+
+export function GameDetailSkeleton() {
+  return (
+    <div className="mt-8">
+      <div className="flex items-end gap-5 border-b border-white/5 pb-6">
+        <div className="catalog-shimmer aspect-[3/4] w-20 rounded-md sm:w-28" />
+        <div className="w-full max-w-sm pb-2">
+          <div className="catalog-shimmer h-3 w-24 rounded-full" />
+          <div className="catalog-shimmer mt-4 h-7 w-3/4 rounded" />
+          <div className="catalog-shimmer mt-3 h-3 w-1/2 rounded-full" />
+        </div>
+      </div>
     </div>
   );
 }

@@ -8,6 +8,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/krisbaumgartner/omnisave/internal/catalog/hasheous"
+	catalogservice "github.com/krisbaumgartner/omnisave/internal/catalog/service"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave/httpapi"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
 	sqlitestorage "github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
@@ -19,6 +21,10 @@ type Config struct {
 	DBPath      string `yaml:"db_path"`
 	ArtifactDir string `yaml:"artifact_dir"`
 	WebDir      string `yaml:"web_dir"`
+	Hasheous    struct {
+		BaseURL string `yaml:"base_url"`
+		Timeout string `yaml:"timeout"`
+	} `yaml:"hasheous"`
 }
 
 func main() {
@@ -50,6 +56,16 @@ func main() {
 	if config.WebDir == "" {
 		config.WebDir = "./apps/dash/dist"
 	}
+	if config.Hasheous.BaseURL == "" {
+		config.Hasheous.BaseURL = "https://hasheous.org"
+	}
+	hasheousTimeout := 15 * time.Second
+	if config.Hasheous.Timeout != "" {
+		hasheousTimeout, err = time.ParseDuration(config.Hasheous.Timeout)
+		if err != nil || hasheousTimeout <= 0 {
+			log.Fatal("hasheous timeout must be a positive duration")
+		}
+	}
 
 	repository, err := sqlitestorage.Open(config.DBPath, config.ArtifactDir)
 	if err != nil {
@@ -58,8 +74,10 @@ func main() {
 	defer repository.Close()
 
 	saves := omnisaveservice.New(repository)
+	provider := hasheous.New(config.Hasheous.BaseURL, &http.Client{Timeout: hasheousTimeout})
+	games := catalogservice.New(repository, repository, provider)
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/", httpapi.BearerAuth(config.Token, httpapi.New(saves)))
+	mux.Handle("/api/v1/", httpapi.BearerAuth(config.Token, httpapi.New(saves, games)))
 	mux.Handle("/", http.FileServer(http.Dir(config.WebDir)))
 	server := &http.Server{
 		Addr:              config.ListenAddr,

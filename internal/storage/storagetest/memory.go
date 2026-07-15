@@ -7,6 +7,7 @@ import (
 	"io"
 	"slices"
 
+	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	"github.com/krisbaumgartner/omnisave/internal/storage"
 )
@@ -16,6 +17,9 @@ type MemoryRepository struct {
 	saves     map[string]omnisave.OmniSave
 	revisions map[string][]omnisave.Revision
 	blobs     map[string][]byte
+	games     map[string]catalog.Game
+	roms      map[string]catalog.GameROM
+	media     map[string]catalog.GameMedia
 }
 
 func NewMemoryRepository() *MemoryRepository {
@@ -23,6 +27,9 @@ func NewMemoryRepository() *MemoryRepository {
 		saves:     make(map[string]omnisave.OmniSave),
 		revisions: make(map[string][]omnisave.Revision),
 		blobs:     make(map[string][]byte),
+		games:     make(map[string]catalog.Game),
+		roms:      make(map[string]catalog.GameROM),
+		media:     make(map[string]catalog.GameMedia),
 	}
 }
 
@@ -79,6 +86,14 @@ func (r *MemoryRepository) DeleteOmniSave(_ context.Context, id string) error {
 			}
 		}
 		if !used {
+			for _, media := range r.media {
+				if media.SHA256 == deleted.Artifact.SHA256 {
+					used = true
+					break
+				}
+			}
+		}
+		if !used {
 			delete(r.blobs, deleted.Artifact.SHA256)
 		}
 	}
@@ -128,6 +143,114 @@ func (r *MemoryRepository) OpenArtifact(_ context.Context, hash string) (io.Read
 		return nil, storage.ErrNotFound
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+func (r *MemoryRepository) StoreArtifact(_ context.Context, artifact storage.Artifact, payload io.Reader) error {
+	data, err := io.ReadAll(payload)
+	if err != nil {
+		return err
+	}
+	r.blobs[artifact.SHA256] = data
+	return nil
+}
+
+func (r *MemoryRepository) FindGameByFingerprint(_ context.Context, fingerprint catalog.Fingerprint) (*catalog.Game, error) {
+	for _, rom := range r.roms {
+		if (fingerprint.SHA256 != "" && fingerprint.SHA256 == rom.SHA256) ||
+			(fingerprint.SHA1 != "" && fingerprint.SHA1 == rom.SHA1) ||
+			(fingerprint.MD5 != "" && fingerprint.MD5 == rom.MD5) ||
+			(fingerprint.CRC32 != "" && fingerprint.CRC32 == rom.CRC32) {
+			return r.game(rom.GameID)
+		}
+	}
+	return nil, storage.ErrNotFound
+}
+
+func (r *MemoryRepository) FindGameByProvider(_ context.Context, provider, providerID string) (*catalog.Game, error) {
+	for _, game := range r.games {
+		if game.Provider == provider && game.ProviderID == providerID {
+			return r.game(game.ID)
+		}
+	}
+	return nil, storage.ErrNotFound
+}
+
+func (r *MemoryRepository) GetGame(_ context.Context, id string) (*catalog.Game, error) {
+	return r.game(id)
+}
+
+func (r *MemoryRepository) ListGames(context.Context) ([]catalog.Game, error) {
+	games := make([]catalog.Game, 0, len(r.games))
+	for id := range r.games {
+		game, _ := r.game(id)
+		games = append(games, *game)
+	}
+	return games, nil
+}
+
+func (r *MemoryRepository) SaveGame(_ context.Context, game catalog.Game, rom catalog.GameROM) error {
+	game.Media = nil
+	r.games[game.ID] = game
+	r.roms[rom.ID] = rom
+	return nil
+}
+
+func (r *MemoryRepository) SaveGameMetadata(_ context.Context, game catalog.Game) error {
+	game.Media = nil
+	r.games[game.ID] = game
+	return nil
+}
+
+func (r *MemoryRepository) SaveGameMedia(_ context.Context, media catalog.GameMedia) error {
+	for id, existing := range r.media {
+		if existing.GameID == media.GameID && existing.Kind == media.Kind && existing.Position == media.Position {
+			media.ID = existing.ID
+			delete(r.media, id)
+			break
+		}
+	}
+	r.media[media.ID] = media
+	return nil
+}
+
+func (r *MemoryRepository) ClearGameMedia(_ context.Context, gameID string) error {
+	for id, media := range r.media {
+		if media.GameID == gameID {
+			delete(r.media, id)
+		}
+	}
+	return nil
+}
+
+func (r *MemoryRepository) GetGameMedia(_ context.Context, gameID, mediaID string) (*catalog.GameMedia, error) {
+	media, ok := r.media[mediaID]
+	if !ok || media.GameID != gameID {
+		return nil, storage.ErrNotFound
+	}
+	return &media, nil
+}
+
+func (r *MemoryRepository) game(id string) (*catalog.Game, error) {
+	game, ok := r.games[id]
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	game.Media = make([]catalog.GameMedia, 0)
+	for _, media := range r.media {
+		if media.GameID == id {
+			game.Media = append(game.Media, media)
+		}
+	}
+	slices.SortFunc(game.Media, func(left, right catalog.GameMedia) int {
+		if left.Kind != right.Kind {
+			if left.Kind < right.Kind {
+				return -1
+			}
+			return 1
+		}
+		return left.Position - right.Position
+	})
+	return &game, nil
 }
 
 var _ storage.Repository = (*MemoryRepository)(nil)

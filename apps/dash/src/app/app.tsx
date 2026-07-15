@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   deleteOmniSave,
   listOmniSaves,
@@ -15,10 +15,14 @@ import {
 } from '../features/debug/debug-actions.js';
 import { DebugMenu } from '../features/debug/debug-menu.js';
 import { DeleteGameDialog, DeleteSlotDialog } from '../features/games/delete-dialog.js';
+import { FixMatchDialog } from '../features/games/fix-match-dialog.js';
+import { clearCatalogCache, primeCatalogGame } from '../features/games/game-catalog-cache.js';
 import { GameDetail } from '../features/games/game-detail.js';
 import {
+  GameDetailSkeleton,
   GameLibrary,
   GameLibrarySkeleton,
+  ResolvedGame,
   groupOmniSavesByGame,
   type GameSummary,
 } from '../features/games/game-library.js';
@@ -44,6 +48,7 @@ export function App() {
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [fixMatchTarget, setFixMatchTarget] = useState<GameSummary>();
 
   const games = useMemo(() => groupOmniSavesByGame(saves), [saves]);
   const selectedGame = useMemo(
@@ -60,6 +65,7 @@ export function App() {
 
     setLoading(true);
     setError('');
+    clearCatalogCache(activeToken);
     try {
       const nextSaves = await listOmniSaves(activeToken, signal);
       setSaves(nextSaves);
@@ -126,6 +132,7 @@ export function App() {
     setToken('');
     setTokenInput('');
     setSaves([]);
+    clearCatalogCache(token);
     closeGame();
     setError('');
   }
@@ -153,11 +160,18 @@ export function App() {
     setDebugAction('game');
     setError('');
     try {
-      await createRandomTestOmniSave(
+      const created = await createRandomTestOmniSave(
         token,
         games.map((game) => game.label)
       );
-      await loadSaves(token);
+      const catalogPromise = created.catalog.catch((catalogError: unknown) => {
+        setError(
+          catalogError instanceof Error ? catalogError.message : 'Could not match the test game.'
+        );
+        return null;
+      });
+      primeCatalogGame(token, created.save.game_id, catalogPromise);
+      setSaves((current) => [...current, created.save]);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : 'Could not create an OmniSave.');
     } finally {
@@ -349,16 +363,23 @@ export function App() {
             ) : null}
 
             {selectedGame ? (
-              <GameDetail
-                game={selectedGame}
-                selectedSave={selectedSave}
-                revisions={revisions}
-                loadingRevisions={loadingRevisions}
-                revisionError={revisionError}
-                onSelectSave={(save) => setSelectedSaveID(save.id)}
-                onRequestDelete={requestDeleteSlot}
-                onRenameSave={renameSlot}
-              />
+              <Suspense fallback={<GameDetailSkeleton />}>
+                <ResolvedGame game={selectedGame} token={token}>
+                  {(resolvedGame) => (
+                    <GameDetail
+                      game={resolvedGame}
+                      token={token}
+                      selectedSave={selectedSave}
+                      revisions={revisions}
+                      loadingRevisions={loadingRevisions}
+                      revisionError={revisionError}
+                      onSelectSave={(save) => setSelectedSaveID(save.id)}
+                      onRequestDelete={requestDeleteSlot}
+                      onRenameSave={renameSlot}
+                    />
+                  )}
+                </ResolvedGame>
+              </Suspense>
             ) : (
               <section className="mt-8" aria-label="Games with saves" aria-busy={loading}>
                 {loading && games.length === 0 ? (
@@ -366,7 +387,9 @@ export function App() {
                 ) : (
                   <GameLibrary
                     games={games}
+                    token={token}
                     onOpenGame={openGame}
+                    onRequestFixMatch={setFixMatchTarget}
                     onRequestDelete={requestDeleteGame}
                   />
                 )}
@@ -390,6 +413,18 @@ export function App() {
           error={deleteError}
           onCancel={cancelDelete}
           onConfirm={() => void confirmDelete()}
+        />
+      ) : null}
+      {fixMatchTarget ? (
+        <FixMatchDialog
+          game={fixMatchTarget}
+          token={token}
+          onCancel={() => setFixMatchTarget(undefined)}
+          onMatched={(game) => {
+            primeCatalogGame(token, game.id, Promise.resolve(game));
+            setSaves((current) => [...current]);
+            setFixMatchTarget(undefined);
+          }}
         />
       ) : null}
     </div>

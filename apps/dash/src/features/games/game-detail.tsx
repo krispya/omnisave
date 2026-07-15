@@ -1,6 +1,7 @@
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { OmniSave, Revision } from '../../lib/omnisave-api.js';
 import { DeleteOptions } from './delete-options.js';
-import { GameArtwork, type GameSummary } from './game-library.js';
+import { GameArtwork, GameMediaImage, type GameSummary } from './game-library.js';
 import { RevisionPanel } from './revision-panel.js';
 import { SlotNameEditor } from './slot-name-editor.js';
 import { displaySlotName } from './slot-name.js';
@@ -11,8 +12,46 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
 }
 
+function GameDescription({ description }: { description: string }) {
+  const text = useRef<HTMLParagraphElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [canExpand, setCanExpand] = useState(false);
+
+  useLayoutEffect(() => {
+    if (expanded || !text.current) return;
+    const element = text.current;
+    const measure = () => setCanExpand(element.scrollHeight > element.clientHeight + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [description, expanded]);
+
+  return (
+    <div className="mt-6 max-w-4xl">
+      <p
+        ref={text}
+        className={`whitespace-pre-line text-sm leading-6 text-slate-400 ${expanded ? '' : 'line-clamp-3'}`}
+      >
+        {description}
+      </p>
+      {canExpand ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+          className="mt-2 text-xs font-medium text-[#e5a00d] hover:text-[#f2b51d]"
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 type GameDetailProps = {
   game: GameSummary;
+  token: string;
   selectedSave?: OmniSave;
   revisions: Revision[];
   loadingRevisions: boolean;
@@ -24,6 +63,7 @@ type GameDetailProps = {
 
 export function GameDetail({
   game,
+  token,
   selectedSave,
   revisions,
   loadingRevisions,
@@ -35,18 +75,49 @@ export function GameDetail({
   return (
     <div className="mt-8">
       <section className="flex items-end gap-5 border-b border-white/5 pb-6">
-        <GameArtwork game={game} className="aspect-[3/4] w-20 shrink-0 shadow-lg sm:w-28" />
+        <GameArtwork
+          game={game}
+          token={token}
+          className="aspect-[3/4] w-20 shrink-0 shadow-lg sm:w-28"
+        />
         <div className="min-w-0 pb-1">
           {game.platform ? (
             <p className="text-xs font-medium text-[#e5a00d]">{game.platform}</p>
           ) : null}
           <h2 className="mt-1.5 text-2xl font-medium tracking-tight text-white">{game.label}</h2>
+          {game.publisher ? <p className="mt-1 text-sm text-slate-400">{game.publisher}</p> : null}
           <p className="mt-2 truncate font-mono text-xs text-slate-500">{game.id}</p>
           <p className="mt-3 text-sm text-slate-400">
             {game.saves.length} {game.saves.length === 1 ? 'save' : 'saves'}
           </p>
         </div>
       </section>
+
+      {game.description ? (
+        <GameDescription key={game.description} description={game.description} />
+      ) : null}
+
+      {game.media.some((media) => media.kind === 'screenshot') ? (
+        <section className="mt-6" aria-label={`Screenshots for ${game.label}`}>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {game.media
+              .filter((media) => media.kind === 'screenshot')
+              .map((media, index) => (
+                <div
+                  key={media.id}
+                  className="aspect-video overflow-hidden rounded-md bg-white/5 ring-1 ring-white/10"
+                >
+                  <GameMediaImage
+                    token={token}
+                    media={media}
+                    alt={`${game.label} screenshot ${index + 1}`}
+                    className="size-full object-cover"
+                  />
+                </div>
+              ))}
+          </div>
+        </section>
+      ) : null}
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,0.8fr)]">
         <section aria-label={`Saves for ${game.label}`}>
