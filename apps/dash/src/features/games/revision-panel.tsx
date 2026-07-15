@@ -1,4 +1,4 @@
-import type { OmniSave, Revision } from './api.js';
+import type { OmniSave, Revision } from '../../lib/omnisave-api.js';
 
 type RevisionPanelProps = {
   save: OmniSave;

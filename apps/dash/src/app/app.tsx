@@ -1,16 +1,26 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
-  createRandomTestOmniSave,
-  createTestRevision,
-  createTestSave,
+  deleteOmniSave,
   listOmniSaves,
   listRevisions,
   type OmniSave,
   type Revision,
-} from './api.js';
-import { DebugMenu } from './debug-menu.js';
-import { GameDetail } from './game-detail.js';
-import { GameLibrary, groupOmniSavesByGame, type GameSummary } from './game-library.js';
+} from '../lib/omnisave-api.js';
+import { ConnectForm } from '../features/connection/connect-form.js';
+import {
+  createRandomTestOmniSave,
+  createTestRevision,
+  createTestSave,
+} from '../features/debug/debug-actions.js';
+import { DebugMenu } from '../features/debug/debug-menu.js';
+import { DeleteGameDialog } from '../features/games/delete-game-dialog.js';
+import { GameDetail } from '../features/games/game-detail.js';
+import {
+  GameLibrary,
+  GameLibrarySkeleton,
+  groupOmniSavesByGame,
+  type GameSummary,
+} from '../features/games/game-library.js';
 
 const tokenStorageKey = 'omnisave.api-token';
 
@@ -26,6 +36,9 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [loadingRevisions, setLoadingRevisions] = useState(false);
   const [debugAction, setDebugAction] = useState<'game' | 'save' | 'revision' | null>(null);
+  const [gameToDelete, setGameToDelete] = useState<GameSummary>();
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   const games = useMemo(() => groupOmniSavesByGame(saves), [saves]);
   const selectedGame = useMemo(
@@ -188,6 +201,37 @@ export function App() {
     }
   }
 
+  function requestDelete(game: GameSummary) {
+    setDeleteError('');
+    setGameToDelete(game);
+  }
+
+  function cancelDelete() {
+    if (deleting) return;
+    setGameToDelete(undefined);
+    setDeleteError('');
+  }
+
+  async function confirmDelete() {
+    if (!token || !gameToDelete) return;
+
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      for (const save of gameToDelete.saves) {
+        await deleteOmniSave(token, save.id);
+      }
+      setGameToDelete(undefined);
+      await loadSaves(token);
+    } catch (deleteFailure) {
+      setDeleteError(
+        deleteFailure instanceof Error ? deleteFailure.message : 'Could not delete this game.'
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#111111] text-[#e5e5e5]">
       <header className="border-b border-white/5 bg-[#181818]">
@@ -222,7 +266,7 @@ export function App() {
 
       <main className="px-5 py-8 sm:px-8 lg:px-10">
         {!token ? (
-          <Connect tokenInput={tokenInput} onTokenChange={setTokenInput} onConnect={connect} />
+          <ConnectForm token={tokenInput} onTokenChange={setTokenInput} onConnect={connect} />
         ) : (
           <>
             <section className="flex items-end justify-between gap-5">
@@ -290,64 +334,22 @@ export function App() {
                 {loading && games.length === 0 ? (
                   <GameLibrarySkeleton />
                 ) : (
-                  <GameLibrary games={games} onOpenGame={openGame} />
+                  <GameLibrary games={games} onOpenGame={openGame} onRequestDelete={requestDelete} />
                 )}
               </section>
             )}
           </>
         )}
       </main>
-    </div>
-  );
-}
-
-function Connect({
-  tokenInput,
-  onTokenChange,
-  onConnect,
-}: {
-  tokenInput: string;
-  onTokenChange: (token: string) => void;
-  onConnect: (event: FormEvent<HTMLFormElement>) => void;
-}) {
-  return (
-    <section className="max-w-lg rounded-lg border border-white/5 bg-[#1a1a1a] p-6">
-      <h1 className="font-semibold text-white">Connect to the server</h1>
-      <p className="mt-2 text-sm leading-6 text-slate-400">
-        Enter the bearer token from your server configuration. It is kept only for this browser
-        session.
-      </p>
-      <form onSubmit={onConnect} className="mt-5 flex flex-col gap-3 sm:flex-row">
-        <label className="sr-only" htmlFor="api-token">
-          API token
-        </label>
-        <input
-          id="api-token"
-          type="password"
-          value={tokenInput}
-          onChange={(event) => onTokenChange(event.target.value)}
-          autoComplete="current-password"
-          placeholder="API token"
-          className="min-w-0 flex-1 rounded-md border border-white/10 bg-[#111111] px-3.5 py-2.5 text-sm text-white outline-none placeholder:text-neutral-600 focus:border-[#e5a00d]"
+      {gameToDelete ? (
+        <DeleteGameDialog
+          game={gameToDelete}
+          deleting={deleting}
+          error={deleteError}
+          onCancel={cancelDelete}
+          onConfirm={() => void confirmDelete()}
         />
-        <button
-          type="submit"
-          disabled={!tokenInput.trim()}
-          className="rounded-md bg-[#e5a00d] px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-[#f2b51d] disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Connect
-        </button>
-      </form>
-    </section>
-  );
-}
-
-function GameLibrarySkeleton() {
-  return (
-    <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
-      {Array.from({ length: 8 }, (_, index) => (
-        <div key={index} className="aspect-[3/4] animate-pulse rounded-md bg-white/5" />
-      ))}
+      ) : null}
     </div>
   );
 }

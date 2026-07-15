@@ -56,6 +56,10 @@ func (s *service) Get(ctx context.Context, id string) (*omnisave.OmniSave, error
 	return save, translateError(err)
 }
 
+func (s *service) Delete(ctx context.Context, id string) error {
+	return translateError(s.repository.DeleteOmniSave(ctx, id))
+}
+
 func (s *service) AddRevision(ctx context.Context, saveID string, input omnisave.CreateRevision, payload io.Reader) (*omnisave.Revision, error) {
 	if input.Format == "" || payload == nil {
 		return nil, omnisave.ErrInvalid

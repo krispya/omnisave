@@ -1,4 +1,4 @@
-import type { OmniSave, Revision } from './api.js';
+import type { OmniSave, Revision } from '../../lib/omnisave-api.js';
 import { GameArtwork, type GameSummary } from './game-library.js';
 import { RevisionPanel } from './revision-panel.js';
 

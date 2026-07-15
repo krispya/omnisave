@@ -69,6 +69,20 @@ func TestNetworkClientStory(t *testing.T) {
 	if response.Code != http.StatusOK || response.Body.String() != "game-save contents" {
 		t.Fatalf("unexpected artifact response: %d %q", response.Code, response.Body.String())
 	}
+
+	response = request(t, handler, http.MethodDelete, "/api/v1/omnisaves/"+save.ID, "", nil)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("delete returned %d: %s", response.Code, response.Body.String())
+	}
+	response = request(t, handler, http.MethodGet, "/api/v1/omnisaves/"+save.ID, "", nil)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("deleted save returned %d: %s", response.Code, response.Body.String())
+	}
+	response = request(t, handler, http.MethodGet,
+		"/api/v1/artifacts/"+revision.Artifact.SHA256, "", nil)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("deleted artifact returned %d: %s", response.Code, response.Body.String())
+	}
 }
 
 func TestBearerAuth(t *testing.T) {
