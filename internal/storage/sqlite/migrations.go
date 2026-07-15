@@ -33,6 +33,58 @@ var migrations = []string{
 		PRIMARY KEY (revision_id, parent_id)
 	);`,
 	`ALTER TABLE omnisaves ADD COLUMN display_name TEXT NOT NULL DEFAULT '';`,
+	`CREATE TABLE games (
+		id           TEXT PRIMARY KEY,
+		title        TEXT NOT NULL,
+		sort_title   TEXT NOT NULL,
+		platform     TEXT NOT NULL,
+		publisher    TEXT NOT NULL,
+		description  TEXT NOT NULL,
+		provider     TEXT NOT NULL,
+		provider_id  TEXT NOT NULL,
+		metadata     TEXT NOT NULL,
+		refreshed_at TEXT NOT NULL
+	);
+
+	CREATE INDEX games_by_provider ON games(provider, provider_id);
+
+	CREATE TABLE game_roms (
+		id         TEXT PRIMARY KEY,
+		game_id    TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		system     TEXT NOT NULL,
+		name       TEXT NOT NULL,
+		region     TEXT NOT NULL,
+		languages  TEXT NOT NULL,
+		size       INTEGER NOT NULL,
+		crc32      TEXT NOT NULL,
+		md5        TEXT NOT NULL,
+		sha1       TEXT NOT NULL,
+		sha256     TEXT NOT NULL,
+		source     TEXT NOT NULL,
+		source_id  TEXT NOT NULL,
+		attributes TEXT NOT NULL
+	);
+
+	CREATE INDEX game_roms_by_crc32 ON game_roms(crc32) WHERE crc32 <> '';
+	CREATE INDEX game_roms_by_md5 ON game_roms(md5) WHERE md5 <> '';
+	CREATE INDEX game_roms_by_sha1 ON game_roms(sha1) WHERE sha1 <> '';
+	CREATE INDEX game_roms_by_sha256 ON game_roms(sha256) WHERE sha256 <> '';
+
+	CREATE TABLE game_media (
+		id           TEXT PRIMARY KEY,
+		game_id      TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		kind         TEXT NOT NULL,
+		position     INTEGER NOT NULL,
+		format       TEXT NOT NULL,
+		sha256       TEXT NOT NULL,
+		size         INTEGER NOT NULL,
+		provider     TEXT NOT NULL,
+		provider_id  TEXT NOT NULL,
+		attribution  TEXT NOT NULL,
+		UNIQUE(game_id, kind, position)
+	);
+
+	CREATE INDEX game_media_by_artifact ON game_media(sha256);`,
 }
 
 func migrate(db *sql.DB) error {

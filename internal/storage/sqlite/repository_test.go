@@ -3,13 +3,18 @@ package sqlite_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
+	"github.com/krisbaumgartner/omnisave/internal/storage"
 	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
 )
 
@@ -127,5 +132,76 @@ func TestDeleteOmniSaveKeepsSharedArtifacts(t *testing.T) {
 	}
 	if _, err := saves.OpenArtifact(ctx, firstRevision.Artifact.SHA256); !errors.Is(err, omnisave.ErrNotFound) {
 		t.Fatalf("unreferenced artifact should be deleted, got %v", err)
+	}
+}
+
+func TestCatalogMediaSurvivesRepositoryRestart(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "omnisave.db")
+	artifactDir := filepath.Join(directory, "artifacts")
+	repository, err := sqlite.Open(databasePath, artifactDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	game := catalog.Game{
+		ID:          "super-mario-world",
+		Title:       "Super Mario World",
+		Platform:    "Super Nintendo Entertainment System",
+		Provider:    "hasheous",
+		ProviderID:  "337",
+		RefreshedAt: time.Now().UTC(),
+	}
+	rom := catalog.GameROM{
+		ID:       "smw-usa",
+		GameID:   game.ID,
+		SHA1:     "6b47bb75d16514b6a476aa0c73a683a2a4c18765",
+		Source:   "no-intro",
+		SourceID: "1628019",
+	}
+	if err := repository.SaveGame(ctx, game, rom); err != nil {
+		t.Fatal(err)
+	}
+	contents := []byte("cover image")
+	sum := sha256.Sum256(contents)
+	hash := hex.EncodeToString(sum[:])
+	if err := repository.StoreArtifact(ctx, storage.Artifact{
+		Format: "image/png", SHA256: hash, Size: int64(len(contents)),
+	}, bytes.NewReader(contents)); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.SaveGameMedia(ctx, catalog.GameMedia{
+		ID: "smw-cover", GameID: game.ID, Kind: "cover", Format: "image/png",
+		SHA256: hash, Size: int64(len(contents)), Provider: "hasheous", ProviderID: "cover-id",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err = sqlite.Open(databasePath, artifactDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	stored, err := repository.FindGameByFingerprint(ctx, catalog.Fingerprint{SHA1: rom.SHA1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Title != game.Title || len(stored.Media) != 1 {
+		t.Fatalf("unexpected stored catalog game: %v", stored)
+	}
+	payload, err := repository.OpenArtifact(ctx, stored.Media[0].SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer payload.Close()
+	got, err := io.ReadAll(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, contents) {
+		t.Fatalf("unexpected stored media: %q", got)
 	}
 }

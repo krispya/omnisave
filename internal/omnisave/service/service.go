@@ -20,13 +20,13 @@ import (
 )
 
 type service struct {
-	repository storage.Repository
+	repository storage.OmniSaveRepository
 }
 
 const maxDisplayNameLength = 100
 
 // New creates an OmniSave service backed by repository.
-func New(repository storage.Repository) omnisave.Service {
+func New(repository storage.OmniSaveRepository) omnisave.Service {
 	return &service{repository: repository}
 }
 

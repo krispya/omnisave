@@ -3,15 +3,21 @@ import { useDismissibleDetails } from '../../lib/use-dismissible-details.js';
 type DeleteOptionsProps = {
   label: string;
   className: string;
+  onFixMatch?: () => void;
   onDelete: () => void;
 };
 
-export function DeleteOptions({ label, className, onDelete }: DeleteOptionsProps) {
+export function DeleteOptions({ label, className, onFixMatch, onDelete }: DeleteOptionsProps) {
   const menu = useDismissibleDetails();
 
   function requestDelete() {
     menu.current?.removeAttribute('open');
     onDelete();
+  }
+
+  function requestFixMatch() {
+    menu.current?.removeAttribute('open');
+    onFixMatch?.();
   }
 
   return (
@@ -24,7 +30,16 @@ export function DeleteOptions({ label, className, onDelete }: DeleteOptionsProps
           <circle cx="19" cy="12" r="1.75" fill="currentColor" />
         </svg>
       </summary>
-      <div className="absolute right-0 bottom-full mb-2 w-32 rounded-md border border-white/10 bg-[#202020] p-1 shadow-xl">
+      <div className="absolute right-0 bottom-full mb-2 w-36 rounded-md border border-white/10 bg-[#202020] p-1 shadow-xl">
+        {onFixMatch ? (
+          <button
+            type="button"
+            onClick={requestFixMatch}
+            className="w-full rounded px-3 py-2 text-left text-sm text-neutral-200 hover:bg-white/5"
+          >
+            Fix Match…
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={requestDelete}

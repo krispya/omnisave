@@ -20,6 +20,43 @@ export type Revision = {
   metadata?: Record<string, string>;
 };
 
+export type GameMedia = {
+  id: string;
+  kind: 'cover' | 'screenshot';
+  position: number;
+  format: string;
+  size: number;
+  url: string;
+  attribution?: string;
+};
+
+export type CatalogGame = {
+  id: string;
+  title: string;
+  sort_title?: string;
+  platform?: string;
+  publisher?: string;
+  description?: string;
+  provider: string;
+  provider_id: string;
+  metadata?: Record<string, unknown>;
+  media: GameMedia[];
+  refreshed_at: string;
+};
+
+export type GameMatchCandidate = {
+  provider: string;
+  provider_id: string;
+  title: string;
+  edition?: string;
+  platform?: string;
+  publisher?: string;
+  year?: string;
+  region?: string;
+  language?: string;
+  selection_token: string;
+};
+
 const apiBaseURL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
@@ -44,8 +81,77 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
   return response.json() as Promise<T>;
 }
 
+async function requestBlob(path: string, token: string, signal?: AbortSignal) {
+  const response = await fetch(`${apiBaseURL}${path}`, {
+    signal,
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) throw new Error(`Request failed (${response.status}).`);
+  return response.blob();
+}
+
 export function listOmniSaves(token: string, signal?: AbortSignal) {
   return request<OmniSave[]>('/api/v1/omnisaves', token, { signal });
+}
+
+export function listGames(token: string, signal?: AbortSignal) {
+  return request<CatalogGame[]>('/api/v1/games', token, { signal });
+}
+
+export function loadGameMedia(token: string, mediaURL: string, signal?: AbortSignal) {
+  return requestBlob(mediaURL, token, signal);
+}
+
+export function identifyGame(
+  token: string,
+  input: {
+    gameID?: string;
+    platform: string;
+    crc32?: string;
+    md5?: string;
+    sha1?: string;
+    sha256?: string;
+  }
+) {
+  return request<CatalogGame>('/api/v1/games/identify', token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      game_id: input.gameID,
+      fingerprint: {
+        platform: input.platform,
+        crc32: input.crc32,
+        md5: input.md5,
+        sha1: input.sha1,
+        sha256: input.sha256,
+      },
+    }),
+  });
+}
+
+export function searchGameMatches(
+  token: string,
+  gameID: string,
+  query: string,
+  platform?: string,
+  signal?: AbortSignal
+) {
+  const parameters = new URLSearchParams({ q: query, limit: '25' });
+  if (platform) parameters.set('platform', platform);
+  return request<GameMatchCandidate[]>(
+    `/api/v1/games/${encodeURIComponent(gameID)}/match-candidates?${parameters}`,
+    token,
+    { signal }
+  );
+}
+
+export function fixGameMatch(token: string, gameID: string, selectionToken: string) {
+  return request<CatalogGame>(`/api/v1/games/${encodeURIComponent(gameID)}/match`, token, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ selection_token: selectionToken }),
+  });
 }
 
 export function deleteOmniSave(token: string, omniSaveID: string) {

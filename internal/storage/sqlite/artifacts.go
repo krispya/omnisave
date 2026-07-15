@@ -9,11 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	"github.com/krisbaumgartner/omnisave/internal/storage"
 )
 
-func (r *Repository) storeArtifact(artifact omnisave.Artifact, payload io.Reader) error {
+func (r *Repository) storeArtifact(artifact storage.Artifact, payload io.Reader) error {
 	if !validHash(artifact.SHA256) || artifact.Size < 0 {
 		return fmt.Errorf("invalid artifact descriptor")
 	}

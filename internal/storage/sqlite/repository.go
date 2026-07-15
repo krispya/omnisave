@@ -157,7 +157,9 @@ func (r *Repository) DeleteOmniSave(ctx context.Context, id string) error {
 	for _, hash := range hashes {
 		var used bool
 		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM revisions WHERE artifact_sha256 = ?)`, hash,
+			`SELECT
+				EXISTS(SELECT 1 FROM revisions WHERE artifact_sha256 = ?) OR
+				EXISTS(SELECT 1 FROM game_media WHERE sha256 = ?)`, hash, hash,
 		).Scan(&used); err != nil {
 			return err
 		}
@@ -178,7 +180,11 @@ func (r *Repository) DeleteOmniSave(ctx context.Context, id string) error {
 }
 
 func (r *Repository) InsertRevision(ctx context.Context, revision omnisave.Revision, payload io.Reader) error {
-	if err := r.storeArtifact(revision.Artifact, payload); err != nil {
+	if err := r.StoreArtifact(ctx, storage.Artifact{
+		Format: revision.Artifact.Format,
+		SHA256: revision.Artifact.SHA256,
+		Size:   revision.Artifact.Size,
+	}, payload); err != nil {
 		return err
 	}
 	metadata, err := json.Marshal(revision.Metadata)
@@ -277,6 +283,10 @@ func (r *Repository) DeleteRevision(ctx context.Context, saveID, revisionID stri
 
 func (r *Repository) OpenArtifact(_ context.Context, hash string) (io.ReadCloser, error) {
 	return r.openArtifact(hash)
+}
+
+func (r *Repository) StoreArtifact(_ context.Context, artifact storage.Artifact, payload io.Reader) error {
+	return r.storeArtifact(artifact, payload)
 }
 
 func (r *Repository) listParents(ctx context.Context, revisionID string) ([]string, error) {

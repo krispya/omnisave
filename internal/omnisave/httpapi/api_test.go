@@ -8,8 +8,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/krisbaumgartner/omnisave/internal/catalog"
+	catalogservice "github.com/krisbaumgartner/omnisave/internal/catalog/service"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave/httpapi"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
@@ -137,6 +140,131 @@ func TestBearerAuth(t *testing.T) {
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("authorized request returned %d", response.Code)
 	}
+}
+
+func TestCatalogStory(t *testing.T) {
+	repository := storagetest.NewMemoryRepository()
+	saves := omnisaveservice.New(repository)
+	games := catalogservice.New(repository, repository, catalogProviderStub{})
+	handler := httpapi.New(saves, games)
+
+	response := request(t, handler, http.MethodPost, "/api/v1/games/identify", "application/json",
+		bytes.NewBufferString(`{
+			"game_id":"super-mario-world",
+			"fingerprint":{"platform":"snes","sha1":"6b47bb75d16514b6a476aa0c73a683a2a4c18765"}
+		}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("identify returned %d: %s", response.Code, response.Body.String())
+	}
+	var identified struct {
+		ID    string `json:"id"`
+		Media []struct {
+			ID  string `json:"id"`
+			URL string `json:"url"`
+		} `json:"media"`
+	}
+	decodeResponse(t, response, &identified)
+	if identified.ID != "super-mario-world" || len(identified.Media) != 1 {
+		t.Fatalf("unexpected identified game: %v", identified)
+	}
+
+	response = request(t, handler, http.MethodGet, identified.Media[0].URL, "", nil)
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("unexpected media response: %d %q", response.Code, response.Body.String())
+	}
+	if response.Body.String() != testCoverImage {
+		t.Fatalf("unexpected media: %q", response.Body.String())
+	}
+
+	response = request(t, handler, http.MethodGet, "/api/v1/games", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("list games returned %d: %s", response.Code, response.Body.String())
+	}
+	var listed []json.RawMessage
+	decodeResponse(t, response, &listed)
+	if len(listed) != 1 {
+		t.Fatalf("expected one catalog game, got %d", len(listed))
+	}
+}
+
+func TestManualCatalogMatchStory(t *testing.T) {
+	repository := storagetest.NewMemoryRepository()
+	handler := httpapi.New(
+		omnisaveservice.New(repository),
+		catalogservice.New(repository, repository, catalogProviderStub{}),
+	)
+
+	response := request(t, handler, http.MethodGet,
+		"/api/v1/games/debug-game/match-candidates?q=Super+Mario+World&platform=SNES", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("search returned %d: %s", response.Code, response.Body.String())
+	}
+	var candidates []catalog.GameCandidate
+	decodeResponse(t, response, &candidates)
+	if len(candidates) != 1 || candidates[0].SelectionToken == "" {
+		t.Fatalf("unexpected candidates: %v", candidates)
+	}
+
+	body, err := json.Marshal(catalog.MatchGame{SelectionToken: candidates[0].SelectionToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = request(t, handler, http.MethodPut, "/api/v1/games/debug-game/match",
+		"application/json", bytes.NewReader(body))
+	if response.Code != http.StatusOK {
+		t.Fatalf("match returned %d: %s", response.Code, response.Body.String())
+	}
+	var matched struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	decodeResponse(t, response, &matched)
+	if matched.ID != "debug-game" || matched.Title != "Super Mario World" {
+		t.Fatalf("unexpected manual match: %v", matched)
+	}
+}
+
+type catalogProviderStub struct{}
+
+const testCoverImage = "\x89PNG\r\n\x1a\ncover image"
+
+func (catalogProviderStub) Identify(_ context.Context, fingerprint catalog.Fingerprint) (*catalog.ProviderMatch, error) {
+	match := catalogStubMatch()
+	match.ROM.SHA1 = fingerprint.SHA1
+	return match, nil
+}
+
+func (catalogProviderStub) Search(context.Context, catalog.SearchGames) ([]catalog.GameCandidate, error) {
+	return []catalog.GameCandidate{{
+		Provider:       "hasheous",
+		ProviderID:     "962167",
+		Title:          "Super Mario World",
+		Edition:        "Super Mario World (USA)",
+		Platform:       "Super Nintendo Entertainment System",
+		SelectionToken: "known-selection",
+	}}, nil
+}
+
+func (catalogProviderStub) Match(context.Context, string) (*catalog.ProviderMatch, error) {
+	return catalogStubMatch(), nil
+}
+
+func catalogStubMatch() *catalog.ProviderMatch {
+	return &catalog.ProviderMatch{
+		Provider:   "hasheous",
+		ProviderID: "337",
+		Title:      "Super Mario World",
+		Platform:   "Super Nintendo Entertainment System",
+		ROM: catalog.ROMMatch{
+			ProviderID: "1628019",
+			Source:     "no-intro",
+		},
+		Media: []catalog.MediaReference{{Kind: "cover", ProviderID: "cover-id"}},
+	}
+}
+
+func (catalogProviderStub) OpenMedia(context.Context, catalog.MediaReference) (string, io.ReadCloser, error) {
+	return "image/png", io.NopCloser(strings.NewReader(testCoverImage)), nil
 }
 
 func request(t *testing.T, handler http.Handler, method, path, contentType string, body io.Reader) *httptest.ResponseRecorder {

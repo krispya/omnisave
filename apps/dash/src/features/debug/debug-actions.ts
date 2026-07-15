@@ -1,23 +1,25 @@
-import { createOmniSave, createRevision } from '../../lib/omnisave-api.js';
+import {
+  createOmniSave,
+  createRevision,
+  fixGameMatch,
+  searchGameMatches,
+} from '../../lib/omnisave-api.js';
 
 const debugGames = [
-  { slug: 'chrono-trigger', label: 'Chrono Trigger', platform: 'SNES' },
-  { slug: 'final-fantasy-vi', label: 'Final Fantasy VI', platform: 'SNES' },
-  { slug: 'metroid-fusion', label: 'Metroid Fusion', platform: 'Game Boy Advance' },
-  { slug: 'pokemon-emerald', label: 'Pokémon Emerald', platform: 'Game Boy Advance' },
-  { slug: 'super-mario-64', label: 'Super Mario 64', platform: 'Nintendo 64' },
+  { slug: 'chrono-trigger', label: 'Chrono Trigger' },
+  { slug: 'donkey-kong-country', label: 'Donkey Kong Country' },
+  { slug: 'earthbound', label: 'EarthBound' },
+  { slug: 'f-zero', label: 'F-Zero' },
+  { slug: 'super-mario-world', label: 'Super Mario World' },
+  { slug: 'super-metroid', label: 'Super Metroid' },
   {
-    slug: 'symphony-of-the-night',
-    label: 'Castlevania: Symphony of the Night',
-    platform: 'PlayStation',
+    slug: 'the-legend-of-zelda',
+    label: 'The Legend of Zelda: A Link to the Past',
+    query: 'Link to the Past',
   },
-  {
-    slug: 'the-minish-cap',
-    label: 'The Legend of Zelda: The Minish Cap',
-    platform: 'Game Boy Advance',
-  },
-  { slug: 'earthbound', label: 'EarthBound', platform: 'SNES' },
 ];
+
+const debugPlatform = 'Super Nintendo Entertainment System';
 
 function debugMetadata(label: string, platform?: string) {
   return {
@@ -27,17 +29,29 @@ function debugMetadata(label: string, platform?: string) {
   };
 }
 
-export function createRandomTestOmniSave(token: string, existingLabels: string[]) {
+export async function createRandomTestOmniSave(token: string, existingLabels: string[]) {
   const sequence = Date.now().toString(36);
   const unusedGames = debugGames.filter((game) => !existingLabels.includes(game.label));
   const choices = unusedGames.length > 0 ? unusedGames : debugGames;
   const game = choices[Math.floor(Math.random() * choices.length)] ?? debugGames[0];
 
-  return createOmniSave(token, {
+  const created = await createOmniSave(token, {
     gameID: `${game.slug}-${sequence}`,
     slot: 'slot-1',
-    metadata: debugMetadata(game.label, game.platform),
+    metadata: debugMetadata(game.label, debugPlatform),
   });
+  const catalog = searchGameMatches(
+    token,
+    created.game_id,
+    game.query ?? game.label,
+    debugPlatform
+  ).then((candidates) => {
+    const candidate = candidates[0];
+    if (!candidate) throw new Error(`Hasheous did not find ${game.label}.`);
+    return fixGameMatch(token, created.game_id, candidate.selection_token);
+  });
+
+  return { save: created, catalog };
 }
 
 export function createTestSave(
