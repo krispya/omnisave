@@ -199,7 +199,7 @@ func (r *Repository) listParents(ctx context.Context, revisionID string) ([]stri
 		return nil, err
 	}
 	defer rows.Close()
-	var parents []string
+	parents := make([]string, 0)
 	for rows.Next() {
 		var parent string
 		if err := rows.Scan(&parent); err != nil {

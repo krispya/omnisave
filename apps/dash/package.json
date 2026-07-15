@@ -19,6 +19,7 @@
     "@config/oxlint": "workspace:*",
     "@config/typescript": "workspace:*",
     "@rolldown/plugin-babel": "^0.2.3",
+    "@tailwindcss/vite": "^4.3.2",
     "@types/babel__core": "^7.20.5",
     "@types/node": "^26.1.1",
     "@types/react": "^19.2.17",
@@ -26,6 +27,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "babel-plugin-react-compiler": "^1.0.0",
     "prettier": "^3.9.5",
+    "tailwindcss": "^4.3.2",
     "typescript": "^7.0.2",
     "vite": "^8.1.4"
   }

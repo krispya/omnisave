@@ -1,0 +1,5 @@
+listen_addr: :8080
+token: 7ef53d8f996425a3915631bf46bfe76d79d46c49319381f0e21e14a6347ab5ca
+db_path: ./omnisave.db
+artifact_dir: ./artifacts
+web_dir: ./apps/dash/dist

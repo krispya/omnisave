@@ -60,6 +60,9 @@ func TestNetworkClientStory(t *testing.T) {
 	if len(history) != 1 || history[0].ID != revision.ID {
 		t.Fatalf("unexpected history: %v", history)
 	}
+	if history[0].ParentIDs == nil {
+		t.Fatal("an initial revision should have an empty parent list")
+	}
 
 	response = request(t, handler, http.MethodGet,
 		"/api/v1/artifacts/"+revision.Artifact.SHA256, "", nil)
