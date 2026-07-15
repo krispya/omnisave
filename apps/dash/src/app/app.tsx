@@ -3,6 +3,7 @@ import {
   deleteOmniSave,
   listOmniSaves,
   listRevisions,
+  updateOmniSaveDisplayName,
   type OmniSave,
   type Revision,
 } from '../lib/omnisave-api.js';
@@ -205,6 +206,14 @@ export function App() {
     }
   }
 
+  async function renameSlot(save: OmniSave, displayName: string) {
+    if (!token) return;
+    const updated = await updateOmniSaveDisplayName(token, save.id, displayName);
+    setSaves((current) =>
+      current.map((candidate) => (candidate.id === updated.id ? updated : candidate))
+    );
+  }
+
   function requestDeleteGame(game: GameSummary) {
     setDeleteError('');
     setDeleteTarget({ type: 'game', game });
@@ -348,6 +357,7 @@ export function App() {
                 revisionError={revisionError}
                 onSelectSave={(save) => setSelectedSaveID(save.id)}
                 onRequestDelete={requestDeleteSlot}
+                onRenameSave={renameSlot}
               />
             ) : (
               <section className="mt-8" aria-label="Games with saves" aria-busy={loading}>

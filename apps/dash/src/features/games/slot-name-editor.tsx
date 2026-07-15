@@ -1,0 +1,111 @@
+import { useRef, useState, type KeyboardEvent } from 'react';
+import type { OmniSave } from '../../lib/omnisave-api.js';
+import { displaySlotName, formatSlotName } from './slot-name.js';
+
+type SlotNameEditorProps = {
+  save: OmniSave;
+  onSave: (save: OmniSave, displayName: string) => Promise<void>;
+};
+
+export function SlotNameEditor({ save, onSave }: SlotNameEditorProps) {
+  const input = useRef<HTMLInputElement>(null);
+  const cancelNextBlur = useRef(false);
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  function startEditing() {
+    cancelNextBlur.current = false;
+    setValue(save.display_name?.trim() || formatSlotName(save.slot));
+    setError('');
+    setEditing(true);
+  }
+
+  function cancelEditing() {
+    if (saving) return;
+    cancelNextBlur.current = true;
+    setEditing(false);
+    setError('');
+  }
+
+  async function commitEdit() {
+    if (cancelNextBlur.current) {
+      cancelNextBlur.current = false;
+      return;
+    }
+    const displayName = value.trim();
+    const currentName = save.display_name?.trim() ?? '';
+    if (displayName === currentName || (!currentName && displayName === formatSlotName(save.slot))) {
+      setEditing(false);
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    try {
+      await onSave(save, displayName);
+      setSaving(false);
+      setEditing(false);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Could not rename this slot.');
+      setSaving(false);
+      requestAnimationFrame(() => input.current?.focus());
+    }
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      event.currentTarget.blur();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelEditing();
+    }
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={startEditing}
+        className="pointer-events-auto inline-block h-5 max-w-full truncate rounded align-top text-sm leading-5 font-semibold text-white outline-none hover:text-[#e5a00d] focus-visible:ring-2 focus-visible:ring-[#e5a00d]"
+        title={`Rename ${displaySlotName(save)}`}
+      >
+        {displaySlotName(save)}
+      </button>
+    );
+  }
+
+  return (
+    <div className="relative h-5 min-w-0">
+      <input
+        ref={input}
+        autoFocus
+        value={value}
+        onFocus={(event) => event.currentTarget.select()}
+        onChange={(event) => {
+          setValue(event.target.value);
+          setError('');
+        }}
+        onBlur={() => void commitEdit()}
+        onKeyDown={handleKeyDown}
+        disabled={saving}
+        maxLength={100}
+        aria-label={`Display name for ${formatSlotName(save.slot)}`}
+        aria-invalid={Boolean(error)}
+        className={`pointer-events-auto -ml-2 h-5 w-[calc(100%+0.5rem)] min-w-0 rounded border-0 px-2 text-sm leading-5 font-semibold text-white outline-none disabled:opacity-60 ${
+          error ? 'bg-red-950' : 'bg-[#111111]'
+        }`}
+      />
+      {error ? (
+        <p
+          role="alert"
+          className="absolute top-full left-0 z-30 mt-1 whitespace-nowrap rounded bg-[#202020] px-2 py-1 text-xs text-red-300 shadow-lg"
+        >
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}

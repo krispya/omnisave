@@ -1,7 +1,7 @@
 import type { OmniSave } from '../../lib/omnisave-api.js';
 import { useDismissibleDetails } from '../../lib/use-dismissible-details.js';
 import type { GameSummary } from '../games/game-library.js';
-import { formatSlotName } from '../games/slot-name.js';
+import { displaySlotName } from '../games/slot-name.js';
 
 type DebugAction = 'game' | 'save' | 'revision' | null;
 
@@ -48,7 +48,7 @@ export function DebugMenu({
             <DebugItem
               label={action === 'revision' ? 'Adding revision…' : 'New revision'}
               description={
-                selectedSave ? `Extend ${formatSlotName(selectedSave.slot)}` : 'Select a save first'
+                selectedSave ? `Extend ${displaySlotName(selectedSave)}` : 'Select a save first'
               }
               disabled={!selectedSave || !revisionHistoryAvailable || action !== null}
               onClick={() => run(onAddRevision)}

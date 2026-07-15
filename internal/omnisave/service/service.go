@@ -9,7 +9,9 @@ import (
 	"errors"
 	"io"
 	"slices"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -20,6 +22,8 @@ import (
 type service struct {
 	repository storage.Repository
 }
+
+const maxDisplayNameLength = 100
 
 // New creates an OmniSave service backed by repository.
 func New(repository storage.Repository) omnisave.Service {
@@ -33,12 +37,17 @@ func (s *service) Create(ctx context.Context, input omnisave.CreateOmniSave) (*o
 	if input.Slot == "" {
 		input.Slot = "slot-1"
 	}
+	displayName, valid := normalizeDisplayName(input.DisplayName)
+	if !valid {
+		return nil, omnisave.ErrInvalid
+	}
 	save := omnisave.OmniSave{
-		ID:        uuid.NewString(),
-		GameID:    input.GameID,
-		Slot:      input.Slot,
-		CreatedAt: time.Now().UTC(),
-		Metadata:  cloneMap(input.Metadata),
+		ID:          uuid.NewString(),
+		GameID:      input.GameID,
+		Slot:        input.Slot,
+		DisplayName: displayName,
+		CreatedAt:   time.Now().UTC(),
+		Metadata:    cloneMap(input.Metadata),
 	}
 	if err := s.repository.InsertOmniSave(ctx, save); err != nil {
 		return nil, translateError(err)
@@ -54,6 +63,20 @@ func (s *service) List(ctx context.Context) ([]omnisave.OmniSave, error) {
 func (s *service) Get(ctx context.Context, id string) (*omnisave.OmniSave, error) {
 	save, err := s.repository.GetOmniSave(ctx, id)
 	return save, translateError(err)
+}
+
+func (s *service) Update(ctx context.Context, id string, input omnisave.UpdateOmniSave) (*omnisave.OmniSave, error) {
+	if input.DisplayName == nil {
+		return nil, omnisave.ErrInvalid
+	}
+	displayName, valid := normalizeDisplayName(*input.DisplayName)
+	if !valid {
+		return nil, omnisave.ErrInvalid
+	}
+	if err := s.repository.UpdateOmniSaveDisplayName(ctx, id, displayName); err != nil {
+		return nil, translateError(err)
+	}
+	return s.Get(ctx, id)
 }
 
 func (s *service) Delete(ctx context.Context, id string) error {
@@ -154,6 +177,11 @@ func cloneMap(source map[string]string) map[string]string {
 		clone[key] = value
 	}
 	return clone
+}
+
+func normalizeDisplayName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	return name, utf8.RuneCountInString(name) <= maxDisplayNameLength
 }
 
 var _ omnisave.Service = (*service)(nil)

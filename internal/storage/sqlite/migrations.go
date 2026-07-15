@@ -32,6 +32,7 @@ var migrations = []string{
 		position    INTEGER NOT NULL,
 		PRIMARY KEY (revision_id, parent_id)
 	);`,
+	`ALTER TABLE omnisaves ADD COLUMN display_name TEXT NOT NULL DEFAULT '';`,
 }
 
 func migrate(db *sql.DB) error {

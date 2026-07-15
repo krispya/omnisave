@@ -31,6 +31,10 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	displayName := "Before the final boss"
+	if _, err := saves.Update(ctx, save.ID, omnisave.UpdateOmniSave{DisplayName: &displayName}); err != nil {
+		t.Fatal(err)
+	}
 	revision, err := saves.AddRevision(ctx, save.ID, omnisave.CreateRevision{
 		Format: "application/vnd.omnisave.raw-save.v1",
 	}, bytes.NewReader([]byte("game-save contents")))
@@ -52,7 +56,7 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.GameID != "pokemon-emerald-usa" {
+	if stored.GameID != "pokemon-emerald-usa" || stored.DisplayName != displayName {
 		t.Fatalf("unexpected save: %v", stored)
 	}
 	history, err := saves.ListRevisions(ctx, save.ID)

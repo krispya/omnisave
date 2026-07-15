@@ -2,7 +2,8 @@ import type { OmniSave, Revision } from '../../lib/omnisave-api.js';
 import { DeleteOptions } from './delete-options.js';
 import { GameArtwork, type GameSummary } from './game-library.js';
 import { RevisionPanel } from './revision-panel.js';
-import { formatSlotName } from './slot-name.js';
+import { SlotNameEditor } from './slot-name-editor.js';
+import { displaySlotName } from './slot-name.js';
 
 function formatDate(value: string) {
   const date = new Date(value);
@@ -18,6 +19,7 @@ type GameDetailProps = {
   revisionError: string;
   onSelectSave: (save: OmniSave) => void;
   onRequestDelete: (save: OmniSave) => void;
+  onRenameSave: (save: OmniSave, displayName: string) => Promise<void>;
 };
 
 export function GameDetail({
@@ -28,6 +30,7 @@ export function GameDetail({
   revisionError,
   onSelectSave,
   onRequestDelete,
+  onRenameSave,
 }: GameDetailProps) {
   return (
     <div className="mt-8">
@@ -55,32 +58,37 @@ export function GameDetail({
             {game.saves.map((save, index) => {
               const selected = save.id === selectedSave?.id;
               return (
-                <div key={save.id} className="group relative">
+                <div
+                  key={save.id}
+                  className={`group relative rounded-md border bg-[#1a1a1a] transition hover:bg-[#202020] ${
+                    selected ? 'border-[#e5a00d]' : 'border-white/5'
+                  }`}
+                >
                   <button
                     type="button"
                     aria-pressed={selected}
+                    aria-label={`Select ${displaySlotName(save)}`}
                     onClick={() => onSelectSave(save)}
-                    className={`flex w-full items-center gap-4 rounded-md border bg-[#1a1a1a] p-3.5 pr-14 text-left transition hover:bg-[#202020] ${
-                      selected ? 'border-[#e5a00d]' : 'border-white/5'
-                    }`}
-                  >
+                    className="absolute inset-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-[#e5a00d]"
+                  />
+                  <div className="pointer-events-none relative z-10 grid grid-cols-[2.25rem_minmax(0,1fr)_2rem] items-center gap-4 p-3.5">
                     <div className="grid size-9 shrink-0 place-items-center rounded bg-white/5 text-sm font-semibold text-[#e5a00d]">
                       {index + 1}
                     </div>
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-white">
-                        {formatSlotName(save.slot)}
-                      </p>
+                      <div className="h-5">
+                        <SlotNameEditor save={save} onSave={onRenameSave} />
+                      </div>
                       <p className="mt-1 text-xs text-slate-500">
                         Created {formatDate(save.created_at)}
                       </p>
                     </div>
-                  </button>
-                  <DeleteOptions
-                    label={formatSlotName(save.slot)}
-                    className="absolute top-1/2 right-2 z-10 -translate-y-1/2 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
-                    onDelete={() => onRequestDelete(save)}
-                  />
+                    <DeleteOptions
+                      label={displaySlotName(save)}
+                      className="pointer-events-auto relative z-20 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
+                      onDelete={() => onRequestDelete(save)}
+                    />
+                  </div>
                 </div>
               );
             })}

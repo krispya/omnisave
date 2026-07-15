@@ -2,6 +2,7 @@ export type OmniSave = {
   id: string;
   game_id: string;
   slot: string;
+  display_name: string;
   created_at: string;
   metadata?: Record<string, string>;
 };
@@ -51,9 +52,22 @@ export function deleteOmniSave(token: string, omniSaveID: string) {
   return request<void>(`/api/v1/omnisaves/${omniSaveID}`, token, { method: 'DELETE' });
 }
 
+export function updateOmniSaveDisplayName(token: string, omniSaveID: string, displayName: string) {
+  return request<OmniSave>(`/api/v1/omnisaves/${omniSaveID}`, token, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ display_name: displayName }),
+  });
+}
+
 export function createOmniSave(
   token: string,
-  input: { gameID: string; slot: string; metadata?: Record<string, string> }
+  input: {
+    gameID: string;
+    slot: string;
+    displayName?: string;
+    metadata?: Record<string, string>;
+  }
 ) {
   return request<OmniSave>('/api/v1/omnisaves', token, {
     method: 'POST',
@@ -61,6 +75,7 @@ export function createOmniSave(
     body: JSON.stringify({
       game_id: input.gameID,
       slot: input.slot,
+      display_name: input.displayName,
       metadata: input.metadata,
     }),
   });
