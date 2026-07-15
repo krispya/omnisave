@@ -1,7 +1,7 @@
 import type { OmniSave } from '../../lib/omnisave-api.js';
 import { useDismissibleDetails } from '../../lib/use-dismissible-details.js';
 import type { GameSummary } from '../games/game-library.js';
-import { displaySlotName } from '../games/slot-name.js';
+import { defaultSaveName, displaySaveName } from '../games/save-name.js';
 
 type DebugAction = 'game' | 'save' | 'revision' | null;
 
@@ -25,6 +25,12 @@ export function DebugMenu({
   onAddRevision,
 }: DebugMenuProps) {
   const menu = useDismissibleDetails();
+  const selectedSaveIndex = selectedSave
+    ? (game?.saves.findIndex((save) => save.id === selectedSave.id) ?? -1)
+    : -1;
+  const selectedSaveName = selectedSave
+    ? displaySaveName(selectedSave, defaultSaveName(Math.max(selectedSaveIndex, 0)))
+    : '';
 
   function run(callback: () => void) {
     menu.current?.removeAttribute('open');
@@ -41,15 +47,13 @@ export function DebugMenu({
           <>
             <DebugItem
               label={action === 'save' ? 'Adding save…' : 'New save'}
-              description={`Add another slot to ${game.label}`}
+              description={`Add another save to ${game.label}`}
               disabled={action !== null}
               onClick={() => run(onAddSave)}
             />
             <DebugItem
               label={action === 'revision' ? 'Adding revision…' : 'New revision'}
-              description={
-                selectedSave ? `Extend ${displaySlotName(selectedSave)}` : 'Select a save first'
-              }
+              description={selectedSave ? `Extend ${selectedSaveName}` : 'Select a save first'}
               disabled={!selectedSave || !revisionHistoryAvailable || action !== null}
               onClick={() => run(onAddRevision)}
             />

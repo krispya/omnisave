@@ -37,7 +37,6 @@ export async function createRandomTestOmniSave(token: string, existingLabels: st
 
   const created = await createOmniSave(token, {
     gameID: `${game.slug}-${sequence}`,
-    slot: 'slot-1',
     metadata: debugMetadata(game.label, debugPlatform),
   });
   const catalog = searchGameMatches(
@@ -56,12 +55,10 @@ export async function createRandomTestOmniSave(token: string, existingLabels: st
 
 export function createTestSave(
   token: string,
-  game: { id: string; label: string; platform?: string },
-  slot: string
+  game: { id: string; label: string; platform?: string }
 ) {
   return createOmniSave(token, {
     gameID: game.id,
-    slot,
     metadata: debugMetadata(game.label, game.platform),
   });
 }

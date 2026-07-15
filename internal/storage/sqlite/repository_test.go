@@ -29,10 +29,7 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	saves := omnisaveservice.New(repository)
-	save, err := saves.Create(ctx, omnisave.CreateOmniSave{
-		GameID: "pokemon-emerald-usa",
-		Slot:   "slot-1",
-	})
+	save, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald-usa"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,11 +95,11 @@ func TestDeleteOmniSaveKeepsSharedArtifacts(t *testing.T) {
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 
-	first, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald", Slot: "one"})
+	first, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald", Slot: "two"})
+	second, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald"})
 	if err != nil {
 		t.Fatal(err)
 	}
