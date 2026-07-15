@@ -35,7 +35,7 @@ export function createRandomTestOmniSave(token: string, existingLabels: string[]
 
   return createOmniSave(token, {
     gameID: `${game.slug}-${sequence}`,
-    slot: 'default',
+    slot: 'slot-1',
     metadata: debugMetadata(game.label, game.platform),
   });
 }

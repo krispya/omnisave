@@ -1,5 +1,5 @@
 import type { OmniSave } from '../../lib/omnisave-api.js';
-import { useDismissibleDetails } from '../../lib/use-dismissible-details.js';
+import { DeleteOptions } from './delete-options.js';
 
 export type GameSummary = {
   id: string;
@@ -110,7 +110,11 @@ export function GameLibrary({
                 className="aspect-[3/4] w-full shadow-md shadow-black/30 ring-1 ring-white/10 transition duration-150 group-hover:scale-[1.02] group-hover:shadow-xl group-hover:shadow-black/50 group-hover:ring-[#e5a00d]"
               />
             </button>
-            <GameOptions game={game} onRequestDelete={onRequestDelete} />
+            <DeleteOptions
+              label={game.label}
+              className="absolute right-2 bottom-2 z-10 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
+              onDelete={() => onRequestDelete(game)}
+            />
           </div>
           <button type="button" onClick={() => onOpenGame(game)} className="block w-full text-left">
             <h2 className="mt-2.5 truncate text-[13px] font-medium text-neutral-200 group-hover:text-white">
@@ -133,45 +137,5 @@ export function GameLibrarySkeleton() {
         <div key={index} className="aspect-[3/4] animate-pulse rounded-md bg-white/5" />
       ))}
     </div>
-  );
-}
-
-function GameOptions({
-  game,
-  onRequestDelete,
-}: {
-  game: GameSummary;
-  onRequestDelete: (game: GameSummary) => void;
-}) {
-  const menu = useDismissibleDetails();
-
-  function requestDelete() {
-    menu.current?.removeAttribute('open');
-    onRequestDelete(game);
-  }
-
-  return (
-    <details
-      ref={menu}
-      className="absolute right-2 bottom-2 z-10 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
-    >
-      <summary className="grid size-8 cursor-pointer list-none place-items-center rounded-full bg-black/75 text-white marker:content-none hover:bg-black">
-        <span className="sr-only">Options for {game.label}</span>
-        <svg viewBox="0 0 24 24" className="size-4" aria-hidden="true">
-          <circle cx="5" cy="12" r="1.75" fill="currentColor" />
-          <circle cx="12" cy="12" r="1.75" fill="currentColor" />
-          <circle cx="19" cy="12" r="1.75" fill="currentColor" />
-        </svg>
-      </summary>
-      <div className="absolute right-0 bottom-full mb-2 w-32 rounded-md border border-white/10 bg-[#202020] p-1 shadow-xl">
-        <button
-          type="button"
-          onClick={requestDelete}
-          className="w-full rounded px-3 py-2 text-left text-sm text-red-300 hover:bg-white/5"
-        >
-          Delete
-        </button>
-      </div>
-    </details>
   );
 }

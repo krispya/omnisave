@@ -31,7 +31,7 @@ func (s *service) Create(ctx context.Context, input omnisave.CreateOmniSave) (*o
 		return nil, omnisave.ErrInvalid
 	}
 	if input.Slot == "" {
-		input.Slot = "default"
+		input.Slot = "slot-1"
 	}
 	save := omnisave.OmniSave{
 		ID:        uuid.NewString(),

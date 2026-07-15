@@ -13,7 +13,7 @@ import {
   createTestSave,
 } from '../features/debug/debug-actions.js';
 import { DebugMenu } from '../features/debug/debug-menu.js';
-import { DeleteGameDialog } from '../features/games/delete-game-dialog.js';
+import { DeleteGameDialog, DeleteSlotDialog } from '../features/games/delete-dialog.js';
 import { GameDetail } from '../features/games/game-detail.js';
 import {
   GameLibrary,
@@ -21,8 +21,12 @@ import {
   groupOmniSavesByGame,
   type GameSummary,
 } from '../features/games/game-library.js';
+import { nextSlotName } from '../features/games/slot-name.js';
 
 const tokenStorageKey = 'omnisave.api-token';
+
+type DeleteTarget =
+  { type: 'game'; game: GameSummary } | { type: 'slot'; game: GameSummary; save: OmniSave };
 
 export function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem(tokenStorageKey) ?? '');
@@ -36,7 +40,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [loadingRevisions, setLoadingRevisions] = useState(false);
   const [debugAction, setDebugAction] = useState<'game' | 'save' | 'revision' | null>(null);
-  const [gameToDelete, setGameToDelete] = useState<GameSummary>();
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
 
@@ -173,7 +177,7 @@ export function App() {
           label: selectedGame.label,
           platform: selectedGame.platform,
         },
-        `slot-${selectedGame.saves.length + 1}`
+        nextSlotName(selectedGame.saves)
       );
       await loadSaves(token);
       setSelectedSaveID(created.id);
@@ -201,31 +205,46 @@ export function App() {
     }
   }
 
-  function requestDelete(game: GameSummary) {
+  function requestDeleteGame(game: GameSummary) {
     setDeleteError('');
-    setGameToDelete(game);
+    setDeleteTarget({ type: 'game', game });
+  }
+
+  function requestDeleteSlot(save: OmniSave) {
+    if (!selectedGame) return;
+    setDeleteError('');
+    setDeleteTarget({ type: 'slot', game: selectedGame, save });
   }
 
   function cancelDelete() {
     if (deleting) return;
-    setGameToDelete(undefined);
+    setDeleteTarget(undefined);
     setDeleteError('');
   }
 
   async function confirmDelete() {
-    if (!token || !gameToDelete) return;
+    if (!token || !deleteTarget) return;
 
     setDeleting(true);
     setDeleteError('');
     try {
-      for (const save of gameToDelete.saves) {
+      const savesToDelete =
+        deleteTarget.type === 'game' ? deleteTarget.game.saves : [deleteTarget.save];
+      for (const save of savesToDelete) {
         await deleteOmniSave(token, save.id);
       }
-      setGameToDelete(undefined);
+
+      if (deleteTarget.type === 'slot' && selectedSaveID === deleteTarget.save.id) {
+        const nextSave = deleteTarget.game.saves.find((save) => save.id !== deleteTarget.save.id);
+        setSelectedSaveID(nextSave?.id ?? '');
+      }
+      setDeleteTarget(undefined);
       await loadSaves(token);
     } catch (deleteFailure) {
       setDeleteError(
-        deleteFailure instanceof Error ? deleteFailure.message : 'Could not delete this game.'
+        deleteFailure instanceof Error
+          ? deleteFailure.message
+          : `Could not delete this ${deleteTarget.type}.`
       );
     } finally {
       setDeleting(false);
@@ -328,22 +347,35 @@ export function App() {
                 loadingRevisions={loadingRevisions}
                 revisionError={revisionError}
                 onSelectSave={(save) => setSelectedSaveID(save.id)}
+                onRequestDelete={requestDeleteSlot}
               />
             ) : (
               <section className="mt-8" aria-label="Games with saves" aria-busy={loading}>
                 {loading && games.length === 0 ? (
                   <GameLibrarySkeleton />
                 ) : (
-                  <GameLibrary games={games} onOpenGame={openGame} onRequestDelete={requestDelete} />
+                  <GameLibrary
+                    games={games}
+                    onOpenGame={openGame}
+                    onRequestDelete={requestDeleteGame}
+                  />
                 )}
               </section>
             )}
           </>
         )}
       </main>
-      {gameToDelete ? (
+      {deleteTarget?.type === 'game' ? (
         <DeleteGameDialog
-          game={gameToDelete}
+          game={deleteTarget.game}
+          deleting={deleting}
+          error={deleteError}
+          onCancel={cancelDelete}
+          onConfirm={() => void confirmDelete()}
+        />
+      ) : deleteTarget?.type === 'slot' ? (
+        <DeleteSlotDialog
+          save={deleteTarget.save}
           deleting={deleting}
           error={deleteError}
           onCancel={cancelDelete}

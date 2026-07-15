@@ -19,7 +19,6 @@ func TestCreateOmniSave(t *testing.T) {
 
 	created, err := saves.Create(ctx, omnisave.CreateOmniSave{
 		GameID: "pokemon-emerald-usa",
-		Slot:   "default",
 		Metadata: map[string]string{
 			"label": "My Pokémon save",
 		},
@@ -32,7 +31,7 @@ func TestCreateOmniSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.GameID != "pokemon-emerald-usa" || stored.Slot != "default" {
+	if stored.GameID != "pokemon-emerald-usa" || stored.Slot != "slot-1" {
 		t.Fatalf("unexpected save: %v", stored)
 	}
 	if stored.Metadata["label"] != "My Pokémon save" {
@@ -46,7 +45,7 @@ func TestListOmniSaves(t *testing.T) {
 
 	created, err := saves.Create(ctx, omnisave.CreateOmniSave{
 		GameID: "pokemon-emerald-usa",
-		Slot:   "default",
+		Slot:   "slot-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +64,7 @@ func TestAddAndReadRevision(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
 
-	save, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald-usa", Slot: "default"})
+	save, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald-usa", Slot: "slot-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +88,7 @@ func TestReadRevisionHistory(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
 
-	save, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald-usa", Slot: "default"})
+	save, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald-usa", Slot: "slot-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +119,7 @@ func TestDeleteOnlyLeafRevision(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
 
-	save, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald-usa", Slot: "default"})
+	save, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald-usa", Slot: "slot-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +152,7 @@ func TestReadArtifact(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
 
-	save, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald-usa", Slot: "default"})
+	save, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald-usa", Slot: "slot-1"})
 	if err != nil {
 		t.Fatal(err)
 	}

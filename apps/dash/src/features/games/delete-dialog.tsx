@@ -1,21 +1,27 @@
-import { useEffect } from 'react';
+import { useEffect, useId, type ReactNode } from 'react';
+import type { OmniSave } from '../../lib/omnisave-api.js';
 import type { GameSummary } from './game-library.js';
+import { formatSlotName } from './slot-name.js';
 
-type DeleteGameDialogProps = {
-  game: GameSummary;
+type DeleteDialogProps = {
+  title: string;
+  description: ReactNode;
   deleting: boolean;
   error: string;
   onCancel: () => void;
   onConfirm: () => void;
 };
 
-export function DeleteGameDialog({
-  game,
+function DeleteDialog({
+  title,
+  description,
   deleting,
   error,
   onCancel,
   onConfirm,
-}: DeleteGameDialogProps) {
+}: DeleteDialogProps) {
+  const titleID = useId();
+
   useEffect(() => {
     function closeOnEscape(event: KeyboardEvent) {
       if (event.key === 'Escape' && !deleting) onCancel();
@@ -30,17 +36,13 @@ export function DeleteGameDialog({
       <section
         role="dialog"
         aria-modal="true"
-        aria-labelledby="delete-game-title"
+        aria-labelledby={titleID}
         className="w-full max-w-md rounded-lg border border-white/10 bg-[#202020] p-6 shadow-2xl"
       >
-        <h2 id="delete-game-title" className="text-lg font-medium text-white">
-          Delete {game.label}?
+        <h2 id={titleID} className="text-lg font-medium text-white">
+          {title}
         </h2>
-        <p className="mt-3 text-sm leading-6 text-neutral-400">
-          This permanently deletes {game.saves.length}{' '}
-          {game.saves.length === 1 ? 'OmniSave' : 'OmniSaves'}, their revision history, and any
-          unshared artifacts. This cannot be undone.
-        </p>
+        <p className="mt-3 text-sm leading-6 text-neutral-400">{description}</p>
 
         {error ? (
           <p role="alert" className="mt-4 rounded-md bg-red-400/10 px-3 py-2 text-sm text-red-200">
@@ -69,5 +71,38 @@ export function DeleteGameDialog({
         </div>
       </section>
     </div>
+  );
+}
+
+type DeleteStateProps = Pick<DeleteDialogProps, 'deleting' | 'error' | 'onCancel' | 'onConfirm'>;
+
+export function DeleteGameDialog({ game, ...state }: DeleteStateProps & { game: GameSummary }) {
+  return (
+    <DeleteDialog
+      {...state}
+      title={`Delete ${game.label}?`}
+      description={
+        <>
+          This permanently deletes {game.saves.length}{' '}
+          {game.saves.length === 1 ? 'OmniSave' : 'OmniSaves'}, their revision history, and any
+          unshared artifacts. This cannot be undone.
+        </>
+      }
+    />
+  );
+}
+
+export function DeleteSlotDialog({ save, ...state }: DeleteStateProps & { save: OmniSave }) {
+  return (
+    <DeleteDialog
+      {...state}
+      title={`Delete ${formatSlotName(save.slot)}?`}
+      description={
+        <>
+          This permanently deletes this save slot, its revision history, and any unshared artifacts.
+          This cannot be undone.
+        </>
+      }
+    />
   );
 }

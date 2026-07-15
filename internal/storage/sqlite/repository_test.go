@@ -26,7 +26,7 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmniSave{
 		GameID: "pokemon-emerald-usa",
-		Slot:   "default",
+		Slot:   "slot-1",
 	})
 	if err != nil {
 		t.Fatal(err)

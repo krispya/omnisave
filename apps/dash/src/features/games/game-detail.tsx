@@ -1,6 +1,8 @@
 import type { OmniSave, Revision } from '../../lib/omnisave-api.js';
+import { DeleteOptions } from './delete-options.js';
 import { GameArtwork, type GameSummary } from './game-library.js';
 import { RevisionPanel } from './revision-panel.js';
+import { formatSlotName } from './slot-name.js';
 
 function formatDate(value: string) {
   const date = new Date(value);
@@ -15,6 +17,7 @@ type GameDetailProps = {
   loadingRevisions: boolean;
   revisionError: string;
   onSelectSave: (save: OmniSave) => void;
+  onRequestDelete: (save: OmniSave) => void;
 };
 
 export function GameDetail({
@@ -24,6 +27,7 @@ export function GameDetail({
   loadingRevisions,
   revisionError,
   onSelectSave,
+  onRequestDelete,
 }: GameDetailProps) {
   return (
     <div className="mt-8">
@@ -51,30 +55,33 @@ export function GameDetail({
             {game.saves.map((save, index) => {
               const selected = save.id === selectedSave?.id;
               return (
-                <button
-                  key={save.id}
-                  type="button"
-                  aria-pressed={selected}
-                  onClick={() => onSelectSave(save)}
-                  className={`flex w-full items-center justify-between gap-4 rounded-md border bg-[#1a1a1a] p-3.5 text-left transition hover:bg-[#202020] ${
-                    selected ? 'border-[#e5a00d]' : 'border-white/5'
-                  }`}
-                >
-                  <div className="flex min-w-0 items-center gap-4">
+                <div key={save.id} className="group relative">
+                  <button
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => onSelectSave(save)}
+                    className={`flex w-full items-center gap-4 rounded-md border bg-[#1a1a1a] p-3.5 pr-14 text-left transition hover:bg-[#202020] ${
+                      selected ? 'border-[#e5a00d]' : 'border-white/5'
+                    }`}
+                  >
                     <div className="grid size-9 shrink-0 place-items-center rounded bg-white/5 text-sm font-semibold text-[#e5a00d]">
                       {index + 1}
                     </div>
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-white">{save.slot}</p>
+                      <p className="truncate text-sm font-semibold text-white">
+                        {formatSlotName(save.slot)}
+                      </p>
                       <p className="mt-1 text-xs text-slate-500">
                         Created {formatDate(save.created_at)}
                       </p>
                     </div>
-                  </div>
-                  <span className="text-slate-600" aria-hidden="true">
-                    →
-                  </span>
-                </button>
+                  </button>
+                  <DeleteOptions
+                    label={formatSlotName(save.slot)}
+                    className="absolute top-1/2 right-2 z-10 -translate-y-1/2 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
+                    onDelete={() => onRequestDelete(save)}
+                  />
+                </div>
               );
             })}
           </div>

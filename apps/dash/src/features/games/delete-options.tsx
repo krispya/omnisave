@@ -1,0 +1,38 @@
+import { useDismissibleDetails } from '../../lib/use-dismissible-details.js';
+
+type DeleteOptionsProps = {
+  label: string;
+  className: string;
+  onDelete: () => void;
+};
+
+export function DeleteOptions({ label, className, onDelete }: DeleteOptionsProps) {
+  const menu = useDismissibleDetails();
+
+  function requestDelete() {
+    menu.current?.removeAttribute('open');
+    onDelete();
+  }
+
+  return (
+    <details ref={menu} className={className}>
+      <summary className="grid size-8 cursor-pointer list-none place-items-center rounded-full bg-black/75 text-white marker:content-none hover:bg-black">
+        <span className="sr-only">Options for {label}</span>
+        <svg viewBox="0 0 24 24" className="size-4" aria-hidden="true">
+          <circle cx="5" cy="12" r="1.75" fill="currentColor" />
+          <circle cx="12" cy="12" r="1.75" fill="currentColor" />
+          <circle cx="19" cy="12" r="1.75" fill="currentColor" />
+        </svg>
+      </summary>
+      <div className="absolute right-0 bottom-full mb-2 w-32 rounded-md border border-white/10 bg-[#202020] p-1 shadow-xl">
+        <button
+          type="button"
+          onClick={requestDelete}
+          className="w-full rounded px-3 py-2 text-left text-sm text-red-300 hover:bg-white/5"
+        >
+          Delete
+        </button>
+      </div>
+    </details>
+  );
+}
