@@ -47,7 +47,7 @@ export async function createRandomTestOmniSave(token: string, existingLabels: st
     debugPlatform
   ).then((candidates) => {
     const candidate = candidates[0];
-    if (!candidate) throw new Error(`Hasheous did not find ${game.label}.`);
+    if (!candidate) throw new Error(`The catalog did not find ${game.label}.`);
     return fixGameMatch(token, created.game_id, candidate.selection_token);
   });
 

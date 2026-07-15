@@ -29,7 +29,7 @@ export function FixMatchDialog({ game, token, onCancel, onMatched }: FixMatchDia
         setCandidates(await searchGameMatches(token, game.id, title, undefined, signal));
       } catch (searchError) {
         if (searchError instanceof DOMException && searchError.name === 'AbortError') return;
-        setError(searchError instanceof Error ? searchError.message : 'Could not search Hasheous.');
+        setError(searchError instanceof Error ? searchError.message : 'Could not search catalog.');
       } finally {
         if (!signal?.aborted) setLoading(false);
       }
