@@ -1,6 +1,6 @@
-import { useRef } from 'react';
-import type { OmniSave } from './api.js';
-import type { GameSummary } from './game-library.js';
+import type { OmniSave } from '../../lib/omnisave-api.js';
+import { useDismissibleDetails } from '../../lib/use-dismissible-details.js';
+import type { GameSummary } from '../games/game-library.js';
 
 type DebugAction = 'game' | 'save' | 'revision' | null;
 
@@ -23,7 +23,7 @@ export function DebugMenu({
   onAddSave,
   onAddRevision,
 }: DebugMenuProps) {
-  const menu = useRef<HTMLDetailsElement>(null);
+  const menu = useDismissibleDetails();
 
   function run(callback: () => void) {
     menu.current?.removeAttribute('open');

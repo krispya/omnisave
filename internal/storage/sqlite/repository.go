@@ -89,6 +89,76 @@ func (r *Repository) GetOmniSave(ctx context.Context, id string) (*omnisave.Omni
 	return save, translateNotFound(err)
 }
 
+func (r *Repository) DeleteOmniSave(ctx context.Context, id string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT DISTINCT artifact_sha256 FROM revisions WHERE omnisave_id = ?`, id,
+	)
+	if err != nil {
+		return err
+	}
+	var hashes []string
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			rows.Close()
+			return err
+		}
+		hashes = append(hashes, hash)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM revision_parents WHERE revision_id IN (
+		SELECT id FROM revisions WHERE omnisave_id = ?
+	)`, id); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM omnisaves WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return storage.ErrNotFound
+	}
+
+	var unreferenced []string
+	for _, hash := range hashes {
+		var used bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM revisions WHERE artifact_sha256 = ?)`, hash,
+		).Scan(&used); err != nil {
+			return err
+		}
+		if !used {
+			unreferenced = append(unreferenced, hash)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	for _, hash := range unreferenced {
+		if err := os.Remove(r.artifactPath(hash)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Repository) InsertRevision(ctx context.Context, revision omnisave.Revision, payload io.Reader) error {
 	if err := r.storeArtifact(revision.Artifact, payload); err != nil {
 		return err

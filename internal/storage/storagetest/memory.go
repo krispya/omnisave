@@ -47,6 +47,34 @@ func (r *MemoryRepository) GetOmniSave(_ context.Context, id string) (*omnisave.
 	return &save, nil
 }
 
+func (r *MemoryRepository) DeleteOmniSave(_ context.Context, id string) error {
+	if _, ok := r.saves[id]; !ok {
+		return storage.ErrNotFound
+	}
+	deletedRevisions := r.revisions[id]
+	delete(r.saves, id)
+	delete(r.revisions, id)
+
+	for _, deleted := range deletedRevisions {
+		used := false
+		for _, revisions := range r.revisions {
+			for _, revision := range revisions {
+				if revision.Artifact.SHA256 == deleted.Artifact.SHA256 {
+					used = true
+					break
+				}
+			}
+			if used {
+				break
+			}
+		}
+		if !used {
+			delete(r.blobs, deleted.Artifact.SHA256)
+		}
+	}
+	return nil
+}
+
 func (r *MemoryRepository) InsertRevision(_ context.Context, revision omnisave.Revision, payload io.Reader) error {
 	data, err := io.ReadAll(payload)
 	if err != nil {

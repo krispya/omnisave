@@ -27,6 +27,7 @@ func New(saves omnisave.Service) http.Handler {
 	mux.HandleFunc("POST /api/v1/omnisaves", api.create)
 	mux.HandleFunc("GET /api/v1/omnisaves", api.list)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}", api.get)
+	mux.HandleFunc("DELETE /api/v1/omnisaves/{id}", api.delete)
 	mux.HandleFunc("POST /api/v1/omnisaves/{id}/revisions", api.addRevision)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions", api.listRevisions)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/{revisionID}", api.getRevision)
@@ -69,6 +70,14 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, save)
+}
+
+func (a *API) delete(w http.ResponseWriter, r *http.Request) {
+	if err := a.saves.Delete(r.Context(), r.PathValue("id")); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) addRevision(w http.ResponseWriter, r *http.Request) {
