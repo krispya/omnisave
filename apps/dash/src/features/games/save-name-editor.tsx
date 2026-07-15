@@ -1,13 +1,14 @@
 import { useRef, useState, type KeyboardEvent } from 'react';
 import type { OmniSave } from '../../lib/omnisave-api.js';
-import { displaySlotName, formatSlotName } from './slot-name.js';
+import { displaySaveName } from './save-name.js';
 
-type SlotNameEditorProps = {
+type SaveNameEditorProps = {
   save: OmniSave;
+  fallbackName: string;
   onSave: (save: OmniSave, displayName: string) => Promise<void>;
 };
 
-export function SlotNameEditor({ save, onSave }: SlotNameEditorProps) {
+export function SaveNameEditor({ save, fallbackName, onSave }: SaveNameEditorProps) {
   const input = useRef<HTMLInputElement>(null);
   const cancelNextBlur = useRef(false);
   const [editing, setEditing] = useState(false);
@@ -17,7 +18,7 @@ export function SlotNameEditor({ save, onSave }: SlotNameEditorProps) {
 
   function startEditing() {
     cancelNextBlur.current = false;
-    setValue(save.display_name?.trim() || formatSlotName(save.slot));
+    setValue(displaySaveName(save, fallbackName));
     setError('');
     setEditing(true);
   }
@@ -36,7 +37,7 @@ export function SlotNameEditor({ save, onSave }: SlotNameEditorProps) {
     }
     const displayName = value.trim();
     const currentName = save.display_name?.trim() ?? '';
-    if (displayName === currentName || (!currentName && displayName === formatSlotName(save.slot))) {
+    if (displayName === currentName || (!currentName && displayName === fallbackName)) {
       setEditing(false);
       return;
     }
@@ -48,7 +49,7 @@ export function SlotNameEditor({ save, onSave }: SlotNameEditorProps) {
       setSaving(false);
       setEditing(false);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Could not rename this slot.');
+      setError(saveError instanceof Error ? saveError.message : 'Could not rename this save.');
       setSaving(false);
       requestAnimationFrame(() => input.current?.focus());
     }
@@ -70,9 +71,9 @@ export function SlotNameEditor({ save, onSave }: SlotNameEditorProps) {
         type="button"
         onClick={startEditing}
         className="pointer-events-auto inline-block h-5 max-w-full truncate rounded align-top text-sm leading-5 font-semibold text-white outline-none hover:text-[#e5a00d] focus-visible:ring-2 focus-visible:ring-[#e5a00d]"
-        title={`Rename ${displaySlotName(save)}`}
+        title={`Rename ${displaySaveName(save, fallbackName)}`}
       >
-        {displaySlotName(save)}
+        {displaySaveName(save, fallbackName)}
       </button>
     );
   }
@@ -92,7 +93,7 @@ export function SlotNameEditor({ save, onSave }: SlotNameEditorProps) {
         onKeyDown={handleKeyDown}
         disabled={saving}
         maxLength={100}
-        aria-label={`Display name for ${formatSlotName(save.slot)}`}
+        aria-label={`Display name for ${fallbackName}`}
         aria-invalid={Boolean(error)}
         className={`pointer-events-auto -ml-2 h-5 w-[calc(100%+0.5rem)] min-w-0 rounded border-0 px-2 text-sm leading-5 font-semibold text-white outline-none disabled:opacity-60 ${
           error ? 'bg-red-950' : 'bg-[#111111]'

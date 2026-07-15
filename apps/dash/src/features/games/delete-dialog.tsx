@@ -1,7 +1,5 @@
 import { useEffect, useId, type ReactNode } from 'react';
-import type { OmniSave } from '../../lib/omnisave-api.js';
 import type { GameSummary } from './game-library.js';
-import { displaySlotName } from './slot-name.js';
 
 type DeleteDialogProps = {
   title: string;
@@ -92,15 +90,15 @@ export function DeleteGameDialog({ game, ...state }: DeleteStateProps & { game: 
   );
 }
 
-export function DeleteSlotDialog({ save, ...state }: DeleteStateProps & { save: OmniSave }) {
+export function DeleteSaveDialog({ name, ...state }: DeleteStateProps & { name: string }) {
   return (
     <DeleteDialog
       {...state}
-      title={`Delete ${displaySlotName(save)}?`}
+      title={`Delete ${name}?`}
       description={
         <>
-          This permanently deletes this save slot, its revision history, and any unshared artifacts.
-          This cannot be undone.
+          This permanently deletes this save, its revision history, and any unshared artifacts. This
+          cannot be undone.
         </>
       }
     />

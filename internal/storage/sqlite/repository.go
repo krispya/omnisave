@@ -56,8 +56,8 @@ func (r *Repository) InsertOmniSave(ctx context.Context, save omnisave.OmniSave)
 		return err
 	}
 	_, err = r.db.ExecContext(ctx,
-		`INSERT INTO omnisaves(id, game_id, slot, display_name, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?)`,
-		save.ID, save.GameID, save.Slot, save.DisplayName,
+		`INSERT INTO omnisaves(id, game_id, display_name, created_at, metadata) VALUES (?, ?, ?, ?, ?)`,
+		save.ID, save.GameID, save.DisplayName,
 		save.CreatedAt.Format(time.RFC3339Nano), string(metadata),
 	)
 	return err
@@ -65,7 +65,7 @@ func (r *Repository) InsertOmniSave(ctx context.Context, save omnisave.OmniSave)
 
 func (r *Repository) ListOmniSaves(ctx context.Context) ([]omnisave.OmniSave, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, game_id, slot, display_name, created_at, metadata FROM omnisaves ORDER BY created_at, id`,
+		`SELECT id, game_id, display_name, created_at, metadata FROM omnisaves ORDER BY created_at, id`,
 	)
 	if err != nil {
 		return nil, err
@@ -85,7 +85,7 @@ func (r *Repository) ListOmniSaves(ctx context.Context) ([]omnisave.OmniSave, er
 
 func (r *Repository) GetOmniSave(ctx context.Context, id string) (*omnisave.OmniSave, error) {
 	save, err := scanOmniSave(r.db.QueryRowContext(ctx,
-		`SELECT id, game_id, slot, display_name, created_at, metadata FROM omnisaves WHERE id = ?`, id,
+		`SELECT id, game_id, display_name, created_at, metadata FROM omnisaves WHERE id = ?`, id,
 	))
 	return save, translateNotFound(err)
 }
@@ -316,7 +316,7 @@ func scanOmniSave(row scanner) (*omnisave.OmniSave, error) {
 	var save omnisave.OmniSave
 	var createdAt, metadata string
 	if err := row.Scan(
-		&save.ID, &save.GameID, &save.Slot, &save.DisplayName, &createdAt, &metadata,
+		&save.ID, &save.GameID, &save.DisplayName, &createdAt, &metadata,
 	); err != nil {
 		return nil, err
 	}

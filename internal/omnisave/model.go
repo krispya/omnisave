@@ -3,11 +3,10 @@ package omnisave
 
 import "time"
 
-// OmniSave identifies one independently versioned game save and slot.
+// OmniSave identifies one independently versioned game save.
 type OmniSave struct {
 	ID          string            `json:"id"`
 	GameID      string            `json:"game_id"`
-	Slot        string            `json:"slot"`
 	DisplayName string            `json:"display_name"`
 	CreatedAt   time.Time         `json:"created_at"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
@@ -33,7 +32,6 @@ type Artifact struct {
 // CreateOmniSave describes a new logical game save.
 type CreateOmniSave struct {
 	GameID      string            `json:"game_id"`
-	Slot        string            `json:"slot"`
 	DisplayName string            `json:"display_name"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
 }

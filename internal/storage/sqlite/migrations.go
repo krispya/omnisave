@@ -7,11 +7,11 @@ import (
 
 var migrations = []string{
 	`CREATE TABLE omnisaves (
-		id         TEXT PRIMARY KEY,
-		game_id    TEXT NOT NULL,
-		slot       TEXT NOT NULL,
-		created_at TEXT NOT NULL,
-		metadata   TEXT NOT NULL
+		id           TEXT PRIMARY KEY,
+		game_id      TEXT NOT NULL,
+		display_name TEXT NOT NULL,
+		created_at   TEXT NOT NULL,
+		metadata     TEXT NOT NULL
 	);
 
 	CREATE TABLE revisions (
@@ -31,9 +31,9 @@ var migrations = []string{
 		parent_id   TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
 		position    INTEGER NOT NULL,
 		PRIMARY KEY (revision_id, parent_id)
-	);`,
-	`ALTER TABLE omnisaves ADD COLUMN display_name TEXT NOT NULL DEFAULT '';`,
-	`CREATE TABLE games (
+	);
+
+	CREATE TABLE games (
 		id           TEXT PRIMARY KEY,
 		title        TEXT NOT NULL,
 		sort_title   TEXT NOT NULL,

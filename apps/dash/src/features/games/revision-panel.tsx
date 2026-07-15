@@ -1,8 +1,8 @@
 import type { OmniSave, Revision } from '../../lib/omnisave-api.js';
-import { displaySlotName } from './slot-name.js';
 
 type RevisionPanelProps = {
   save: OmniSave;
+  name: string;
   revisions: Revision[];
   loading: boolean;
   error: string;
@@ -31,7 +31,7 @@ function shortID(id: string) {
   return id.slice(0, 8);
 }
 
-export function RevisionPanel({ save, revisions, loading, error }: RevisionPanelProps) {
+export function RevisionPanel({ save, name, revisions, loading, error }: RevisionPanelProps) {
   const latestRevisionID = revisions.at(-1)?.id;
 
   return (
@@ -41,7 +41,7 @@ export function RevisionPanel({ save, revisions, loading, error }: RevisionPanel
           <p className="text-sm font-medium text-white">Revisions</p>
           <h2 className="mt-1 truncate text-sm text-neutral-400">{displayName(save)}</h2>
           <p className="mt-1 truncate font-mono text-xs text-slate-500">
-            {displaySlotName(save)} · {shortID(save.id)}
+            {name} · {shortID(save.id)}
           </p>
         </div>
         <span className="shrink-0 text-xs text-neutral-500">
