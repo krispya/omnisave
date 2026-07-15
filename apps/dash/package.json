@@ -1,0 +1,32 @@
+{
+  "name": "@omnisave/dash",
+  "description": "Built with 🌹 create-krispya",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --build --noEmit",
+    "typecheck:watch": "tsc --build --watch",
+    "lint": "oxlint -c node_modules/@config/oxlint/react.json",
+    "format": "prettier --config .config/prettier.json --ignore-path .config/prettierignore --write ."
+  },
+  "dependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@babel/core": "^8.0.1",
+    "@config/oxlint": "workspace:*",
+    "@config/typescript": "workspace:*",
+    "@rolldown/plugin-babel": "^0.2.3",
+    "@types/babel__core": "^7.20.5",
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "prettier": "^3.9.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4"
+  }
+}

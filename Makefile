@@ -19,7 +19,7 @@ test:
 	@if [ -n "$(F)" ] && [ -z "$(TEST_FILTER_PACKAGES)" ]; then \
 		echo "No directory named '$(F)' found"; exit 1; \
 	fi
-	gotestsum --format testdox $(if $(TEST_PACKAGES),$(TEST_PACKAGES),./...)
+	go tool gotestsum --format testdox $(if $(TEST_PACKAGES),$(TEST_PACKAGES),./...)
 
 # Allow package patterns after the test goal, for example:
 # make test ./internal/omnisave/...

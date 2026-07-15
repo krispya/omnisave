@@ -1,0 +1,9 @@
+pmOnFail: download
+
+packages:
+  - ".config/*"
+  - "apps/*"
+  - "packages/*"
+
+allowBuilds:
+  esbuild: true

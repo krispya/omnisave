@@ -1,6 +1,13 @@
-# Build and packaging outputs
-/bin/
-/dist/
+# managed:start
+node_modules
+dist
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.pnpm-store
+.DS_Store
+# managed:end
 
 # Go test and coverage outputs
 *.test
@@ -11,6 +18,3 @@ coverage.out
 /omnisave.db
 /omnisave.db-*
 /artifacts/
-
-# OS metadata
-.DS_Store
