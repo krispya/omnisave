@@ -29,9 +29,6 @@ func TestNetworkClientStory(t *testing.T) {
 	}
 	var save omnisave.OmniSave
 	decodeResponse(t, response, &save)
-	if save.Slot != "slot-1" {
-		t.Fatalf("expected the first slot, got %q", save.Slot)
-	}
 
 	revisionBody := &bytes.Buffer{}
 	writer := multipart.NewWriter(revisionBody)
@@ -109,7 +106,7 @@ func TestUpdateOmniSaveDisplayName(t *testing.T) {
 	}
 	var updated omnisave.OmniSave
 	decodeResponse(t, response, &updated)
-	if updated.DisplayName != "Before the final boss" || updated.Slot != "slot-1" {
+	if updated.DisplayName != "Before the final boss" {
 		t.Fatalf("unexpected updated save: %v", updated)
 	}
 

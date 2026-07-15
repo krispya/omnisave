@@ -3,8 +3,8 @@ import type { OmniSave, Revision } from '../../lib/omnisave-api.js';
 import { DeleteOptions } from './delete-options.js';
 import { GameArtwork, GameMediaImage, type GameSummary } from './game-library.js';
 import { RevisionPanel } from './revision-panel.js';
-import { SlotNameEditor } from './slot-name-editor.js';
-import { displaySlotName } from './slot-name.js';
+import { SaveNameEditor } from './save-name-editor.js';
+import { defaultSaveName, displaySaveName } from './save-name.js';
 
 function formatDate(value: string) {
   const date = new Date(value);
@@ -57,7 +57,7 @@ type GameDetailProps = {
   loadingRevisions: boolean;
   revisionError: string;
   onSelectSave: (save: OmniSave) => void;
-  onRequestDelete: (save: OmniSave) => void;
+  onRequestDelete: (save: OmniSave, name: string) => void;
   onRenameSave: (save: OmniSave, displayName: string) => Promise<void>;
 };
 
@@ -72,6 +72,13 @@ export function GameDetail({
   onRequestDelete,
   onRenameSave,
 }: GameDetailProps) {
+  const selectedSaveIndex = selectedSave
+    ? game.saves.findIndex((save) => save.id === selectedSave.id)
+    : -1;
+  const selectedSaveName = selectedSave
+    ? displaySaveName(selectedSave, defaultSaveName(Math.max(selectedSaveIndex, 0)))
+    : '';
+
   return (
     <div className="mt-8">
       <section className="flex items-end gap-5 border-b border-white/5 pb-6">
@@ -128,6 +135,8 @@ export function GameDetail({
           <div className="space-y-3">
             {game.saves.map((save, index) => {
               const selected = save.id === selectedSave?.id;
+              const fallbackName = defaultSaveName(index);
+              const name = displaySaveName(save, fallbackName);
               return (
                 <div
                   key={save.id}
@@ -138,26 +147,43 @@ export function GameDetail({
                   <button
                     type="button"
                     aria-pressed={selected}
-                    aria-label={`Select ${displaySlotName(save)}`}
+                    aria-label={`Select ${name}`}
                     onClick={() => onSelectSave(save)}
                     className="absolute inset-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-[#e5a00d]"
                   />
                   <div className="pointer-events-none relative z-10 grid grid-cols-[2.25rem_minmax(0,1fr)_2rem] items-center gap-4 p-3.5">
-                    <div className="grid size-9 shrink-0 place-items-center rounded bg-white/5 text-sm font-semibold text-[#e5a00d]">
-                      {index + 1}
+                    <div className="grid size-9 shrink-0 place-items-center rounded bg-white/5 text-[#e5a00d]">
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="size-5"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M5 3.75h11.5L20.25 7.5v12.75H3.75V3.75H5Z" />
+                        <path d="M7.5 3.75v5.5h8v-5.5M7.25 20.25v-7h9.5v7" />
+                        <path d="M13.25 6.5h2.25" />
+                      </svg>
                     </div>
                     <div className="min-w-0">
                       <div className="h-5">
-                        <SlotNameEditor save={save} onSave={onRenameSave} />
+                        <SaveNameEditor
+                          save={save}
+                          fallbackName={fallbackName}
+                          onSave={onRenameSave}
+                        />
                       </div>
                       <p className="mt-1 text-xs text-slate-500">
                         Created {formatDate(save.created_at)}
                       </p>
                     </div>
                     <DeleteOptions
-                      label={displaySlotName(save)}
+                      label={name}
                       className="pointer-events-auto relative z-20 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
-                      onDelete={() => onRequestDelete(save)}
+                      onDelete={() => onRequestDelete(save, name)}
                     />
                   </div>
                 </div>
@@ -169,6 +195,7 @@ export function GameDetail({
         {selectedSave ? (
           <RevisionPanel
             save={selectedSave}
+            name={selectedSaveName}
             revisions={revisions}
             loading={loadingRevisions}
             error={revisionError}

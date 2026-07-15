@@ -34,9 +34,6 @@ func (s *service) Create(ctx context.Context, input omnisave.CreateOmniSave) (*o
 	if input.GameID == "" {
 		return nil, omnisave.ErrInvalid
 	}
-	if input.Slot == "" {
-		input.Slot = "slot-1"
-	}
 	displayName, valid := normalizeDisplayName(input.DisplayName)
 	if !valid {
 		return nil, omnisave.ErrInvalid
@@ -44,7 +41,6 @@ func (s *service) Create(ctx context.Context, input omnisave.CreateOmniSave) (*o
 	save := omnisave.OmniSave{
 		ID:          uuid.NewString(),
 		GameID:      input.GameID,
-		Slot:        input.Slot,
 		DisplayName: displayName,
 		CreatedAt:   time.Now().UTC(),
 		Metadata:    cloneMap(input.Metadata),

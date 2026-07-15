@@ -14,7 +14,7 @@ import {
   createTestSave,
 } from '../features/debug/debug-actions.js';
 import { DebugMenu } from '../features/debug/debug-menu.js';
-import { DeleteGameDialog, DeleteSlotDialog } from '../features/games/delete-dialog.js';
+import { DeleteGameDialog, DeleteSaveDialog } from '../features/games/delete-dialog.js';
 import { FixMatchDialog } from '../features/games/fix-match-dialog.js';
 import { clearCatalogCache, primeCatalogGame } from '../features/games/game-catalog-cache.js';
 import { GameDetail } from '../features/games/game-detail.js';
@@ -26,12 +26,12 @@ import {
   groupOmniSavesByGame,
   type GameSummary,
 } from '../features/games/game-library.js';
-import { nextSlotName } from '../features/games/slot-name.js';
 
 const tokenStorageKey = 'omnisave.api-token';
 
 type DeleteTarget =
-  { type: 'game'; game: GameSummary } | { type: 'slot'; game: GameSummary; save: OmniSave };
+  | { type: 'game'; game: GameSummary }
+  | { type: 'save'; game: GameSummary; save: OmniSave; name: string };
 
 export function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem(tokenStorageKey) ?? '');
@@ -185,15 +185,11 @@ export function App() {
     setDebugAction('save');
     setError('');
     try {
-      const created = await createTestSave(
-        token,
-        {
-          id: selectedGame.id,
-          label: selectedGame.label,
-          platform: selectedGame.platform,
-        },
-        nextSlotName(selectedGame.saves)
-      );
+      const created = await createTestSave(token, {
+        id: selectedGame.id,
+        label: selectedGame.label,
+        platform: selectedGame.platform,
+      });
       await loadSaves(token);
       setSelectedSaveID(created.id);
     } catch (createError) {
@@ -220,7 +216,7 @@ export function App() {
     }
   }
 
-  async function renameSlot(save: OmniSave, displayName: string) {
+  async function renameSave(save: OmniSave, displayName: string) {
     if (!token) return;
     const updated = await updateOmniSaveDisplayName(token, save.id, displayName);
     setSaves((current) =>
@@ -233,10 +229,10 @@ export function App() {
     setDeleteTarget({ type: 'game', game });
   }
 
-  function requestDeleteSlot(save: OmniSave) {
+  function requestDeleteSave(save: OmniSave, name: string) {
     if (!selectedGame) return;
     setDeleteError('');
-    setDeleteTarget({ type: 'slot', game: selectedGame, save });
+    setDeleteTarget({ type: 'save', game: selectedGame, save, name });
   }
 
   function cancelDelete() {
@@ -257,7 +253,7 @@ export function App() {
         await deleteOmniSave(token, save.id);
       }
 
-      if (deleteTarget.type === 'slot' && selectedSaveID === deleteTarget.save.id) {
+      if (deleteTarget.type === 'save' && selectedSaveID === deleteTarget.save.id) {
         const nextSave = deleteTarget.game.saves.find((save) => save.id !== deleteTarget.save.id);
         setSelectedSaveID(nextSave?.id ?? '');
       }
@@ -374,8 +370,8 @@ export function App() {
                       loadingRevisions={loadingRevisions}
                       revisionError={revisionError}
                       onSelectSave={(save) => setSelectedSaveID(save.id)}
-                      onRequestDelete={requestDeleteSlot}
-                      onRenameSave={renameSlot}
+                      onRequestDelete={requestDeleteSave}
+                      onRenameSave={renameSave}
                     />
                   )}
                 </ResolvedGame>
@@ -406,9 +402,9 @@ export function App() {
           onCancel={cancelDelete}
           onConfirm={() => void confirmDelete()}
         />
-      ) : deleteTarget?.type === 'slot' ? (
-        <DeleteSlotDialog
-          save={deleteTarget.save}
+      ) : deleteTarget?.type === 'save' ? (
+        <DeleteSaveDialog
+          name={deleteTarget.name}
           deleting={deleting}
           error={deleteError}
           onCancel={cancelDelete}

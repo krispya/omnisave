@@ -1,7 +1,6 @@
 export type OmniSave = {
   id: string;
   game_id: string;
-  slot: string;
   display_name: string;
   created_at: string;
   metadata?: Record<string, string>;
@@ -170,7 +169,6 @@ export function createOmniSave(
   token: string,
   input: {
     gameID: string;
-    slot: string;
     displayName?: string;
     metadata?: Record<string, string>;
   }
@@ -180,7 +178,6 @@ export function createOmniSave(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       game_id: input.gameID,
-      slot: input.slot,
       display_name: input.displayName,
       metadata: input.metadata,
     }),
