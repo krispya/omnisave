@@ -3,16 +3,18 @@ import { useDismissibleDetails } from '../../lib/use-dismissible-details.js';
 import type { GameSummary } from '../games/game-library.js';
 import { defaultSaveName, displaySaveName } from '../games/save-name.js';
 
-type DebugAction = 'game' | 'save' | 'revision' | null;
+type DebugAction = 'game' | 'save' | 'revision' | 'fork' | null;
 
 type DebugMenuProps = {
   game?: GameSummary;
   selectedSave?: OmniSave;
   action: DebugAction;
   revisionHistoryAvailable: boolean;
+  canFork: boolean;
   onAddRandomGame: () => void;
   onAddSave: () => void;
   onAddRevision: () => void;
+  onForkSave: () => void;
 };
 
 export function DebugMenu({
@@ -20,9 +22,11 @@ export function DebugMenu({
   selectedSave,
   action,
   revisionHistoryAvailable,
+  canFork,
   onAddRandomGame,
   onAddSave,
   onAddRevision,
+  onForkSave,
 }: DebugMenuProps) {
   const menu = useDismissibleDetails();
   const selectedSaveIndex = selectedSave
@@ -52,10 +56,16 @@ export function DebugMenu({
               onClick={() => run(onAddSave)}
             />
             <DebugItem
-              label={action === 'revision' ? 'Adding revision…' : 'New revision'}
-              description={selectedSave ? `Extend ${selectedSaveName}` : 'Select a save first'}
+              label={action === 'revision' ? 'Committing…' : 'Commit revision'}
+              description={selectedSave ? `Advance ${selectedSaveName}` : 'Select a save first'}
               disabled={!selectedSave || !revisionHistoryAvailable || action !== null}
               onClick={() => run(onAddRevision)}
+            />
+            <DebugItem
+              label={action === 'fork' ? 'Forking save…' : 'Fork save'}
+              description="Create another playable save from this head"
+              disabled={!selectedSave || !canFork || !revisionHistoryAvailable || action !== null}
+              onClick={() => run(onForkSave)}
             />
           </>
         ) : (

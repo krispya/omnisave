@@ -11,6 +11,16 @@ import (
 )
 
 var ErrNotFound = errors.New("storage: not found")
+var ErrConflict = errors.New("storage: conflict")
+var ErrArtifactMismatch = errors.New("storage: artifact mismatch")
+
+// HeadConflict carries the actual head observed during an atomic commit.
+type HeadConflict struct {
+	ActualHeadID *string
+}
+
+func (e *HeadConflict) Error() string { return ErrConflict.Error() }
+func (e *HeadConflict) Unwrap() error { return ErrConflict }
 
 // OmniSaveRepository persists save records without applying application rules.
 type OmniSaveRepository interface {
@@ -19,13 +29,15 @@ type OmniSaveRepository interface {
 	GetOmniSave(ctx context.Context, id string) (*omnisave.OmniSave, error)
 	UpdateOmniSaveDisplayName(ctx context.Context, id, displayName string) error
 	DeleteOmniSave(ctx context.Context, id string) error
+	ForkOmniSave(ctx context.Context, save omnisave.OmniSave, initial omnisave.Revision) error
 
-	InsertRevision(ctx context.Context, revision omnisave.Revision, payload io.Reader) error
+	CommitRevision(ctx context.Context, expectedHeadID *string, revision omnisave.Revision) error
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*omnisave.Revision, error)
 	ListRevisions(ctx context.Context, omnisaveID string) ([]omnisave.Revision, error)
-	DeleteRevision(ctx context.Context, omnisaveID, revisionID string) error
 
+	StoreArtifact(ctx context.Context, artifact Artifact, payload io.Reader) error
 	OpenArtifact(ctx context.Context, sha256 string) (io.ReadCloser, error)
+	StatArtifact(ctx context.Context, sha256 string) (int64, error)
 }
 
 // CatalogRepository persists locally cached game catalog records.
@@ -52,6 +64,7 @@ type Artifact struct {
 type ArtifactStore interface {
 	StoreArtifact(ctx context.Context, artifact Artifact, payload io.Reader) error
 	OpenArtifact(ctx context.Context, sha256 string) (io.ReadCloser, error)
+	StatArtifact(ctx context.Context, sha256 string) (int64, error)
 }
 
 // Repository provides all persistence used by the server.

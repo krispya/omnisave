@@ -4,6 +4,9 @@ package storagetest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"slices"
 
@@ -73,40 +76,60 @@ func (r *MemoryRepository) DeleteOmniSave(_ context.Context, id string) error {
 	delete(r.revisions, id)
 
 	for _, deleted := range deletedRevisions {
-		used := false
-		for _, revisions := range r.revisions {
-			for _, revision := range revisions {
-				if revision.Artifact.SHA256 == deleted.Artifact.SHA256 {
-					used = true
+		for _, deletedFile := range deleted.Files {
+			used := false
+			for _, revisions := range r.revisions {
+				for _, revision := range revisions {
+					for _, file := range revision.Files {
+						if file.Artifact.SHA256 == deletedFile.Artifact.SHA256 {
+							used = true
+							break
+						}
+					}
+					if used {
+						break
+					}
+				}
+				if used {
 					break
 				}
 			}
-			if used {
-				break
-			}
-		}
-		if !used {
-			for _, media := range r.media {
-				if media.SHA256 == deleted.Artifact.SHA256 {
-					used = true
-					break
+			if !used {
+				for _, media := range r.media {
+					if media.SHA256 == deletedFile.Artifact.SHA256 {
+						used = true
+						break
+					}
 				}
 			}
-		}
-		if !used {
-			delete(r.blobs, deleted.Artifact.SHA256)
+			if !used {
+				delete(r.blobs, deletedFile.Artifact.SHA256)
+			}
 		}
 	}
 	return nil
 }
 
-func (r *MemoryRepository) InsertRevision(_ context.Context, revision omnisave.Revision, payload io.Reader) error {
-	data, err := io.ReadAll(payload)
-	if err != nil {
-		return err
+func (r *MemoryRepository) ForkOmniSave(_ context.Context, save omnisave.OmniSave, initial omnisave.Revision) error {
+	if _, exists := r.saves[save.ID]; exists {
+		return storage.ErrConflict
+	}
+	r.saves[save.ID] = save
+	r.revisions[save.ID] = []omnisave.Revision{initial}
+	return nil
+}
+
+func (r *MemoryRepository) CommitRevision(_ context.Context, expectedHeadID *string, revision omnisave.Revision) error {
+	save, ok := r.saves[revision.OmniSaveID]
+	if !ok {
+		return storage.ErrNotFound
+	}
+	if !equalStringPointers(save.HeadRevisionID, expectedHeadID) {
+		return &storage.HeadConflict{ActualHeadID: copyStringPointer(save.HeadRevisionID)}
 	}
 	r.revisions[revision.OmniSaveID] = append(r.revisions[revision.OmniSaveID], revision)
-	r.blobs[revision.Artifact.SHA256] = data
+	save.HeadRevisionID = &revision.ID
+	r.saves[revision.OmniSaveID] = save
 	return nil
 }
 
@@ -127,16 +150,6 @@ func (r *MemoryRepository) ListRevisions(_ context.Context, saveID string) ([]om
 	return slices.Clone(r.revisions[saveID]), nil
 }
 
-func (r *MemoryRepository) DeleteRevision(_ context.Context, saveID, revisionID string) error {
-	for i, revision := range r.revisions[saveID] {
-		if revision.ID == revisionID {
-			r.revisions[saveID] = slices.Delete(r.revisions[saveID], i, i+1)
-			return nil
-		}
-	}
-	return storage.ErrNotFound
-}
-
 func (r *MemoryRepository) OpenArtifact(_ context.Context, hash string) (io.ReadCloser, error) {
 	data, ok := r.blobs[hash]
 	if !ok {
@@ -150,8 +163,35 @@ func (r *MemoryRepository) StoreArtifact(_ context.Context, artifact storage.Art
 	if err != nil {
 		return err
 	}
+	sum := sha256.Sum256(data)
+	if int64(len(data)) != artifact.Size || hex.EncodeToString(sum[:]) != artifact.SHA256 {
+		return fmt.Errorf("%w: payload does not match descriptor", storage.ErrArtifactMismatch)
+	}
 	r.blobs[artifact.SHA256] = data
 	return nil
+}
+
+func (r *MemoryRepository) StatArtifact(_ context.Context, hash string) (int64, error) {
+	data, ok := r.blobs[hash]
+	if !ok {
+		return 0, storage.ErrNotFound
+	}
+	return int64(len(data)), nil
+}
+
+func equalStringPointers(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func copyStringPointer(source *string) *string {
+	if source == nil {
+		return nil
+	}
+	copy := *source
+	return &copy
 }
 
 func (r *MemoryRepository) FindGameByFingerprint(_ context.Context, fingerprint catalog.Fingerprint) (*catalog.Game, error) {

@@ -3,6 +3,7 @@ import {
   deleteOmniSave,
   listOmniSaves,
   listRevisions,
+  HeadConflictError,
   updateOmniSaveDisplayName,
   type OmniSave,
   type Revision,
@@ -12,6 +13,7 @@ import {
   createRandomTestOmniSave,
   createTestRevision,
   createTestSave,
+  forkTestSave,
 } from '../features/debug/debug-actions.js';
 import { DebugMenu } from '../features/debug/debug-menu.js';
 import { DeleteGameDialog, DeleteSaveDialog } from '../features/games/delete-dialog.js';
@@ -44,7 +46,7 @@ export function App() {
   const [revisionError, setRevisionError] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingRevisions, setLoadingRevisions] = useState(false);
-  const [debugAction, setDebugAction] = useState<'game' | 'save' | 'revision' | null>(null);
+  const [debugAction, setDebugAction] = useState<'game' | 'save' | 'revision' | 'fork' | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -205,11 +207,43 @@ export function App() {
     setDebugAction('revision');
     setRevisionError('');
     try {
-      await createTestRevision(token, selectedSave.id, revisions.at(-1)?.id);
+      await createTestRevision(token, selectedSave.id, selectedSave.head_revision_id);
+      await loadSaves(token);
       await loadRevisionHistory(token, selectedSave.id);
     } catch (createError) {
+      if (createError instanceof HeadConflictError) {
+        await loadSaves(token);
+        await loadRevisionHistory(token, selectedSave.id);
+      }
       setRevisionError(
-        createError instanceof Error ? createError.message : 'Could not add a revision.'
+        createError instanceof HeadConflictError
+          ? 'This save changed elsewhere. History was refreshed; fork it to preserve both versions.'
+          : createError instanceof Error
+            ? createError.message
+            : 'Could not add a revision.'
+      );
+    } finally {
+      setDebugAction(null);
+    }
+  }
+
+  async function forkSave() {
+    if (!token || !selectedSave || !selectedSave.head_revision_id) return;
+
+    setDebugAction('fork');
+    setRevisionError('');
+    try {
+      const result = await forkTestSave(
+        token,
+        selectedSave.id,
+        selectedSave.head_revision_id,
+        selectedSave.display_name || 'Save'
+      );
+      await loadSaves(token);
+      setSelectedSaveID(result.omnisave.id);
+    } catch (createError) {
+      setRevisionError(
+        createError instanceof Error ? createError.message : 'Could not fork this save.'
       );
     } finally {
       setDebugAction(null);
@@ -341,10 +375,12 @@ export function App() {
                   game={selectedGame}
                   selectedSave={selectedSave}
                   action={debugAction}
-                  revisionHistoryAvailable={!loadingRevisions && !revisionError}
+                  revisionHistoryAvailable={!loadingRevisions}
+                  canFork={Boolean(selectedSave?.head_revision_id)}
                   onAddRandomGame={() => void addRandomGame()}
                   onAddSave={() => void addSave()}
                   onAddRevision={() => void addRevision()}
+                  onForkSave={() => void forkSave()}
                 />
               </div>
             </section>

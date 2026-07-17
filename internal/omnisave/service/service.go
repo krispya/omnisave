@@ -2,13 +2,11 @@
 package service
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"io"
-	"slices"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,7 +21,11 @@ type service struct {
 	repository storage.OmniSaveRepository
 }
 
-const maxDisplayNameLength = 100
+const (
+	maxDisplayNameLength  = 100
+	maxRevisionFiles      = 1024
+	maxRevisionPathLength = 1024
+)
 
 // New creates an OmniSave service backed by repository.
 func New(repository storage.OmniSaveRepository) omnisave.Service {
@@ -79,48 +81,147 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	return translateError(s.repository.DeleteOmniSave(ctx, id))
 }
 
-func (s *service) AddRevision(ctx context.Context, saveID string, input omnisave.CreateRevision, payload io.Reader) (*omnisave.Revision, error) {
-	if input.Format == "" || payload == nil {
-		return nil, omnisave.ErrInvalid
-	}
-	if _, err := s.repository.GetOmniSave(ctx, saveID); err != nil {
+func (s *service) Fork(ctx context.Context, saveID string, input omnisave.ForkOmniSave) (*omnisave.ForkResult, error) {
+	source, err := s.repository.GetOmniSave(ctx, saveID)
+	if err != nil {
 		return nil, translateError(err)
 	}
-	seenParents := make(map[string]struct{}, len(input.ParentIDs))
-	for _, parentID := range input.ParentIDs {
-		if parentID == "" {
-			return nil, omnisave.ErrInvalid
+	if input.RevisionID == "" {
+		return nil, omnisave.ErrInvalid
+	}
+	sourceRevision, err := s.repository.GetRevision(ctx, saveID, input.RevisionID)
+	if err != nil {
+		return nil, translateError(err)
+	}
+	displayName, valid := normalizeDisplayName(input.DisplayName)
+	if !valid {
+		return nil, omnisave.ErrInvalid
+	}
+	now := time.Now().UTC()
+	revisionID := uuid.NewString()
+	fork := omnisave.OmniSave{
+		ID:             uuid.NewString(),
+		GameID:         source.GameID,
+		DisplayName:    displayName,
+		HeadRevisionID: &revisionID,
+		ForkedFrom: &omnisave.ForkOrigin{
+			OmniSaveID: source.ID,
+			RevisionID: sourceRevision.ID,
+		},
+		CreatedAt: now,
+		Metadata:  mergeMaps(source.Metadata, input.Metadata),
+	}
+	initial := omnisave.Revision{
+		ID:         revisionID,
+		OmniSaveID: fork.ID,
+		CreatedAt:  now,
+		Files:      cloneFiles(sourceRevision.Files),
+		Metadata:   cloneMap(sourceRevision.Metadata),
+	}
+	if err := s.repository.ForkOmniSave(ctx, fork, initial); err != nil {
+		return nil, translateError(err)
+	}
+	return &omnisave.ForkResult{OmniSave: fork, Revision: initial}, nil
+}
+
+func (s *service) CommitRevision(ctx context.Context, saveID string, input omnisave.CreateRevision) (*omnisave.Revision, error) {
+	save, err := s.repository.GetOmniSave(ctx, saveID)
+	if err != nil {
+		return nil, translateError(err)
+	}
+	if input.ExpectedHeadID != nil && *input.ExpectedHeadID == "" {
+		return nil, omnisave.ErrInvalid
+	}
+	if !sameString(save.HeadRevisionID, input.ExpectedHeadID) {
+		return nil, &omnisave.HeadConflict{
+			ExpectedHeadID: cloneString(input.ExpectedHeadID),
+			ActualHeadID:   cloneString(save.HeadRevisionID),
 		}
-		if _, duplicate := seenParents[parentID]; duplicate {
-			return nil, omnisave.ErrInvalid
+	}
+	filesByPath := make(map[string]omnisave.RevisionFile)
+	if input.ExpectedHeadID != nil {
+		parent, err := s.repository.GetRevision(ctx, saveID, *input.ExpectedHeadID)
+		if err != nil {
+			return nil, translateError(err)
 		}
-		seenParents[parentID] = struct{}{}
-		if _, err := s.repository.GetRevision(ctx, saveID, parentID); err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
-				return nil, omnisave.ErrInvalid
-			}
-			return nil, err
+		for _, file := range parent.Files {
+			filesByPath[file.Path] = file
 		}
 	}
 
-	data, err := io.ReadAll(payload)
-	if err != nil {
-		return nil, err
+	if len(input.Upserts) == 0 && len(input.Deletes) == 0 {
+		return nil, omnisave.ErrInvalid
 	}
-	sum := sha256.Sum256(data)
+	missing := make([]string, 0)
+	changedPaths := make(map[string]struct{}, len(input.Upserts)+len(input.Deletes))
+	seenMissing := make(map[string]struct{})
+	for _, file := range input.Upserts {
+		if !validRevisionPath(file.Path) || file.Artifact.Format == "" ||
+			!validSHA256(file.Artifact.SHA256) || file.Artifact.Size < 0 {
+			return nil, omnisave.ErrInvalid
+		}
+		if _, duplicate := changedPaths[file.Path]; duplicate {
+			return nil, omnisave.ErrInvalid
+		}
+		changedPaths[file.Path] = struct{}{}
+		size, err := s.repository.StatArtifact(ctx, file.Artifact.SHA256)
+		if errors.Is(err, storage.ErrNotFound) {
+			if _, alreadyMissing := seenMissing[file.Artifact.SHA256]; !alreadyMissing {
+				missing = append(missing, file.Artifact.SHA256)
+				seenMissing[file.Artifact.SHA256] = struct{}{}
+			}
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if size != file.Artifact.Size {
+			return nil, omnisave.ErrInvalid
+		}
+		filesByPath[file.Path] = file
+	}
+	for _, path := range input.Deletes {
+		if !validRevisionPath(path) {
+			return nil, omnisave.ErrInvalid
+		}
+		if _, duplicate := changedPaths[path]; duplicate {
+			return nil, omnisave.ErrInvalid
+		}
+		changedPaths[path] = struct{}{}
+		if _, exists := filesByPath[path]; !exists {
+			return nil, omnisave.ErrInvalid
+		}
+		delete(filesByPath, path)
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return nil, &omnisave.MissingArtifacts{SHA256: missing}
+	}
+	if len(filesByPath) > maxRevisionFiles {
+		return nil, omnisave.ErrInvalid
+	}
+	files := make([]omnisave.RevisionFile, 0, len(filesByPath))
+	for _, file := range filesByPath {
+		files = append(files, file)
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+
 	revision := omnisave.Revision{
 		ID:         uuid.NewString(),
 		OmniSaveID: saveID,
-		ParentIDs:  append([]string{}, input.ParentIDs...),
+		ParentID:   cloneString(input.ExpectedHeadID),
 		CreatedAt:  time.Now().UTC(),
-		Artifact: omnisave.Artifact{
-			Format: input.Format,
-			SHA256: hex.EncodeToString(sum[:]),
-			Size:   int64(len(data)),
-		},
-		Metadata: cloneMap(input.Metadata),
+		Files:      files,
+		Metadata:   cloneMap(input.Metadata),
 	}
-	if err := s.repository.InsertRevision(ctx, revision, bytes.NewReader(data)); err != nil {
+	if err := s.repository.CommitRevision(ctx, input.ExpectedHeadID, revision); err != nil {
+		var conflict *storage.HeadConflict
+		if errors.As(err, &conflict) {
+			return nil, &omnisave.HeadConflict{
+				ExpectedHeadID: cloneString(input.ExpectedHeadID),
+				ActualHeadID:   cloneString(conflict.ActualHeadID),
+			}
+		}
 		return nil, translateError(err)
 	}
 	return &revision, nil
@@ -136,20 +237,20 @@ func (s *service) ListRevisions(ctx context.Context, saveID string) ([]omnisave.
 	return revisions, translateError(err)
 }
 
-func (s *service) DeleteRevision(ctx context.Context, saveID, revisionID string) error {
-	if _, err := s.repository.GetRevision(ctx, saveID, revisionID); err != nil {
-		return translateError(err)
+func (s *service) StoreArtifact(ctx context.Context, artifact omnisave.Artifact, payload io.Reader) error {
+	if payload == nil || artifact.Format == "" || !validSHA256(artifact.SHA256) || artifact.Size < 0 {
+		return omnisave.ErrInvalid
 	}
-	revisions, err := s.repository.ListRevisions(ctx, saveID)
-	if err != nil {
-		return translateError(err)
-	}
-	for _, revision := range revisions {
-		if slices.Contains(revision.ParentIDs, revisionID) {
-			return omnisave.ErrInUse
-		}
-	}
-	return translateError(s.repository.DeleteRevision(ctx, saveID, revisionID))
+	return translateError(s.repository.StoreArtifact(ctx, storage.Artifact{
+		Format: artifact.Format,
+		SHA256: artifact.SHA256,
+		Size:   artifact.Size,
+	}, payload))
+}
+
+func (s *service) StatArtifact(ctx context.Context, hash string) (int64, error) {
+	size, err := s.repository.StatArtifact(ctx, hash)
+	return size, translateError(err)
 }
 
 func (s *service) OpenArtifact(ctx context.Context, hash string) (io.ReadCloser, error) {
@@ -160,6 +261,9 @@ func (s *service) OpenArtifact(ctx context.Context, hash string) (io.ReadCloser,
 func translateError(err error) error {
 	if errors.Is(err, storage.ErrNotFound) {
 		return omnisave.ErrNotFound
+	}
+	if errors.Is(err, storage.ErrArtifactMismatch) {
+		return omnisave.ErrInvalid
 	}
 	return err
 }
@@ -173,6 +277,53 @@ func cloneMap(source map[string]string) map[string]string {
 		clone[key] = value
 	}
 	return clone
+}
+
+func mergeMaps(base, changes map[string]string) map[string]string {
+	merged := cloneMap(base)
+	if merged == nil && len(changes) > 0 {
+		merged = make(map[string]string, len(changes))
+	}
+	for key, value := range changes {
+		merged[key] = value
+	}
+	return merged
+}
+
+func cloneFiles(source []omnisave.RevisionFile) []omnisave.RevisionFile {
+	return append([]omnisave.RevisionFile(nil), source...)
+}
+
+func cloneString(source *string) *string {
+	if source == nil {
+		return nil
+	}
+	copy := *source
+	return &copy
+}
+
+func validSHA256(hash string) bool {
+	decoded, err := hex.DecodeString(hash)
+	return err == nil && len(decoded) == 32 && hash == strings.ToLower(hash)
+}
+
+func sameString(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func validRevisionPath(value string) bool {
+	if value == "" || len(value) > maxRevisionPathLength || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") {
+		return false
+	}
+	for _, segment := range strings.Split(value, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeDisplayName(name string) (string, bool) {

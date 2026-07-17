@@ -32,8 +32,6 @@ function shortID(id: string) {
 }
 
 export function RevisionPanel({ save, name, revisions, loading, error }: RevisionPanelProps) {
-  const latestRevisionID = revisions.at(-1)?.id;
-
   return (
     <aside className="rounded-lg border border-white/5 bg-[#181818] p-5 xl:sticky xl:top-6 xl:self-start">
       <div className="flex items-start justify-between gap-4 border-b border-white/5 pb-4">
@@ -43,6 +41,12 @@ export function RevisionPanel({ save, name, revisions, loading, error }: Revisio
           <p className="mt-1 truncate font-mono text-xs text-slate-500">
             {name} · {shortID(save.id)}
           </p>
+          {save.forked_from ? (
+            <p className="mt-1 truncate font-mono text-[10px] text-[#e5a00d]/70">
+              forked from {shortID(save.forked_from.omnisave_id)} ·{' '}
+              {shortID(save.forked_from.revision_id)}
+            </p>
+          ) : null}
         </div>
         <span className="shrink-0 text-xs text-neutral-500">
           {revisions.length} {revisions.length === 1 ? 'revision' : 'revisions'}
@@ -72,51 +76,70 @@ export function RevisionPanel({ save, name, revisions, loading, error }: Revisio
           </p>
         </div>
       ) : (
-        <ol className="mt-1 divide-y divide-white/5">
-          {[...revisions].reverse().map((revision) => {
-            const parentIDs = revision.parent_ids ?? [];
+        <ol className="mt-4">
+          {[...revisions].reverse().map((revision, index) => {
+            const isHead = revision.id === save.head_revision_id;
+            const totalSize = revision.files.reduce((total, file) => total + file.artifact.size, 0);
             return (
-              <li key={revision.id} className="py-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span
-                      className="size-1.5 shrink-0 rounded-full bg-[#e5a00d]"
-                      aria-hidden="true"
-                    />
-                    <p className="truncate font-mono text-xs text-slate-300">
-                      {shortID(revision.id)}
-                    </p>
-                  </div>
-                  {revision.id === latestRevisionID ? (
-                    <span className="text-[10px] font-semibold text-[#e5a00d] uppercase">Latest</span>
+              <li key={revision.id} className="relative grid grid-cols-[1.25rem_minmax(0,1fr)] gap-3">
+                <div className="relative flex justify-center" aria-hidden="true">
+                  {index < revisions.length - 1 ? (
+                    <span className="absolute top-3 bottom-0 w-px bg-white/10" />
                   ) : null}
+                  <span
+                    className={`relative mt-2 size-2.5 rounded-full border-2 bg-[#181818] ${
+                      isHead ? 'border-[#e5a00d]' : 'border-neutral-600'
+                    }`}
+                  />
                 </div>
-
-                <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
-                  <div>
-                    <dt className="text-slate-600">Created</dt>
-                    <dd className="mt-1 text-slate-400">{formatDate(revision.created_at)}</dd>
+                <article className="min-w-0 border-b border-white/5 pb-5 last:border-0">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-mono text-xs text-slate-300" title={revision.id}>
+                        {shortID(revision.id)}
+                      </span>
+                    </div>
+                    <time className="shrink-0 text-[10px] text-slate-600">
+                      {formatDate(revision.created_at)}
+                    </time>
                   </div>
-                  <div>
-                    <dt className="text-slate-600">Artifact</dt>
-                    <dd className="mt-1 text-slate-400">{formatSize(revision.artifact.size)}</dd>
-                  </div>
-                  <div className="col-span-2">
-                    <dt className="text-slate-600">SHA-256</dt>
-                    <dd
-                      className="mt-1 truncate font-mono text-slate-400"
-                      title={revision.artifact.sha256}
-                    >
-                      {revision.artifact.sha256}
-                    </dd>
-                  </div>
-                  <div className="col-span-2">
-                    <dt className="text-slate-600">Parent</dt>
-                    <dd className="mt-1 font-mono text-slate-400">
-                      {parentIDs.length > 0 ? parentIDs.map(shortID).join(', ') : 'Initial revision'}
-                    </dd>
-                  </div>
-                </dl>
+                  {isHead ? (
+                    <span className="mt-2 inline-block rounded bg-[#e5a00d]/15 px-1.5 py-0.5 text-[10px] font-medium text-[#e5a00d]">
+                      Current head
+                    </span>
+                  ) : null}
+                  <p className="mt-3 text-xs text-slate-500">
+                    {revision.files.length} {revision.files.length === 1 ? 'file' : 'files'} ·{' '}
+                    {formatSize(totalSize)}
+                  </p>
+                  <p className="mt-2 truncate font-mono text-[10px] text-slate-600">
+                    {revision.parent_id ? `parent → ${shortID(revision.parent_id)}` : 'root'}
+                  </p>
+                  <details className="group mt-3">
+                    <summary className="cursor-pointer list-none text-xs font-medium text-slate-400 hover:text-white marker:content-none">
+                      Files <span className="text-slate-600 group-open:hidden">›</span>
+                      <span className="hidden text-slate-600 group-open:inline">⌄</span>
+                    </summary>
+                    <ul className="mt-2 space-y-2">
+                      {revision.files.map((file) => (
+                        <li key={file.path} className="min-w-0 rounded bg-white/[0.025] px-2.5 py-2">
+                          <p
+                            className="truncate font-mono text-[11px] text-slate-300"
+                            title={file.path}
+                          >
+                            {file.path}
+                          </p>
+                          <p
+                            className="mt-1 truncate font-mono text-[10px] text-slate-600"
+                            title={file.artifact.sha256}
+                          >
+                            {formatSize(file.artifact.size)} · {file.artifact.sha256}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                </article>
               </li>
             );
           })}

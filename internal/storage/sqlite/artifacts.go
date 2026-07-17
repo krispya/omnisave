@@ -14,7 +14,7 @@ import (
 
 func (r *Repository) storeArtifact(artifact storage.Artifact, payload io.Reader) error {
 	if !validHash(artifact.SHA256) || artifact.Size < 0 {
-		return fmt.Errorf("invalid artifact descriptor")
+		return fmt.Errorf("%w: invalid descriptor", storage.ErrArtifactMismatch)
 	}
 
 	temporary, err := os.CreateTemp(r.artifactDir, ".artifact-*")
@@ -35,7 +35,7 @@ func (r *Repository) storeArtifact(artifact storage.Artifact, payload io.Reader)
 	}
 	actualHash := hex.EncodeToString(hash.Sum(nil))
 	if size != artifact.Size || actualHash != artifact.SHA256 {
-		return fmt.Errorf("artifact payload does not match descriptor")
+		return fmt.Errorf("%w: payload does not match descriptor", storage.ErrArtifactMismatch)
 	}
 
 	destination := r.artifactPath(artifact.SHA256)
@@ -62,6 +62,20 @@ func (r *Repository) openArtifact(hash string) (io.ReadCloser, error) {
 		return nil, storage.ErrNotFound
 	}
 	return file, err
+}
+
+func (r *Repository) statArtifact(hash string) (int64, error) {
+	if !validHash(hash) {
+		return 0, storage.ErrNotFound
+	}
+	info, err := os.Stat(r.artifactPath(hash))
+	if os.IsNotExist(err) {
+		return 0, storage.ErrNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
 }
 
 func (r *Repository) artifactPath(hash string) string {

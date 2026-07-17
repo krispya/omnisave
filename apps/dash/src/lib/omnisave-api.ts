@@ -2,6 +2,11 @@ export type OmniSave = {
   id: string;
   game_id: string;
   display_name: string;
+  head_revision_id: string | null;
+  forked_from?: {
+    omnisave_id: string;
+    revision_id: string;
+  };
   created_at: string;
   metadata?: Record<string, string>;
 };
@@ -9,14 +14,46 @@ export type OmniSave = {
 export type Revision = {
   id: string;
   omnisave_id: string;
-  parent_ids: string[] | null;
+  parent_id: string | null;
   created_at: string;
+  files: Array<{
+    path: string;
+    artifact: Artifact;
+  }>;
+  metadata?: Record<string, string>;
+};
+
+export type Artifact = {
+  format: string;
+  sha256: string;
+  size: number;
+};
+
+export class HeadConflictError extends Error {
+  expectedHeadID: string | null;
+  actualHeadID: string | null;
+
+  constructor(input: { expected_head_id: string | null; actual_head_id: string | null }) {
+    super(`The save moved to ${input.actual_head_id?.slice(0, 8) ?? 'no revision'}.`);
+    this.name = 'HeadConflictError';
+    this.expectedHeadID = input.expected_head_id;
+    this.actualHeadID = input.actual_head_id;
+  }
+}
+
+type ErrorResponse = {
+  error?: string;
+  expected_head_id?: string | null;
+  actual_head_id?: string | null;
+};
+
+type CommitFile = {
+  path: string;
   artifact: {
     format: string;
     sha256: string;
     size: number;
   };
-  metadata?: Record<string, string>;
 };
 
 export type GameMedia = {
@@ -68,6 +105,13 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
   });
 
   if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as ErrorResponse | null;
+    if (response.status === 409 && body?.error === 'head_conflict') {
+      throw new HeadConflictError({
+        expected_head_id: body.expected_head_id ?? null,
+        actual_head_id: body.actual_head_id ?? null,
+      });
+    }
     const message =
       response.status === 401
         ? 'The API token was not accepted.'
@@ -188,26 +232,58 @@ export function listRevisions(token: string, omniSaveID: string, signal?: AbortS
   return request<Revision[]>(`/api/v1/omnisaves/${omniSaveID}/revisions`, token, { signal });
 }
 
-export function createRevision(
+export function commitRevision(
   token: string,
   omniSaveID: string,
-  input: { parentIDs: string[]; format: string; metadata?: Record<string, string> },
-  payload: Blob,
-  filename: string
+  input: {
+    expectedHeadID: string | null;
+    upserts?: CommitFile[];
+    deletes?: string[];
+    metadata?: Record<string, string>;
+  }
 ) {
-  const form = new FormData();
-  form.append(
-    'revision',
-    JSON.stringify({
-      parent_ids: input.parentIDs,
-      format: input.format,
-      metadata: input.metadata,
-    })
-  );
-  form.append('payload', payload, filename);
-
   return request<Revision>(`/api/v1/omnisaves/${omniSaveID}/revisions`, token, {
     method: 'POST',
-    body: form,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      expected_head_id: input.expectedHeadID,
+      upserts: input.upserts,
+      deletes: input.deletes,
+      metadata: input.metadata,
+    }),
   });
+}
+
+export function forkOmniSave(
+  token: string,
+  omniSaveID: string,
+  input: { revisionID: string; displayName?: string; metadata?: Record<string, string> }
+) {
+  return request<{ omnisave: OmniSave; revision: Revision }>(
+    `/api/v1/omnisaves/${omniSaveID}/forks`,
+    token,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        revision_id: input.revisionID,
+        display_name: input.displayName,
+        metadata: input.metadata,
+      }),
+    }
+  );
+}
+
+export async function uploadArtifact(token: string, payload: Blob): Promise<Artifact> {
+  const digest = await crypto.subtle.digest('SHA-256', await payload.arrayBuffer());
+  const sha256 = Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, '0')
+  ).join('');
+  const format = payload.type || 'application/octet-stream';
+  await request<void>(`/api/v1/artifacts/${sha256}`, token, {
+    method: 'PUT',
+    headers: { 'Content-Type': format },
+    body: payload,
+  });
+  return { format, sha256, size: payload.size };
 }
