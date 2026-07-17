@@ -1,8 +1,10 @@
 import {
+  commitRevision,
   createOmniSave,
-  createRevision,
   fixGameMatch,
+  forkOmniSave,
   searchGameMatches,
+  uploadArtifact,
 } from '../../lib/omnisave-api.js';
 
 const debugGames = [
@@ -63,24 +65,48 @@ export function createTestSave(
   });
 }
 
-export function createTestRevision(token: string, omniSaveID: string, parentID?: string) {
-  const sequence = Date.now().toString(36);
-  const payload = new Blob([`OmniSave debug payload ${sequence}\n`], {
-    type: 'application/octet-stream',
-  });
+async function debugManifest(token: string, label: string) {
+  const format = 'application/vnd.omnisave.raw-save.v1';
+  const [progress, settings] = await Promise.all([
+    uploadArtifact(token, new Blob([`OmniSave ${label}\n`], { type: format })),
+    uploadArtifact(token, new Blob(['{"debug":true,"version":1}\n'], { type: 'application/json' })),
+  ]);
+  return [
+    { path: 'progress.sav', artifact: progress },
+    { path: 'settings.json', artifact: settings },
+  ];
+}
 
-  return createRevision(
-    token,
-    omniSaveID,
-    {
-      parentIDs: parentID ? [parentID] : [],
-      format: 'application/vnd.omnisave.raw-save.v1',
-      metadata: {
-        label: `Debug revision ${sequence}`,
-        source: 'dashboard-debug',
-      },
+export async function createTestRevision(
+  token: string,
+  omniSaveID: string,
+  expectedHeadID: string | null
+) {
+  const sequence = Date.now().toString(36);
+  const manifest = await debugManifest(token, `revision ${sequence}`);
+  return commitRevision(token, omniSaveID, {
+    expectedHeadID,
+    upserts: expectedHeadID ? manifest.slice(0, 1) : manifest,
+    metadata: {
+      label: `Revision ${sequence}`,
+      source: 'dashboard-debug',
     },
-    payload,
-    `debug-${sequence}.sav`
-  );
+  });
+}
+
+export function forkTestSave(
+  token: string,
+  omniSaveID: string,
+  revisionID: string,
+  sourceName: string
+) {
+  const sequence = Date.now().toString(36);
+  return forkOmniSave(token, omniSaveID, {
+    revisionID,
+    displayName: `${sourceName} fork`,
+    metadata: {
+      source: 'dashboard-debug',
+      fork_sequence: sequence,
+    },
+  });
 }

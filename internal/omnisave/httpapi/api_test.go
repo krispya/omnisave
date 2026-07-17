@@ -3,9 +3,10 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,24 +30,33 @@ func TestNetworkClientStory(t *testing.T) {
 	}
 	var save omnisave.OmniSave
 	decodeResponse(t, response, &save)
-
-	revisionBody := &bytes.Buffer{}
-	writer := multipart.NewWriter(revisionBody)
-	if err := writer.WriteField("revision", `{"format":"application/vnd.omnisave.raw-save.v1"}`); err != nil {
-		t.Fatal(err)
+	missingBody := bytes.NewBufferString(`{
+		"expected_head_id":null,
+		"upserts":[{"path":"missing.sav","artifact":{
+			"format":"application/octet-stream",
+			"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"size":10
+		}}]
+	}`)
+	response = request(t, handler, http.MethodPost,
+		"/api/v1/omnisaves/"+save.ID+"/revisions", "application/json", missingBody)
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), "artifact_missing") {
+		t.Fatalf("missing artifact returned %d: %s", response.Code, response.Body.String())
 	}
-	payload, err := writer.CreateFormFile("payload", "pokemon.sav")
+
+	progress := uploadArtifact(t, handler, "game-save contents")
+	settings := uploadArtifact(t, handler, "shared settings")
+	revisionBody, err := json.Marshal(omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{
+			{Path: "pokemon.sav", Artifact: progress},
+			{Path: "settings.json", Artifact: settings},
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := payload.Write([]byte("game-save contents")); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
 	response = request(t, handler, http.MethodPost,
-		"/api/v1/omnisaves/"+save.ID+"/revisions", writer.FormDataContentType(), revisionBody)
+		"/api/v1/omnisaves/"+save.ID+"/revisions", "application/json", bytes.NewReader(revisionBody))
 	if response.Code != http.StatusCreated {
 		t.Fatalf("add revision returned %d: %s", response.Code, response.Body.String())
 	}
@@ -63,14 +73,47 @@ func TestNetworkClientStory(t *testing.T) {
 	if len(history) != 1 || history[0].ID != revision.ID {
 		t.Fatalf("unexpected history: %v", history)
 	}
-	if history[0].ParentIDs == nil {
-		t.Fatal("an initial revision should have an empty parent list")
+	if history[0].ParentID != nil {
+		t.Fatal("an initial revision should not have a parent")
+	}
+	if len(history[0].Files) != 2 {
+		t.Fatalf("expected a complete manifest, got %v", history[0].Files)
+	}
+
+	response = request(t, handler, http.MethodGet, "/api/v1/omnisaves/"+save.ID, "", nil)
+	var storedSave omnisave.OmniSave
+	decodeResponse(t, response, &storedSave)
+	if storedSave.HeadRevisionID == nil || *storedSave.HeadRevisionID != revision.ID {
+		t.Fatalf("unexpected head: %v", storedSave.HeadRevisionID)
+	}
+
+	response = request(t, handler, http.MethodPost, "/api/v1/omnisaves/"+save.ID+"/revisions",
+		"application/json", bytes.NewReader(revisionBody))
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"error":"head_conflict"`) ||
+		!strings.Contains(response.Body.String(), `"actual_head_id":"`+revision.ID+`"`) {
+		t.Fatalf("stale root returned %d: %s", response.Code, response.Body.String())
+	}
+
+	response = request(t, handler, http.MethodPost, "/api/v1/omnisaves/"+save.ID+"/forks",
+		"application/json", bytes.NewBufferString(`{"revision_id":"`+revision.ID+`","display_name":"Alternate"}`))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("fork returned %d: %s", response.Code, response.Body.String())
+	}
+	var fork omnisave.ForkResult
+	decodeResponse(t, response, &fork)
+	if fork.OmniSave.ForkedFrom == nil || fork.OmniSave.ForkedFrom.RevisionID != revision.ID ||
+		len(fork.Revision.Files) != 2 {
+		t.Fatalf("unexpected fork: %v", fork)
 	}
 
 	response = request(t, handler, http.MethodGet,
-		"/api/v1/artifacts/"+revision.Artifact.SHA256, "", nil)
+		"/api/v1/artifacts/"+progress.SHA256, "", nil)
 	if response.Code != http.StatusOK || response.Body.String() != "game-save contents" {
 		t.Fatalf("unexpected artifact response: %d %q", response.Code, response.Body.String())
+	}
+	response = request(t, handler, http.MethodHead, "/api/v1/artifacts/"+progress.SHA256, "", nil)
+	if response.Code != http.StatusOK || response.Header().Get("Content-Length") != "18" {
+		t.Fatalf("unexpected artifact head: %d %v", response.Code, response.Header())
 	}
 
 	response = request(t, handler, http.MethodDelete, "/api/v1/omnisaves/"+save.ID, "", nil)
@@ -82,10 +125,35 @@ func TestNetworkClientStory(t *testing.T) {
 		t.Fatalf("deleted save returned %d: %s", response.Code, response.Body.String())
 	}
 	response = request(t, handler, http.MethodGet,
-		"/api/v1/artifacts/"+revision.Artifact.SHA256, "", nil)
+		"/api/v1/artifacts/"+progress.SHA256, "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("fork should retain the shared artifact: %d", response.Code)
+	}
+	response = request(t, handler, http.MethodDelete, "/api/v1/omnisaves/"+fork.OmniSave.ID, "", nil)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("delete fork returned %d: %s", response.Code, response.Body.String())
+	}
+	response = request(t, handler, http.MethodGet,
+		"/api/v1/artifacts/"+progress.SHA256, "", nil)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("deleted artifact returned %d: %s", response.Code, response.Body.String())
 	}
+}
+
+func uploadArtifact(t *testing.T, handler http.Handler, contents string) omnisave.Artifact {
+	t.Helper()
+	sum := sha256.Sum256([]byte(contents))
+	artifact := omnisave.Artifact{
+		Format: "application/octet-stream",
+		SHA256: hex.EncodeToString(sum[:]),
+		Size:   int64(len(contents)),
+	}
+	response := request(t, handler, http.MethodPut, "/api/v1/artifacts/"+artifact.SHA256,
+		artifact.Format, bytes.NewBufferString(contents))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("upload returned %d: %s", response.Code, response.Body.String())
+	}
+	return artifact
 }
 
 func TestUpdateOmniSaveDisplayName(t *testing.T) {
