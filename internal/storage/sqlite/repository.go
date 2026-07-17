@@ -56,8 +56,12 @@ func (r *Repository) InsertOmniSave(ctx context.Context, save omnisave.OmniSave)
 		return err
 	}
 	_, err = r.db.ExecContext(ctx,
-		`INSERT INTO omnisaves(id, game_id, display_name, created_at, metadata) VALUES (?, ?, ?, ?, ?)`,
-		save.ID, save.GameID, save.DisplayName,
+		`INSERT INTO omnisaves(
+			id, game_id, display_name, head_revision_id,
+			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		save.ID, save.GameID, save.DisplayName, save.HeadRevisionID,
+		forkOmniSaveID(save.ForkedFrom), forkRevisionID(save.ForkedFrom),
 		save.CreatedAt.Format(time.RFC3339Nano), string(metadata),
 	)
 	return err
@@ -65,7 +69,9 @@ func (r *Repository) InsertOmniSave(ctx context.Context, save omnisave.OmniSave)
 
 func (r *Repository) ListOmniSaves(ctx context.Context) ([]omnisave.OmniSave, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, game_id, display_name, created_at, metadata FROM omnisaves ORDER BY created_at, id`,
+		`SELECT id, game_id, display_name, head_revision_id,
+			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
+		FROM omnisaves ORDER BY created_at, id`,
 	)
 	if err != nil {
 		return nil, err
@@ -85,7 +91,9 @@ func (r *Repository) ListOmniSaves(ctx context.Context) ([]omnisave.OmniSave, er
 
 func (r *Repository) GetOmniSave(ctx context.Context, id string) (*omnisave.OmniSave, error) {
 	save, err := scanOmniSave(r.db.QueryRowContext(ctx,
-		`SELECT id, game_id, display_name, created_at, metadata FROM omnisaves WHERE id = ?`, id,
+		`SELECT id, game_id, display_name, head_revision_id,
+			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
+		FROM omnisaves WHERE id = ?`, id,
 	))
 	return save, translateNotFound(err)
 }
@@ -115,7 +123,9 @@ func (r *Repository) DeleteOmniSave(ctx context.Context, id string) error {
 	defer tx.Rollback()
 
 	rows, err := tx.QueryContext(ctx,
-		`SELECT DISTINCT artifact_sha256 FROM revisions WHERE omnisave_id = ?`, id,
+		`SELECT DISTINCT artifact_sha256 FROM revision_files WHERE revision_id IN (
+			SELECT id FROM revisions WHERE omnisave_id = ?
+		)`, id,
 	)
 	if err != nil {
 		return err
@@ -136,11 +146,6 @@ func (r *Repository) DeleteOmniSave(ctx context.Context, id string) error {
 		return err
 	}
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM revision_parents WHERE revision_id IN (
-		SELECT id FROM revisions WHERE omnisave_id = ?
-	)`, id); err != nil {
-		return err
-	}
 	result, err := tx.ExecContext(ctx, `DELETE FROM omnisaves WHERE id = ?`, id)
 	if err != nil {
 		return err
@@ -158,7 +163,7 @@ func (r *Repository) DeleteOmniSave(ctx context.Context, id string) error {
 		var used bool
 		if err := tx.QueryRowContext(ctx,
 			`SELECT
-				EXISTS(SELECT 1 FROM revisions WHERE artifact_sha256 = ?) OR
+				EXISTS(SELECT 1 FROM revision_files WHERE artifact_sha256 = ?) OR
 				EXISTS(SELECT 1 FROM game_media WHERE sha256 = ?)`, hash, hash,
 		).Scan(&used); err != nil {
 			return err
@@ -179,14 +184,41 @@ func (r *Repository) DeleteOmniSave(ctx context.Context, id string) error {
 	return nil
 }
 
-func (r *Repository) InsertRevision(ctx context.Context, revision omnisave.Revision, payload io.Reader) error {
-	if err := r.StoreArtifact(ctx, storage.Artifact{
-		Format: revision.Artifact.Format,
-		SHA256: revision.Artifact.SHA256,
-		Size:   revision.Artifact.Size,
-	}, payload); err != nil {
+func (r *Repository) ForkOmniSave(ctx context.Context, save omnisave.OmniSave, initial omnisave.Revision) error {
+	saveMetadata, err := json.Marshal(save.Metadata)
+	if err != nil {
 		return err
 	}
+	revisionMetadata, err := json.Marshal(initial.Metadata)
+	if err != nil {
+		return err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO omnisaves(
+		id, game_id, display_name, head_revision_id,
+		forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, save.ID, save.GameID, save.DisplayName,
+		save.HeadRevisionID, forkOmniSaveID(save.ForkedFrom), forkRevisionID(save.ForkedFrom),
+		save.CreatedAt.Format(time.RFC3339Nano), string(saveMetadata)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO revisions(
+		id, omnisave_id, parent_id, created_at, metadata
+	) VALUES (?, ?, ?, ?, ?)`, initial.ID, initial.OmniSaveID, initial.ParentID,
+		initial.CreatedAt.Format(time.RFC3339Nano), string(revisionMetadata)); err != nil {
+		return err
+	}
+	if err := insertRevisionFiles(ctx, tx, initial); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *Repository) CommitRevision(ctx context.Context, expectedHeadID *string, revision omnisave.Revision) error {
 	metadata, err := json.Marshal(revision.Metadata)
 	if err != nil {
 		return err
@@ -197,34 +229,52 @@ func (r *Repository) InsertRevision(ctx context.Context, revision omnisave.Revis
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO revisions(
-		id, omnisave_id, created_at, artifact_format, artifact_sha256, artifact_size, metadata
-	) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		revision.ID, revision.OmniSaveID, revision.CreatedAt.Format(time.RFC3339Nano),
-		revision.Artifact.Format, revision.Artifact.SHA256, revision.Artifact.Size, string(metadata),
-	)
+
+	actualHeadID, err := currentHead(ctx, tx, revision.OmniSaveID)
+	if err != nil {
+		return translateNotFound(err)
+	}
+	if !sameNullableString(actualHeadID, expectedHeadID) {
+		return &storage.HeadConflict{ActualHeadID: nullableStringPointer(actualHeadID)}
+	}
+
+	_, err = tx.ExecContext(ctx, `INSERT INTO revisions(id, omnisave_id, parent_id, created_at, metadata)
+		VALUES (?, ?, ?, ?, ?)`, revision.ID, revision.OmniSaveID, revision.ParentID,
+		revision.CreatedAt.Format(time.RFC3339Nano), string(metadata))
 	if err != nil {
 		return err
 	}
-	for position, parentID := range revision.ParentIDs {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO revision_parents(revision_id, parent_id, position) VALUES (?, ?, ?)`,
-			revision.ID, parentID, position,
-		); err != nil {
-			return err
+	if err := insertRevisionFiles(ctx, tx, revision); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE omnisaves SET head_revision_id = ?
+		WHERE id = ? AND ((head_revision_id IS NULL AND ? IS NULL) OR head_revision_id = ?)`,
+		revision.ID, revision.OmniSaveID, expectedHeadID, expectedHeadID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		actual, lookupErr := currentHead(ctx, tx, revision.OmniSaveID)
+		if lookupErr != nil {
+			return translateNotFound(lookupErr)
 		}
+		return &storage.HeadConflict{ActualHeadID: nullableStringPointer(actual)}
 	}
 	return tx.Commit()
 }
 
 func (r *Repository) GetRevision(ctx context.Context, saveID, revisionID string) (*omnisave.Revision, error) {
 	revision, err := scanRevision(r.db.QueryRowContext(ctx, `SELECT
-		id, omnisave_id, created_at, artifact_format, artifact_sha256, artifact_size, metadata
+		id, omnisave_id, parent_id, created_at, metadata
 		FROM revisions WHERE omnisave_id = ? AND id = ?`, saveID, revisionID))
 	if err != nil {
 		return nil, translateNotFound(err)
 	}
-	revision.ParentIDs, err = r.listParents(ctx, revision.ID)
+	revision.Files, err = r.listRevisionFiles(ctx, revision.ID)
 	return revision, err
 }
 
@@ -233,7 +283,7 @@ func (r *Repository) ListRevisions(ctx context.Context, saveID string) ([]omnisa
 		return nil, err
 	}
 	rows, err := r.db.QueryContext(ctx, `SELECT
-		id, omnisave_id, created_at, artifact_format, artifact_sha256, artifact_size, metadata
+		id, omnisave_id, parent_id, created_at, metadata
 		FROM revisions WHERE omnisave_id = ? ORDER BY created_at, id`, saveID)
 	if err != nil {
 		return nil, err
@@ -255,30 +305,13 @@ func (r *Repository) ListRevisions(ctx context.Context, saveID string) ([]omnisa
 		return nil, err
 	}
 	for index := range revisions {
-		parents, err := r.listParents(ctx, revisions[index].ID)
+		files, err := r.listRevisionFiles(ctx, revisions[index].ID)
 		if err != nil {
 			return nil, err
 		}
-		revisions[index].ParentIDs = parents
+		revisions[index].Files = files
 	}
 	return revisions, nil
-}
-
-func (r *Repository) DeleteRevision(ctx context.Context, saveID, revisionID string) error {
-	result, err := r.db.ExecContext(ctx,
-		`DELETE FROM revisions WHERE omnisave_id = ? AND id = ?`, saveID, revisionID,
-	)
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count == 0 {
-		return storage.ErrNotFound
-	}
-	return nil
 }
 
 func (r *Repository) OpenArtifact(_ context.Context, hash string) (io.ReadCloser, error) {
@@ -289,23 +322,73 @@ func (r *Repository) StoreArtifact(_ context.Context, artifact storage.Artifact,
 	return r.storeArtifact(artifact, payload)
 }
 
-func (r *Repository) listParents(ctx context.Context, revisionID string) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT parent_id FROM revision_parents WHERE revision_id = ? ORDER BY position`, revisionID,
-	)
+func (r *Repository) StatArtifact(_ context.Context, hash string) (int64, error) {
+	return r.statArtifact(hash)
+}
+
+func (r *Repository) listRevisionFiles(ctx context.Context, revisionID string) ([]omnisave.RevisionFile, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT path, artifact_format, artifact_sha256, artifact_size
+		FROM revision_files WHERE revision_id = ? ORDER BY path`, revisionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	parents := make([]string, 0)
+	files := make([]omnisave.RevisionFile, 0)
 	for rows.Next() {
-		var parent string
-		if err := rows.Scan(&parent); err != nil {
+		var file omnisave.RevisionFile
+		if err := rows.Scan(&file.Path, &file.Artifact.Format, &file.Artifact.SHA256, &file.Artifact.Size); err != nil {
 			return nil, err
 		}
-		parents = append(parents, parent)
+		files = append(files, file)
 	}
-	return parents, rows.Err()
+	return files, rows.Err()
+}
+
+func insertRevisionFiles(ctx context.Context, tx *sql.Tx, revision omnisave.Revision) error {
+	for _, file := range revision.Files {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO revision_files(
+			revision_id, path, artifact_format, artifact_sha256, artifact_size
+		) VALUES (?, ?, ?, ?, ?)`, revision.ID, file.Path, file.Artifact.Format,
+			file.Artifact.SHA256, file.Artifact.Size); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func currentHead(ctx context.Context, tx *sql.Tx, saveID string) (sql.NullString, error) {
+	var head sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT head_revision_id FROM omnisaves WHERE id = ?`, saveID).Scan(&head)
+	return head, err
+}
+
+func sameNullableString(value sql.NullString, expected *string) bool {
+	if expected == nil {
+		return !value.Valid
+	}
+	return value.Valid && value.String == *expected
+}
+
+func nullableStringPointer(value sql.NullString) *string {
+	if !value.Valid {
+		return nil
+	}
+	copy := value.String
+	return &copy
+}
+
+func forkOmniSaveID(origin *omnisave.ForkOrigin) any {
+	if origin == nil {
+		return nil
+	}
+	return origin.OmniSaveID
+}
+
+func forkRevisionID(origin *omnisave.ForkOrigin) any {
+	if origin == nil {
+		return nil
+	}
+	return origin.RevisionID
 }
 
 type scanner interface {
@@ -315,10 +398,19 @@ type scanner interface {
 func scanOmniSave(row scanner) (*omnisave.OmniSave, error) {
 	var save omnisave.OmniSave
 	var createdAt, metadata string
+	var head, forkSave, forkRevision sql.NullString
 	if err := row.Scan(
-		&save.ID, &save.GameID, &save.DisplayName, &createdAt, &metadata,
+		&save.ID, &save.GameID, &save.DisplayName, &head,
+		&forkSave, &forkRevision, &createdAt, &metadata,
 	); err != nil {
 		return nil, err
+	}
+	save.HeadRevisionID = nullableStringPointer(head)
+	if forkSave.Valid && forkRevision.Valid {
+		save.ForkedFrom = &omnisave.ForkOrigin{
+			OmniSaveID: forkSave.String,
+			RevisionID: forkRevision.String,
+		}
 	}
 	var err error
 	save.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
@@ -334,12 +426,13 @@ func scanOmniSave(row scanner) (*omnisave.OmniSave, error) {
 func scanRevision(row scanner) (*omnisave.Revision, error) {
 	var revision omnisave.Revision
 	var createdAt, metadata string
+	var parent sql.NullString
 	if err := row.Scan(
-		&revision.ID, &revision.OmniSaveID, &createdAt,
-		&revision.Artifact.Format, &revision.Artifact.SHA256, &revision.Artifact.Size, &metadata,
+		&revision.ID, &revision.OmniSaveID, &parent, &createdAt, &metadata,
 	); err != nil {
 		return nil, err
 	}
+	revision.ParentID = nullableStringPointer(parent)
 	var err error
 	revision.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 	if err != nil {

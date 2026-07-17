@@ -85,6 +85,91 @@ var migrations = []string{
 	);
 
 	CREATE INDEX game_media_by_artifact ON game_media(sha256);`,
+	`DROP TABLE revision_parents;
+	DROP TABLE revisions;
+	DROP TABLE omnisaves;
+
+	CREATE TABLE omnisaves (
+		id           TEXT PRIMARY KEY,
+		game_id      TEXT NOT NULL,
+		display_name TEXT NOT NULL,
+		created_at   TEXT NOT NULL,
+		metadata     TEXT NOT NULL
+	);
+
+	CREATE TABLE revisions (
+		id          TEXT PRIMARY KEY,
+		omnisave_id TEXT NOT NULL REFERENCES omnisaves(id) ON DELETE CASCADE,
+		created_at  TEXT NOT NULL,
+		metadata    TEXT NOT NULL
+	);
+
+	CREATE INDEX revisions_by_omnisave ON revisions(omnisave_id, created_at, id);
+
+	CREATE TABLE revision_parents (
+		revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE CASCADE,
+		parent_id   TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
+		position    INTEGER NOT NULL,
+		PRIMARY KEY (revision_id, parent_id),
+		UNIQUE (revision_id, position)
+	);
+
+	CREATE TABLE revision_files (
+		revision_id     TEXT NOT NULL REFERENCES revisions(id) ON DELETE CASCADE,
+		path            TEXT NOT NULL,
+		artifact_format TEXT NOT NULL,
+		artifact_sha256 TEXT NOT NULL,
+		artifact_size   INTEGER NOT NULL,
+		PRIMARY KEY (revision_id, path)
+	);
+
+	CREATE INDEX revision_files_by_artifact ON revision_files(artifact_sha256);
+
+	CREATE TABLE refs (
+		omnisave_id TEXT NOT NULL REFERENCES omnisaves(id) ON DELETE CASCADE,
+		name        TEXT NOT NULL,
+		revision_id TEXT NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT,
+		updated_at  TEXT NOT NULL,
+		PRIMARY KEY (omnisave_id, name)
+	);`,
+	`DROP TABLE refs;
+	DROP TABLE revision_parents;
+	DROP TABLE revision_files;
+	DROP TABLE revisions;
+	DROP TABLE omnisaves;
+
+	CREATE TABLE omnisaves (
+		id                          TEXT PRIMARY KEY,
+		game_id                     TEXT NOT NULL,
+		display_name                TEXT NOT NULL,
+		head_revision_id            TEXT,
+		forked_from_omnisave_id     TEXT,
+		forked_from_revision_id     TEXT,
+		created_at                  TEXT NOT NULL,
+		metadata                    TEXT NOT NULL,
+		CHECK ((forked_from_omnisave_id IS NULL) = (forked_from_revision_id IS NULL))
+	);
+
+	CREATE TABLE revisions (
+		id          TEXT PRIMARY KEY,
+		omnisave_id TEXT NOT NULL REFERENCES omnisaves(id) ON DELETE CASCADE,
+		parent_id   TEXT REFERENCES revisions(id) ON DELETE SET NULL,
+		created_at  TEXT NOT NULL,
+		metadata    TEXT NOT NULL
+	);
+
+	CREATE INDEX revisions_by_omnisave ON revisions(omnisave_id, created_at, id);
+
+	CREATE TABLE revision_files (
+		revision_id     TEXT NOT NULL REFERENCES revisions(id) ON DELETE CASCADE,
+		path            TEXT NOT NULL,
+		artifact_format TEXT NOT NULL,
+		artifact_sha256 TEXT NOT NULL,
+		artifact_size   INTEGER NOT NULL,
+		PRIMARY KEY (revision_id, path)
+	);
+
+	CREATE INDEX revision_files_by_artifact ON revision_files(artifact_sha256);`,
 }
 
 func migrate(db *sql.DB) error {

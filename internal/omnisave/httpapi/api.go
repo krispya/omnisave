@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
@@ -39,7 +38,9 @@ func New(saves omnisave.Service, catalogs ...catalog.Service) http.Handler {
 	mux.HandleFunc("POST /api/v1/omnisaves/{id}/revisions", api.addRevision)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions", api.listRevisions)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/{revisionID}", api.getRevision)
-	mux.HandleFunc("DELETE /api/v1/omnisaves/{id}/revisions/{revisionID}", api.deleteRevision)
+	mux.HandleFunc("POST /api/v1/omnisaves/{id}/forks", api.fork)
+	mux.HandleFunc("PUT /api/v1/artifacts/{sha256}", api.putArtifact)
+	mux.HandleFunc("HEAD /api/v1/artifacts/{sha256}", api.headArtifact)
 	mux.HandleFunc("GET /api/v1/artifacts/{sha256}", api.getArtifact)
 	if api.catalog != nil {
 		mux.HandleFunc("POST /api/v1/games/identify", api.identifyGame)
@@ -111,30 +112,12 @@ func (a *API) delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) addRevision(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRevisionBody)
-	if err := r.ParseMultipartForm(1 << 20); err != nil {
+	var input omnisave.CreateRevision
+	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, err)
 		return
 	}
-	if r.MultipartForm != nil {
-		defer r.MultipartForm.RemoveAll()
-	}
-
-	var input omnisave.CreateRevision
-	decoder := json.NewDecoder(strings.NewReader(r.FormValue("revision")))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		writeError(w, omnisave.ErrInvalid)
-		return
-	}
-	payload, _, err := r.FormFile("payload")
-	if err != nil {
-		writeError(w, omnisave.ErrInvalid)
-		return
-	}
-	defer payload.Close()
-
-	revision, err := a.saves.AddRevision(r.Context(), r.PathValue("id"), input, payload)
+	revision, err := a.saves.CommitRevision(r.Context(), r.PathValue("id"), input)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -164,12 +147,57 @@ func (a *API) listRevisions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, revisions)
 }
 
-func (a *API) deleteRevision(w http.ResponseWriter, r *http.Request) {
-	if err := a.saves.DeleteRevision(r.Context(), r.PathValue("id"), r.PathValue("revisionID")); err != nil {
+func (a *API) fork(w http.ResponseWriter, r *http.Request) {
+	var input omnisave.ForkOmniSave
+	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, err)
 		return
 	}
+	result, err := a.saves.Fork(r.Context(), r.PathValue("id"), input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.Header().Set("Location", "/api/v1/omnisaves/"+result.OmniSave.ID)
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (a *API) putArtifact(w http.ResponseWriter, r *http.Request) {
+	if r.ContentLength < 0 {
+		writeError(w, omnisave.ErrInvalid)
+		return
+	}
+	if r.ContentLength > maxRevisionBody {
+		writeError(w, &http.MaxBytesError{Limit: maxRevisionBody})
+		return
+	}
+	format := r.Header.Get("Content-Type")
+	if format == "" {
+		format = "application/octet-stream"
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRevisionBody)
+	err := a.saves.StoreArtifact(r.Context(), omnisave.Artifact{
+		Format: format,
+		SHA256: r.PathValue("sha256"),
+		Size:   r.ContentLength,
+	}, r.Body)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.Header().Set("ETag", `"`+r.PathValue("sha256")+`"`)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) headArtifact(w http.ResponseWriter, r *http.Request) {
+	size, err := a.saves.StatArtifact(r.Context(), r.PathValue("sha256"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	w.Header().Set("ETag", `"`+r.PathValue("sha256")+`"`)
+	w.WriteHeader(http.StatusOK)
 }
 
 func (a *API) getArtifact(w http.ResponseWriter, r *http.Request) {
@@ -181,6 +209,9 @@ func (a *API) getArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	defer payload.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
+	if size, statErr := a.saves.StatArtifact(r.Context(), hash); statErr == nil {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	}
 	w.Header().Set("ETag", `"`+hash+`"`)
 	if _, err := io.Copy(w, payload); err != nil {
 		return
@@ -347,14 +378,31 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	var conflict *omnisave.HeadConflict
+	if errors.As(err, &conflict) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":            "head_conflict",
+			"status":           http.StatusConflict,
+			"expected_head_id": conflict.ExpectedHeadID,
+			"actual_head_id":   conflict.ActualHeadID,
+		})
+		return
+	}
+	var missing *omnisave.MissingArtifacts
+	if errors.As(err, &missing) {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"error":          "artifact_missing",
+			"status":         http.StatusUnprocessableEntity,
+			"missing_sha256": missing.SHA256,
+		})
+		return
+	}
 	status := http.StatusInternalServerError
 	switch {
 	case errors.Is(err, omnisave.ErrInvalid), errors.Is(err, catalog.ErrInvalid):
 		status = http.StatusBadRequest
 	case errors.Is(err, omnisave.ErrNotFound), errors.Is(err, catalog.ErrNotFound):
 		status = http.StatusNotFound
-	case errors.Is(err, omnisave.ErrInUse):
-		status = http.StatusConflict
 	case errors.Is(err, catalog.ErrUnavailable):
 		status = http.StatusServiceUnavailable
 	default:
@@ -365,8 +413,8 @@ func writeError(w http.ResponseWriter, err error) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{
+	json.NewEncoder(w).Encode(map[string]any{
 		"error":  http.StatusText(status),
-		"status": strconv.Itoa(status),
+		"status": status,
 	})
 }
