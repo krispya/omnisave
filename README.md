@@ -23,13 +23,18 @@ Build and run the client scanner:
 
 ```sh
 make build-client
-./bin/omnisave-client
+./bin/omnisave-client scan
 ```
 
 The default view reports adapter totals followed by compact save statistics for
-each discovered game. Use `./bin/omnisave-client --verbose` to include target
-locations, save sets, and individual files.
+each discovered game. Use `./bin/omnisave-client scan --verbose` to include
+target locations, save sets, and individual files.
 
-## Adding Packages
+Choose which discovered games this machine should synchronize:
 
-To add a new package to this workspace, run create-krispya from this directory and it will detect the monorepo.
+```sh
+./bin/omnisave-client track
+```
+
+The tracking prompt is preselected from local state. Space toggles a game,
+Enter saves the selection, and `/` filters the list.
