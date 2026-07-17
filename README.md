@@ -17,6 +17,19 @@ This monorepo workspace was generated with create-krispya.
 - `pnpm run lint` to lint all code
 - `pnpm run format` to format all code
 
+## Local save discovery
+
+Build and run the client scanner:
+
+```sh
+make build-client
+./bin/omnisave-client
+```
+
+The default view reports adapter totals followed by compact save statistics for
+each discovered game. Use `./bin/omnisave-client --verbose` to include target
+locations, save sets, and individual files.
+
 ## Adding Packages
 
 To add a new package to this workspace, run create-krispya from this directory and it will detect the monorepo.
