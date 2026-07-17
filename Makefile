@@ -4,14 +4,17 @@ TEST_FILTER_PACKAGES = $(addsuffix /...,$(shell find . -type d -name '$(F)' 2>/d
 TEST_GOAL_PACKAGES = $(addprefix ./,$(TEST_GOALS))
 TEST_PACKAGES = $(if $(F),$(TEST_FILTER_PACKAGES),$(TEST_GOAL_PACKAGES))
 
-web-install:
-	npm install
+install:
+	pnpm install
 
-web-build:
-	npm run web:build
+build-web:
+	pnpm run web:build
 
 build-server:
 	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/omnisave-server ./cmd/server
+
+build-client:
+	go build -o bin/omnisave-client ./cmd/client
 
 build-all: web-build build-server
 
@@ -68,5 +71,5 @@ package-spk: web-build build-server
 	@echo "SPK written to dist/omnisave-$(VERSION)-x86_64.spk"
 	@echo "Install in DSM: Package Center → Manual Install"
 
-.PHONY: web-install web-build build-server build-all test \
+.PHONY: web-install web-build build-server build-client build-all test \
         docker-build docker-export package-spk
