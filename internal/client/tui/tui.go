@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
@@ -65,18 +67,34 @@ type model struct {
 	adapters []adapterState
 	events   chan tea.Msg
 	spinner  spinner.Model
+	results  []client.TargetScan
 	done     bool
+	aborted  bool
 	err      error
 }
 
 type progressMsg client.ScanProgress
 
 type finishedMsg struct {
-	err error
+	results []client.TargetScan
+	err     error
 }
+
+var (
+	// ErrAborted indicates that the user left an interactive client view.
+	ErrAborted = errors.New("client interaction aborted")
+	// ErrNoGames indicates that a scan produced nothing that can be tracked.
+	ErrNoGames = errors.New("no games discovered")
+)
 
 // Run scans configured adapters and renders their progress and results.
 func Run(ctx context.Context, scanner *client.Scanner, verbose bool) error {
+	_, err := Scan(ctx, scanner, verbose)
+	return err
+}
+
+// Scan renders discovery progress and returns the completed results.
+func Scan(ctx context.Context, scanner *client.Scanner, verbose bool) ([]client.TargetScan, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -99,9 +117,13 @@ func Run(ctx context.Context, scanner *client.Scanner, verbose bool) error {
 
 	final, err := tea.NewProgram(m).Run()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return final.(model).err
+	completed := final.(model)
+	if completed.aborted {
+		return nil, ErrAborted
+	}
+	return completed.results, completed.err
 }
 
 func (m model) Init() tea.Cmd {
@@ -111,10 +133,10 @@ func (m model) Init() tea.Cmd {
 func (m model) startScan() tea.Cmd {
 	return func() tea.Msg {
 		go func() {
-			_, err := m.scanner.ScanWithProgress(m.ctx, func(event client.ScanProgress) {
+			results, err := m.scanner.ScanWithProgress(m.ctx, func(event client.ScanProgress) {
 				m.events <- progressMsg(event)
 			})
-			m.events <- finishedMsg{err: err}
+			m.events <- finishedMsg{results: results, err: err}
 		}()
 		return <-m.events
 	}
@@ -131,6 +153,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch message.String() {
 		case "q", "ctrl+c", "esc":
+			m.aborted = true
 			return m, tea.Quit
 		}
 	case spinner.TickMsg:
@@ -160,10 +183,111 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.waitForEvent()
 	case finishedMsg:
 		m.done = true
+		m.results = message.results
 		m.err = message.err
 		return m, tea.Quit
 	}
 	return m, nil
+}
+
+type gameChoice struct {
+	id       string
+	label    string
+	selected bool
+}
+
+type gameChoiceGroup struct {
+	label   string
+	choices []gameChoice
+}
+
+// SelectTrackedGames prompts for the discovered games this machine should sync.
+func SelectTrackedGames(scans []client.TargetScan, tracked map[string]bool) ([]string, error) {
+	groups := trackingChoiceGroups(scans, tracked)
+	if len(groups) == 0 {
+		return nil, ErrNoGames
+	}
+
+	selections := make([][]string, len(groups))
+	fields := make([]huh.Field, 0, len(groups))
+	for groupIndex, group := range groups {
+		for _, choice := range group.choices {
+			if choice.selected {
+				selections[groupIndex] = append(selections[groupIndex], choice.id)
+			}
+		}
+		fields = append(fields, trackingMultiSelect(group, &selections[groupIndex]))
+	}
+	form := huh.NewForm(
+		huh.NewGroup(fields...).
+			Title("Choose games to sync"),
+	).WithTheme(trackingTheme())
+	if err := form.Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return nil, ErrAborted
+		}
+		return nil, err
+	}
+	var selected []string
+	for _, selection := range selections {
+		selected = append(selected, selection...)
+	}
+	return selected, nil
+}
+
+func trackingMultiSelect(group gameChoiceGroup, selection *[]string) *huh.MultiSelect[string] {
+	options := make([]huh.Option[string], 0, len(group.choices))
+	for _, choice := range group.choices {
+		options = append(options, huh.NewOption(choice.label, choice.id))
+	}
+	height := len(options) + 2
+	if height > 10 {
+		height = 10
+	}
+	return huh.NewMultiSelect[string]().
+		Title(group.label).
+		Options(options...).
+		Height(height).
+		Value(selection)
+}
+
+func trackingChoiceGroups(scans []client.TargetScan, tracked map[string]bool) []gameChoiceGroup {
+	var groups []gameChoiceGroup
+	for _, scan := range scans {
+		if len(scan.Games) == 0 {
+			continue
+		}
+		group := gameChoiceGroup{label: displayName(scan.Target.Adapter)}
+		for _, game := range scan.Games {
+			title := game.Game.Identity.Title
+			if title == "" {
+				title = game.Game.Identity.Source + " " + game.Game.Identity.ID
+			}
+			stats := summarize([]client.TargetScan{{Games: []client.GameScan{game}}})
+			metadata := "  ·  " + strings.Join(stats.saveStats(), " · ")
+			group.choices = append(group.choices, gameChoice{
+				id:       game.Game.ID,
+				label:    title + mutedStyle.Render(metadata),
+				selected: tracked[game.Game.ID],
+			})
+		}
+		groups = append(groups, group)
+	}
+	return groups
+}
+
+func trackingTheme() *huh.Theme {
+	theme := huh.ThemeBase()
+	theme.Focused.Base = theme.Focused.Base.BorderForeground(mutedStyle.GetForeground())
+	theme.Focused.Title = titleStyle
+	theme.Focused.Description = mutedStyle
+	theme.Focused.MultiSelectSelector = accentStyle.SetString("› ")
+	theme.Focused.SelectedPrefix = successStyle.SetString("◉ ")
+	theme.Focused.UnselectedPrefix = mutedStyle.SetString("○ ")
+	theme.Focused.SelectedOption = nameStyle.UnsetBold()
+	theme.Focused.UnselectedOption = mutedStyle
+	theme.Blurred = theme.Focused
+	return theme
 }
 
 func (m model) View() string {
@@ -235,11 +359,11 @@ func summarize(scans []client.TargetScan) summary {
 }
 
 func (s summary) String() string {
-	parts := []string{
+	return strings.Join([]string{
 		count(s.Targets, "target"),
 		count(s.Games, "game"),
-	}
-	return strings.Join(append(parts, s.saveStats()...), " · ")
+		count(s.Saves, "save"),
+	}, " · ")
 }
 
 func (s summary) saveStats() []string {
