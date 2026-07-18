@@ -1,7 +1,7 @@
 #!/bin/sh
 # postinst — runs after package files are extracted.
 
-PACKAGE="OmniSave"
+PACKAGE="Omnisave"
 ETC_DIR="/var/packages/${PACKAGE}/etc"
 CONFIG="${ETC_DIR}/server.yaml"
 
@@ -15,11 +15,11 @@ listen_addr: :8080
 token: CHANGE_ME
 db_path: /volume1/omnisave/data/omnisave.db
 artifact_dir: /volume1/omnisave/data/artifacts
-web_dir: /var/packages/OmniSave/target/web
+web_dir: /var/packages/Omnisave/target/web
 EOF
     echo ""
     echo "================================================"
-    echo " OmniSave: default config written to:"
+    echo " Omnisave: default config written to:"
     echo "   ${CONFIG}"
     echo ""
     echo " Edit it and set a strong 'token' before starting."

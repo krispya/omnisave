@@ -1,14 +1,14 @@
-import type { OmniSave, Revision } from '../../lib/omnisave-api.js';
+import type { Omnisave, Revision } from '../../lib/omnisave-api.js';
 
 type RevisionPanelProps = {
-  save: OmniSave;
+  save: Omnisave;
   name: string;
   revisions: Revision[];
   loading: boolean;
   error: string;
 };
 
-function displayName(save: OmniSave) {
+function displayName(save: Omnisave) {
   return save.metadata?.label ?? save.game_id;
 }
 

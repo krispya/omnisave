@@ -1,6 +1,6 @@
 #!/bin/sh
 
-PACKAGE="OmniSave"
+PACKAGE="Omnisave"
 BINARY="/var/packages/${PACKAGE}/target/bin/omnisave-server"
 CONFIG="/var/packages/${PACKAGE}/etc/server.yaml"
 PIDFILE="/var/packages/${PACKAGE}/var/omnisave.pid"

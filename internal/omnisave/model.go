@@ -3,8 +3,8 @@ package omnisave
 
 import "time"
 
-// OmniSave identifies one independently versioned game save.
-type OmniSave struct {
+// Omnisave identifies one independently versioned game save.
+type Omnisave struct {
 	ID             string            `json:"id"`
 	GameID         string            `json:"game_id"`
 	DisplayName    string            `json:"display_name"`
@@ -14,16 +14,16 @@ type OmniSave struct {
 	Metadata       map[string]string `json:"metadata,omitempty"`
 }
 
-// ForkOrigin identifies the snapshot from which another OmniSave began.
+// ForkOrigin identifies the snapshot from which another Omnisave began.
 type ForkOrigin struct {
-	OmniSaveID string `json:"omnisave_id"`
+	OmnisaveID string `json:"omnisave_id"`
 	RevisionID string `json:"revision_id"`
 }
 
-// Revision is an immutable state in an OmniSave's linear history.
+// Revision is an immutable state in an Omnisave's linear history.
 type Revision struct {
 	ID         string            `json:"id"`
-	OmniSaveID string            `json:"omnisave_id"`
+	OmnisaveID string            `json:"omnisave_id"`
 	ParentID   *string           `json:"parent_id"`
 	CreatedAt  time.Time         `json:"created_at"`
 	Files      []RevisionFile    `json:"files"`
@@ -43,15 +43,15 @@ type Artifact struct {
 	Size   int64  `json:"size"`
 }
 
-// CreateOmniSave describes a new logical game save.
-type CreateOmniSave struct {
+// CreateOmnisave describes a new logical game save.
+type CreateOmnisave struct {
 	GameID      string            `json:"game_id"`
 	DisplayName string            `json:"display_name"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
-// UpdateOmniSave describes mutable OmniSave fields.
-type UpdateOmniSave struct {
+// UpdateOmnisave describes mutable Omnisave fields.
+type UpdateOmnisave struct {
 	DisplayName *string `json:"display_name"`
 }
 
@@ -63,8 +63,8 @@ type CreateRevision struct {
 	Metadata       map[string]string `json:"metadata,omitempty"`
 }
 
-// ForkOmniSave creates a new selectable lineage from an existing snapshot.
-type ForkOmniSave struct {
+// ForkOmnisave creates a new selectable lineage from an existing snapshot.
+type ForkOmnisave struct {
 	RevisionID  string            `json:"revision_id"`
 	DisplayName string            `json:"display_name"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
@@ -72,6 +72,6 @@ type ForkOmniSave struct {
 
 // ForkResult contains the new save and its copied initial snapshot.
 type ForkResult struct {
-	OmniSave OmniSave `json:"omnisave"`
+	Omnisave Omnisave `json:"omnisave"`
 	Revision Revision `json:"revision"`
 }

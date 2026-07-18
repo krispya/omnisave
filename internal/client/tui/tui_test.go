@@ -105,11 +105,11 @@ func TestBindingChoicesNameBothSidesAndShowAnExistingMapping(t *testing.T) {
 	local := []tracking.LocalSave{{
 		ID: "local-save", Adapter: "steam", TargetID: "steam-one", GameTitle: "Stardew Valley", Kind: "cloud", FileCount: 3, Size: 4096,
 	}}
-	remote := []omnisave.OmniSave{{
+	remote := []omnisave.Omnisave{{
 		ID: "remote-save", GameID: "game-123456", DisplayName: "Farm run", HeadRevisionID: &head,
 	}}
 	bindings := []tracking.Binding{{
-		Adapter: "steam", TargetID: "steam-one", LocalSaveID: "local-save", OmniSaveID: "remote-save",
+		Adapter: "steam", TargetID: "steam-one", LocalSaveID: "local-save", OmnisaveID: "remote-save",
 	}}
 
 	localChoices, remoteChoices := bindingChoices(local, remote, bindings)

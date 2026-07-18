@@ -1,4 +1,4 @@
-// Package service implements the OmniSave application service.
+// Package service implements the Omnisave application service.
 package service
 
 import (
@@ -18,7 +18,7 @@ import (
 )
 
 type service struct {
-	repository storage.OmniSaveRepository
+	repository storage.OmnisaveRepository
 }
 
 const (
@@ -27,12 +27,12 @@ const (
 	maxRevisionPathLength = 1024
 )
 
-// New creates an OmniSave service backed by repository.
-func New(repository storage.OmniSaveRepository) omnisave.Service {
+// New creates an Omnisave service backed by repository.
+func New(repository storage.OmnisaveRepository) omnisave.Service {
 	return &service{repository: repository}
 }
 
-func (s *service) Create(ctx context.Context, input omnisave.CreateOmniSave) (*omnisave.OmniSave, error) {
+func (s *service) Create(ctx context.Context, input omnisave.CreateOmnisave) (*omnisave.Omnisave, error) {
 	if input.GameID == "" {
 		return nil, omnisave.ErrInvalid
 	}
@@ -40,30 +40,30 @@ func (s *service) Create(ctx context.Context, input omnisave.CreateOmniSave) (*o
 	if !valid {
 		return nil, omnisave.ErrInvalid
 	}
-	save := omnisave.OmniSave{
+	save := omnisave.Omnisave{
 		ID:          uuid.NewString(),
 		GameID:      input.GameID,
 		DisplayName: displayName,
 		CreatedAt:   time.Now().UTC(),
 		Metadata:    cloneMap(input.Metadata),
 	}
-	if err := s.repository.InsertOmniSave(ctx, save); err != nil {
+	if err := s.repository.InsertOmnisave(ctx, save); err != nil {
 		return nil, translateError(err)
 	}
 	return &save, nil
 }
 
-func (s *service) List(ctx context.Context) ([]omnisave.OmniSave, error) {
-	saves, err := s.repository.ListOmniSaves(ctx)
+func (s *service) List(ctx context.Context) ([]omnisave.Omnisave, error) {
+	saves, err := s.repository.ListOmnisaves(ctx)
 	return saves, translateError(err)
 }
 
-func (s *service) Get(ctx context.Context, id string) (*omnisave.OmniSave, error) {
-	save, err := s.repository.GetOmniSave(ctx, id)
+func (s *service) Get(ctx context.Context, id string) (*omnisave.Omnisave, error) {
+	save, err := s.repository.GetOmnisave(ctx, id)
 	return save, translateError(err)
 }
 
-func (s *service) Update(ctx context.Context, id string, input omnisave.UpdateOmniSave) (*omnisave.OmniSave, error) {
+func (s *service) Update(ctx context.Context, id string, input omnisave.UpdateOmnisave) (*omnisave.Omnisave, error) {
 	if input.DisplayName == nil {
 		return nil, omnisave.ErrInvalid
 	}
@@ -71,18 +71,18 @@ func (s *service) Update(ctx context.Context, id string, input omnisave.UpdateOm
 	if !valid {
 		return nil, omnisave.ErrInvalid
 	}
-	if err := s.repository.UpdateOmniSaveDisplayName(ctx, id, displayName); err != nil {
+	if err := s.repository.UpdateOmnisaveDisplayName(ctx, id, displayName); err != nil {
 		return nil, translateError(err)
 	}
 	return s.Get(ctx, id)
 }
 
 func (s *service) Delete(ctx context.Context, id string) error {
-	return translateError(s.repository.DeleteOmniSave(ctx, id))
+	return translateError(s.repository.DeleteOmnisave(ctx, id))
 }
 
-func (s *service) Fork(ctx context.Context, saveID string, input omnisave.ForkOmniSave) (*omnisave.ForkResult, error) {
-	source, err := s.repository.GetOmniSave(ctx, saveID)
+func (s *service) Fork(ctx context.Context, saveID string, input omnisave.ForkOmnisave) (*omnisave.ForkResult, error) {
+	source, err := s.repository.GetOmnisave(ctx, saveID)
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -99,13 +99,13 @@ func (s *service) Fork(ctx context.Context, saveID string, input omnisave.ForkOm
 	}
 	now := time.Now().UTC()
 	revisionID := uuid.NewString()
-	fork := omnisave.OmniSave{
+	fork := omnisave.Omnisave{
 		ID:             uuid.NewString(),
 		GameID:         source.GameID,
 		DisplayName:    displayName,
 		HeadRevisionID: &revisionID,
 		ForkedFrom: &omnisave.ForkOrigin{
-			OmniSaveID: source.ID,
+			OmnisaveID: source.ID,
 			RevisionID: sourceRevision.ID,
 		},
 		CreatedAt: now,
@@ -113,19 +113,19 @@ func (s *service) Fork(ctx context.Context, saveID string, input omnisave.ForkOm
 	}
 	initial := omnisave.Revision{
 		ID:         revisionID,
-		OmniSaveID: fork.ID,
+		OmnisaveID: fork.ID,
 		CreatedAt:  now,
 		Files:      cloneFiles(sourceRevision.Files),
 		Metadata:   cloneMap(sourceRevision.Metadata),
 	}
-	if err := s.repository.ForkOmniSave(ctx, fork, initial); err != nil {
+	if err := s.repository.ForkOmnisave(ctx, fork, initial); err != nil {
 		return nil, translateError(err)
 	}
-	return &omnisave.ForkResult{OmniSave: fork, Revision: initial}, nil
+	return &omnisave.ForkResult{Omnisave: fork, Revision: initial}, nil
 }
 
 func (s *service) CommitRevision(ctx context.Context, saveID string, input omnisave.CreateRevision) (*omnisave.Revision, error) {
-	save, err := s.repository.GetOmniSave(ctx, saveID)
+	save, err := s.repository.GetOmnisave(ctx, saveID)
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -208,7 +208,7 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 
 	revision := omnisave.Revision{
 		ID:         uuid.NewString(),
-		OmniSaveID: saveID,
+		OmnisaveID: saveID,
 		ParentID:   cloneString(input.ExpectedHeadID),
 		CreatedAt:  time.Now().UTC(),
 		Files:      files,
