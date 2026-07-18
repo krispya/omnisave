@@ -36,6 +36,8 @@ func New(baseURL string, client *http.Client) *Provider {
 	return &Provider{baseURL: strings.TrimRight(baseURL, "/"), client: client}
 }
 
+func (p *Provider) Name() string { return "hasheous" }
+
 func (p *Provider) Resolve(ctx context.Context, evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
 	hashes := make(map[string]string)
 	for _, fingerprint := range evidence.Fingerprints {
