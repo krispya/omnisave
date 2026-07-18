@@ -79,7 +79,18 @@ export type CatalogGame = {
   fingerprints: GameFingerprint[];
   metadata?: Record<string, unknown>;
   media: GameMedia[];
+  provenance: GameProvenance[];
   refreshed_at: string;
+};
+
+export type GameProvenance = {
+  device_id: string;
+  device_name: string;
+  adapter?: string;
+  installed: boolean;
+  first_tracked_at: string;
+  last_seen_at: string;
+  untracked_at?: string;
 };
 
 export type GameIdentifier = {

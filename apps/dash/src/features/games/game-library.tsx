@@ -5,6 +5,7 @@ import {
   type GameFingerprint,
   type GameIdentifier,
   type GameMedia,
+  type GameProvenance,
   type Omnisave,
 } from '../../lib/omnisave-api.js';
 import { createPromiseCache } from '../cache/promise-cache.js';
@@ -24,6 +25,7 @@ export type GameSummary = {
   metadata?: Record<string, unknown>;
   refreshedAt?: string;
   media: GameMedia[];
+  provenance: GameProvenance[];
   saves: Omnisave[];
   inLibrary: boolean;
 };
@@ -53,6 +55,7 @@ export function buildLibrary(catalog: CatalogGame[] | null, saves: Omnisave[]): 
     metadata: game.metadata,
     refreshedAt: game.refreshed_at,
     media: game.media,
+    provenance: game.provenance ?? [],
     saves: savesByGame.get(game.id) ?? [],
     inLibrary: true,
   }));
@@ -69,6 +72,7 @@ export function buildLibrary(catalog: CatalogGame[] | null, saves: Omnisave[]): 
       identifiers: [],
       fingerprints: [],
       media: [],
+      provenance: [],
       saves: gameSaves,
       inLibrary: false,
     });
@@ -131,6 +135,7 @@ export function GameArtwork({
       ) : null}
       {cover ? (
         <GameMediaImage
+          key={cover.url}
           token={token}
           media={cover}
           alt=""
@@ -146,6 +151,44 @@ export function GameArtwork({
 const gameMediaCache = createPromiseCache<string, string>({
   dispose: (objectURL) => URL.revokeObjectURL(objectURL),
 });
+const failedArtworkPreloads = new Set<string>();
+
+async function loadDecodedGameMedia(token: string, media: GameMedia, signal?: AbortSignal) {
+  const blob = await loadGameMedia(token, media.url, signal);
+  const objectURL = URL.createObjectURL(blob);
+  const image = new Image();
+  image.src = objectURL;
+  try {
+    await image.decode();
+    return objectURL;
+  } catch (error) {
+    URL.revokeObjectURL(objectURL);
+    throw error;
+  }
+}
+
+function cacheGameMedia(token: string, media: GameMedia, signal?: AbortSignal) {
+  return gameMediaCache.load(media.url, () => loadDecodedGameMedia(token, media, signal));
+}
+
+export async function preloadGameArtwork(token: string, games: CatalogGame[], signal?: AbortSignal) {
+  const covers = new Map<string, GameMedia>();
+  for (const game of games) {
+    const cover = game.media.find((media) => media.kind === 'cover');
+    if (cover) covers.set(cover.url, cover);
+  }
+
+  const coverList = Array.from(covers.values());
+  for (const cover of coverList) failedArtworkPreloads.delete(cover.url);
+
+  const results = await Promise.allSettled(
+    coverList.map((cover) => cacheGameMedia(token, cover, signal))
+  );
+  if (signal?.aborted) throw new DOMException('The library load was aborted.', 'AbortError');
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') failedArtworkPreloads.add(coverList[index].url);
+  });
+}
 
 export function GameMediaImage({
   token,
@@ -158,33 +201,41 @@ export function GameMediaImage({
   alt: string;
   className?: string;
 }) {
-  const [source, setSource] = useState(() => gameMediaCache.get(media.url) ?? '');
+  const cachedSource = gameMediaCache.get(media.url);
+  const preloadFailed = failedArtworkPreloads.has(media.url);
+  const [source, setSource] = useState<string | null | undefined>(() =>
+    preloadFailed ? null : cachedSource
+  );
 
   useEffect(() => {
-    const cached = gameMediaCache.get(media.url);
-    if (cached) {
-      setSource(cached);
+    if (cachedSource) {
+      setSource(cachedSource);
+      return;
+    }
+    if (preloadFailed) {
+      setSource(null);
       return;
     }
 
     let cancelled = false;
-    setSource('');
-    gameMediaCache
-      .load(media.url, () =>
-        loadGameMedia(token, media.url).then((blob) => URL.createObjectURL(blob))
-      )
+    setSource(undefined);
+    cacheGameMedia(token, media)
       .then((objectURL) => {
         if (!cancelled) setSource(objectURL);
       })
       .catch(() => {
-        if (!cancelled) setSource('');
+        if (!cancelled) setSource(null);
       });
     return () => {
       cancelled = true;
     };
-  }, [media.url, token]);
+  }, [cachedSource, media.url, preloadFailed, token]);
 
-  return source ? <img src={source} alt={alt} className={className} /> : null;
+  if (source) return <img src={source} alt={alt} className={className} />;
+  if (source === undefined) {
+    return <div className={`animate-pulse bg-neutral-800 ${className}`} aria-hidden="true" />;
+  }
+  return null;
 }
 
 export function GameLibrary({
@@ -286,12 +337,14 @@ function GameCard({
   );
 }
 
-export function GameLibrarySkeleton() {
+export function GameLibraryLoading() {
   return (
-    <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
-      {Array.from({ length: 8 }, (_, index) => (
-        <div key={index} className="aspect-[3/4] animate-pulse rounded-md bg-white/5" />
-      ))}
+    <div className="grid min-h-[50vh] place-items-center" role="status">
+      <div
+        className="size-9 animate-spin rounded-full border-2 border-white/10 border-t-[#e5a00d]"
+        aria-hidden="true"
+      />
+      <span className="sr-only">Loading game library…</span>
     </div>
   );
 }
