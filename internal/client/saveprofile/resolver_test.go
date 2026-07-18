@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile"
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/ludusavi"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
@@ -25,7 +26,7 @@ func TestWindowsProfileResolvesInsideAProtonEnvironment(t *testing.T) {
 	game := target.InstalledGame{
 		ID:       "steam:123",
 		TargetID: "steam",
-		Identity: target.GameIdentity{Source: "steam", ID: "123"},
+		Identity: target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "123"}}},
 		Environment: target.Environment{
 			HostOS:     saveprofile.OSLinux,
 			Runtime:    target.RuntimeProton,
@@ -77,7 +78,7 @@ Example:
 	game := target.InstalledGame{
 		ID:       "steam:123",
 		TargetID: "steam",
-		Identity: target.GameIdentity{Source: "steam", ID: "123"},
+		Identity: target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "123"}}},
 		Environment: target.Environment{
 			HostOS:  saveprofile.OSMacOS,
 			Runtime: target.RuntimeNative,

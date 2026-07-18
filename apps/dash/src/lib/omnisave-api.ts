@@ -73,11 +73,23 @@ export type CatalogGame = {
   platform?: string;
   publisher?: string;
   description?: string;
-  provider: string;
-  provider_id: string;
+  metadata_source: string;
+  identifiers: GameIdentifier[];
+  fingerprints: GameFingerprint[];
   metadata?: Record<string, unknown>;
   media: GameMedia[];
   refreshed_at: string;
+};
+
+export type GameIdentifier = {
+  namespace: string;
+  value: string;
+};
+
+export type GameFingerprint = {
+  platform: string;
+  algorithm: 'crc32' | 'md5' | 'sha1' | 'sha256';
+  value: string;
 };
 
 export type GameMatchCandidate = {
@@ -146,31 +158,29 @@ export function loadGameMedia(token: string, mediaURL: string, signal?: AbortSig
   return requestBlob(mediaURL, token, signal);
 }
 
-export function identifyGame(
+export function resolveGame(
   token: string,
   input: {
-    gameID?: string;
-    platform: string;
-    crc32?: string;
-    md5?: string;
-    sha1?: string;
-    sha256?: string;
+    identifiers?: GameIdentifier[];
+    fingerprints?: GameFingerprint[];
+    titleHint?: string;
+    platformHint?: string;
   }
 ) {
-  return request<CatalogGame>('/api/v1/games/identify', token, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      game_id: input.gameID,
-      fingerprint: {
-        platform: input.platform,
-        crc32: input.crc32,
-        md5: input.md5,
-        sha1: input.sha1,
-        sha256: input.sha256,
-      },
-    }),
-  });
+  return request<{ game: CatalogGame; status: 'existing' | 'created' }>(
+    '/api/v1/games/resolve',
+    token,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        identifiers: input.identifiers,
+        fingerprints: input.fingerprints,
+        title_hint: input.titleHint,
+        platform_hint: input.platformHint,
+      }),
+    }
+  );
 }
 
 export function searchGameMatches(

@@ -12,30 +12,44 @@ var (
 	ErrNotFound    = errors.New("catalog: not found")
 	ErrInvalid     = errors.New("catalog: invalid input")
 	ErrUnavailable = errors.New("catalog: provider unavailable")
+	ErrConflict    = errors.New("catalog: identity conflict")
 )
 
-// Fingerprint identifies normalized game media without transferring its contents.
-type Fingerprint struct {
-	Platform string `json:"platform"`
-	CRC32    string `json:"crc32,omitempty"`
-	MD5      string `json:"md5,omitempty"`
-	SHA1     string `json:"sha1,omitempty"`
-	SHA256   string `json:"sha256,omitempty"`
+// IdentityConflict reports evidence already assigned to different Games.
+type IdentityConflict struct {
+	GameIDs []string
 }
 
-// Game is OmniSave's durable view of a provider catalog entry.
+func (e *IdentityConflict) Error() string { return ErrConflict.Error() }
+func (e *IdentityConflict) Unwrap() error { return ErrConflict }
+
+// GameIdentifier is an ID scoped to an external namespace.
+type GameIdentifier struct {
+	Namespace string `json:"namespace"`
+	Value     string `json:"value"`
+}
+
+// GameFingerprint identifies exact game content without transferring it.
+type GameFingerprint struct {
+	Platform  string `json:"platform"`
+	Algorithm string `json:"algorithm"`
+	Value     string `json:"value"`
+}
+
+// Game is one server-owned canonical catalog record.
 type Game struct {
-	ID          string         `json:"id"`
-	Title       string         `json:"title"`
-	SortTitle   string         `json:"sort_title,omitempty"`
-	Platform    string         `json:"platform,omitempty"`
-	Publisher   string         `json:"publisher,omitempty"`
-	Description string         `json:"description,omitempty"`
-	Provider    string         `json:"provider"`
-	ProviderID  string         `json:"provider_id"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
-	Media       []GameMedia    `json:"media"`
-	RefreshedAt time.Time      `json:"refreshed_at"`
+	ID             string            `json:"id"`
+	Title          string            `json:"title"`
+	SortTitle      string            `json:"sort_title,omitempty"`
+	Platform       string            `json:"platform,omitempty"`
+	Publisher      string            `json:"publisher,omitempty"`
+	Description    string            `json:"description,omitempty"`
+	MetadataSource string            `json:"metadata_source"`
+	Identifiers    []GameIdentifier  `json:"identifiers"`
+	Fingerprints   []GameFingerprint `json:"fingerprints"`
+	Metadata       map[string]any    `json:"metadata,omitempty"`
+	Media          []GameMedia       `json:"media"`
+	RefreshedAt    time.Time         `json:"refreshed_at"`
 }
 
 // GameROM records the exact provider signature associated with a game.
@@ -70,10 +84,26 @@ type GameMedia struct {
 	Attribution string `json:"attribution,omitempty"`
 }
 
-// IdentifyGame requests a catalog match for an already normalized fingerprint.
-type IdentifyGame struct {
-	GameID      string      `json:"game_id,omitempty"`
-	Fingerprint Fingerprint `json:"fingerprint"`
+// ResolveGame supplies strong identities and weak descriptive hints.
+type ResolveGame struct {
+	Identifiers  []GameIdentifier  `json:"identifiers,omitempty"`
+	Fingerprints []GameFingerprint `json:"fingerprints,omitempty"`
+	TitleHint    string            `json:"title_hint,omitempty"`
+	PlatformHint string            `json:"platform_hint,omitempty"`
+}
+
+// ResolutionStatus describes whether resolution reused or created a Game.
+type ResolutionStatus string
+
+const (
+	ResolutionExisting ResolutionStatus = "existing"
+	ResolutionCreated  ResolutionStatus = "created"
+)
+
+// GameResolution contains the canonical Game selected for supplied evidence.
+type GameResolution struct {
+	Game   Game             `json:"game"`
+	Status ResolutionStatus `json:"status"`
 }
 
 // SearchGames describes a title search against the configured catalog provider.
@@ -102,18 +132,19 @@ type MatchGame struct {
 	SelectionToken string `json:"selection_token"`
 }
 
-// ProviderMatch is the provider-neutral result of identifying a fingerprint.
+// ProviderMatch is a provider's identity and metadata claim.
 type ProviderMatch struct {
-	Provider    string
-	ProviderID  string
-	Title       string
-	SortTitle   string
-	Platform    string
-	Publisher   string
-	Description string
-	Metadata    map[string]any
-	ROM         ROMMatch
-	Media       []MediaReference
+	Source       string
+	Identifiers  []GameIdentifier
+	Fingerprints []GameFingerprint
+	Title        string
+	SortTitle    string
+	Platform     string
+	Publisher    string
+	Description  string
+	Metadata     map[string]any
+	ROM          ROMMatch
+	Media        []MediaReference
 }
 
 // ROMMatch is an exact ROM signature returned by a catalog provider.
@@ -140,9 +171,9 @@ type MediaReference struct {
 	Attribution string
 }
 
-// Provider identifies games and opens their catalog media.
+// Provider resolves evidence, supports manual search, and opens catalog media.
 type Provider interface {
-	Identify(ctx context.Context, fingerprint Fingerprint) (*ProviderMatch, error)
+	Resolve(ctx context.Context, evidence ResolveGame) (*ProviderMatch, error)
 	Search(ctx context.Context, input SearchGames) ([]GameCandidate, error)
 	Match(ctx context.Context, selectionToken string) (*ProviderMatch, error)
 	OpenMedia(ctx context.Context, reference MediaReference) (format string, payload io.ReadCloser, err error)
@@ -150,7 +181,7 @@ type Provider interface {
 
 // Service is the application boundary for the local game catalog.
 type Service interface {
-	Identify(ctx context.Context, input IdentifyGame) (*Game, error)
+	Resolve(ctx context.Context, input ResolveGame) (*GameResolution, error)
 	Search(ctx context.Context, input SearchGames) ([]GameCandidate, error)
 	Match(ctx context.Context, gameID string, input MatchGame) (*Game, error)
 	List(ctx context.Context) ([]Game, error)
