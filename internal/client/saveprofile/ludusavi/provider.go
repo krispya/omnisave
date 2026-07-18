@@ -53,10 +53,11 @@ func (p *Provider) Find(ctx context.Context, identity target.GameIdentity) (*sav
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if !strings.EqualFold(identity.Source, "steam") || identity.ID == "" {
+	steamID, ok := identity.Identifier("steam.app")
+	if !ok || steamID == "" {
 		return nil, saveprofile.ErrNotFound
 	}
-	profile, ok := p.bySteamID[identity.ID]
+	profile, ok := p.bySteamID[steamID]
 	if !ok {
 		return nil, saveprofile.ErrNotFound
 	}

@@ -3,6 +3,7 @@ import {
   createOmniSave,
   fixGameMatch,
   forkOmniSave,
+  resolveGame,
   searchGameMatches,
   uploadArtifact,
 } from '../../lib/omnisave-api.js';
@@ -32,13 +33,17 @@ function debugMetadata(label: string, platform?: string) {
 }
 
 export async function createRandomTestOmniSave(token: string, existingLabels: string[]) {
-  const sequence = Date.now().toString(36);
   const unusedGames = debugGames.filter((game) => !existingLabels.includes(game.label));
   const choices = unusedGames.length > 0 ? unusedGames : debugGames;
   const game = choices[Math.floor(Math.random() * choices.length)] ?? debugGames[0];
 
+  const resolution = await resolveGame(token, {
+    identifiers: [{ namespace: 'debug.slug', value: game.slug }],
+    titleHint: game.label,
+    platformHint: debugPlatform,
+  });
   const created = await createOmniSave(token, {
-    gameID: `${game.slug}-${sequence}`,
+    gameID: resolution.game.id,
     metadata: debugMetadata(game.label, debugPlatform),
   });
   const catalog = searchGameMatches(

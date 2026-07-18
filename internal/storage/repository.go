@@ -42,12 +42,11 @@ type OmniSaveRepository interface {
 
 // CatalogRepository persists locally cached game catalog records.
 type CatalogRepository interface {
-	FindGameByFingerprint(ctx context.Context, fingerprint catalog.Fingerprint) (*catalog.Game, error)
-	FindGameByProvider(ctx context.Context, provider, providerID string) (*catalog.Game, error)
+	FindGameByIdentifier(ctx context.Context, identifier catalog.GameIdentifier) (*catalog.Game, error)
+	FindGameByFingerprint(ctx context.Context, fingerprint catalog.GameFingerprint) (*catalog.Game, error)
 	GetGame(ctx context.Context, id string) (*catalog.Game, error)
 	ListGames(ctx context.Context) ([]catalog.Game, error)
-	SaveGameMetadata(ctx context.Context, game catalog.Game) error
-	SaveGame(ctx context.Context, game catalog.Game, rom catalog.GameROM) error
+	SaveGame(ctx context.Context, game catalog.Game, rom *catalog.GameROM) error
 	SaveGameMedia(ctx context.Context, media catalog.GameMedia) error
 	ClearGameMedia(ctx context.Context, gameID string) error
 	GetGameMedia(ctx context.Context, gameID, mediaID string) (*catalog.GameMedia, error)

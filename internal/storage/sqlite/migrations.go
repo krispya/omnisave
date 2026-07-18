@@ -170,6 +170,40 @@ var migrations = []string{
 	);
 
 	CREATE INDEX revision_files_by_artifact ON revision_files(artifact_sha256);`,
+	`CREATE TABLE game_identifiers (
+		game_id   TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		namespace TEXT NOT NULL,
+		value     TEXT NOT NULL,
+		PRIMARY KEY (namespace, value)
+	);
+
+	CREATE INDEX game_identifiers_by_game ON game_identifiers(game_id);
+
+	INSERT OR IGNORE INTO game_identifiers(game_id, namespace, value)
+	SELECT id,
+		CASE WHEN instr(provider, '.') > 0 THEN provider ELSE provider || '.game' END,
+		provider_id
+	FROM games
+	WHERE provider <> '' AND provider_id <> '';
+
+	CREATE TABLE game_fingerprints (
+		game_id   TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		platform  TEXT NOT NULL,
+		algorithm TEXT NOT NULL,
+		value     TEXT NOT NULL,
+		PRIMARY KEY (platform, algorithm, value)
+	);
+
+	CREATE INDEX game_fingerprints_by_game ON game_fingerprints(game_id);
+
+	INSERT OR IGNORE INTO game_fingerprints(game_id, platform, algorithm, value)
+	SELECT game_id, lower(system), 'crc32', lower(crc32) FROM game_roms WHERE system <> '' AND crc32 <> '';
+	INSERT OR IGNORE INTO game_fingerprints(game_id, platform, algorithm, value)
+	SELECT game_id, lower(system), 'md5', lower(md5) FROM game_roms WHERE system <> '' AND md5 <> '';
+	INSERT OR IGNORE INTO game_fingerprints(game_id, platform, algorithm, value)
+	SELECT game_id, lower(system), 'sha1', lower(sha1) FROM game_roms WHERE system <> '' AND sha1 <> '';
+	INSERT OR IGNORE INTO game_fingerprints(game_id, platform, algorithm, value)
+	SELECT game_id, lower(system), 'sha256', lower(sha256) FROM game_roms WHERE system <> '' AND sha256 <> '';`,
 }
 
 func migrate(db *sql.DB) error {

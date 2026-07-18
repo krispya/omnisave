@@ -34,64 +34,90 @@ func New(repository storage.CatalogRepository, artifacts storage.ArtifactStore, 
 	return &service{repository: repository, artifacts: artifacts, provider: provider}
 }
 
-func (s *service) Identify(ctx context.Context, input catalog.IdentifyGame) (*catalog.Game, error) {
-	fingerprint, valid := normalizeFingerprint(input.Fingerprint)
-	if !valid || s.provider == nil {
+func (s *service) Resolve(ctx context.Context, input catalog.ResolveGame) (*catalog.GameResolution, error) {
+	evidence, valid := normalizeEvidence(input)
+	if !valid {
 		return nil, catalog.ErrInvalid
 	}
-	if game, err := s.repository.FindGameByFingerprint(ctx, fingerprint); err == nil {
-		return game, nil
-	} else if !errors.Is(err, storage.ErrNotFound) {
+	if existing, err := s.findExisting(ctx, evidence); err != nil {
 		return nil, err
+	} else if existing != nil {
+		mergeGameEvidence(existing, evidence)
+		if err := s.repository.SaveGame(ctx, *existing, nil); err != nil {
+			return nil, translateStorageError(err)
+		}
+		stored, err := s.repository.GetGame(ctx, existing.ID)
+		if err != nil {
+			return nil, translateStorageError(err)
+		}
+		return &catalog.GameResolution{Game: *stored, Status: catalog.ResolutionExisting}, nil
 	}
 
-	match, err := s.provider.Identify(ctx, fingerprint)
+	match, err := s.resolveProvider(ctx, evidence)
 	if err != nil {
 		return nil, err
 	}
-	if match == nil || match.Provider == "" || match.ProviderID == "" || match.Title == "" {
-		return nil, catalog.ErrUnavailable
-	}
-	if !mergeAndValidateROM(&match.ROM, fingerprint) {
-		return nil, catalog.ErrUnavailable
-	}
-
-	gameID := strings.TrimSpace(input.GameID)
-	if gameID == "" {
-		if existing, findErr := s.repository.FindGameByProvider(ctx, match.Provider, match.ProviderID); findErr == nil {
-			gameID = existing.ID
-		} else if !errors.Is(findErr, storage.ErrNotFound) {
-			return nil, findErr
-		} else {
-			gameID = uuid.NewString()
+	combined := evidence
+	if match != nil {
+		providerEvidence, valid := evidenceFromMatch(match)
+		if !valid || !providerSupportsEvidence(providerEvidence, evidence) {
+			return nil, catalog.ErrUnavailable
+		}
+		combined.Identifiers = append(combined.Identifiers, providerEvidence.Identifiers...)
+		combined.Fingerprints = append(combined.Fingerprints, providerEvidence.Fingerprints...)
+		combined, valid = normalizeEvidence(combined)
+		if !valid {
+			return nil, catalog.ErrUnavailable
 		}
 	}
-	game := gameFromMatch(gameID, match, "automatic")
-	rom := catalog.GameROM{
-		ID:         uuid.NewString(),
-		GameID:     gameID,
-		System:     match.ROM.System,
-		Name:       match.ROM.Name,
-		Region:     match.ROM.Region,
-		Languages:  slices.Clone(match.ROM.Languages),
-		Size:       match.ROM.Size,
-		CRC32:      match.ROM.CRC32,
-		MD5:        match.ROM.MD5,
-		SHA1:       match.ROM.SHA1,
-		SHA256:     match.ROM.SHA256,
-		Source:     match.ROM.Source,
-		SourceID:   match.ROM.ProviderID,
-		Attributes: match.ROM.Attributes,
-	}
-	if err := s.repository.SaveGame(ctx, game, rom); err != nil {
+
+	existing, err := s.findExisting(ctx, combined)
+	if err != nil {
 		return nil, err
 	}
-
-	for _, reference := range match.Media {
-		_ = s.cacheMedia(ctx, gameID, match.Provider, reference)
+	status := catalog.ResolutionExisting
+	gameID := ""
+	if existing != nil {
+		gameID = existing.ID
+	} else {
+		gameID = uuid.NewString()
+		status = catalog.ResolutionCreated
+	}
+	if existing != nil {
+		combined.Identifiers = append(combined.Identifiers, existing.Identifiers...)
+		combined.Fingerprints = append(combined.Fingerprints, existing.Fingerprints...)
+		combined, _ = normalizeEvidence(combined)
+	}
+	game, rom, valid := gameFromResolution(gameID, combined, match)
+	if !valid {
+		return nil, catalog.ErrNotFound
+	}
+	if err := s.repository.SaveGame(ctx, game, rom); err != nil {
+		if errors.Is(err, storage.ErrConflict) {
+			if raced, findErr := s.findExisting(ctx, combined); findErr == nil && raced != nil {
+				mergeGameEvidence(raced, combined)
+				if saveErr := s.repository.SaveGame(ctx, *raced, nil); saveErr != nil {
+					return nil, translateStorageError(saveErr)
+				}
+				stored, getErr := s.repository.GetGame(ctx, raced.ID)
+				if getErr != nil {
+					return nil, translateStorageError(getErr)
+				}
+				return &catalog.GameResolution{Game: *stored, Status: catalog.ResolutionExisting}, nil
+			}
+		}
+		return nil, translateStorageError(err)
+	}
+	if match != nil {
+		for _, reference := range match.Media {
+			_ = s.cacheMedia(ctx, gameID, match.Source, reference)
+		}
 	}
 	stored, err := s.repository.GetGame(ctx, gameID)
-	return stored, translateStorageError(err)
+	if err != nil {
+		return nil, translateStorageError(err)
+	}
+	return &catalog.GameResolution{Game: *stored, Status: status}, nil
 }
 
 func (s *service) Search(ctx context.Context, input catalog.SearchGames) ([]catalog.GameCandidate, error) {
@@ -123,18 +149,35 @@ func (s *service) Match(ctx context.Context, gameID string, input catalog.MatchG
 	if err != nil {
 		return nil, err
 	}
-	if match == nil || match.Provider == "" || match.ProviderID == "" || match.Title == "" {
+	providerEvidence, valid := evidenceFromMatch(match)
+	if !valid {
 		return nil, catalog.ErrUnavailable
 	}
-	game := gameFromMatch(gameID, match, "manual")
-	if err := s.repository.SaveGameMetadata(ctx, game); err != nil {
+	if existing, findErr := s.findExisting(ctx, providerEvidence); findErr != nil {
+		return nil, findErr
+	} else if existing != nil && existing.ID != gameID {
+		return nil, &catalog.IdentityConflict{GameIDs: []string{existing.ID, gameID}}
+	}
+	if target, getErr := s.repository.GetGame(ctx, gameID); getErr == nil {
+		providerEvidence.Identifiers = append(providerEvidence.Identifiers, target.Identifiers...)
+		providerEvidence.Fingerprints = append(providerEvidence.Fingerprints, target.Fingerprints...)
+		providerEvidence, _ = normalizeEvidence(providerEvidence)
+	} else if !errors.Is(getErr, storage.ErrNotFound) {
+		return nil, getErr
+	}
+	game, rom, valid := gameFromResolution(gameID, providerEvidence, match)
+	if !valid {
+		return nil, catalog.ErrUnavailable
+	}
+	game.Metadata["match_method"] = "manual"
+	if err := s.repository.SaveGame(ctx, game, rom); err != nil {
 		return nil, err
 	}
 	if err := s.repository.ClearGameMedia(ctx, gameID); err != nil {
 		return nil, err
 	}
 	for _, reference := range match.Media {
-		_ = s.cacheMedia(ctx, gameID, match.Provider, reference)
+		_ = s.cacheMedia(ctx, gameID, match.Source, reference)
 	}
 	stored, err := s.repository.GetGame(ctx, gameID)
 	return stored, translateStorageError(err)
@@ -204,89 +247,246 @@ func (s *service) cacheMedia(ctx context.Context, gameID, provider string, refer
 	})
 }
 
-func gameFromMatch(gameID string, match *catalog.ProviderMatch, method string) catalog.Game {
-	metadata := maps.Clone(match.Metadata)
-	if metadata == nil {
-		metadata = make(map[string]any)
+func (s *service) resolveProvider(ctx context.Context, evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
+	if s.provider == nil {
+		return nil, nil
 	}
-	metadata["match_method"] = method
-	return catalog.Game{
-		ID:          gameID,
-		Title:       match.Title,
-		SortTitle:   match.SortTitle,
-		Platform:    match.Platform,
-		Publisher:   match.Publisher,
-		Description: match.Description,
-		Provider:    match.Provider,
-		ProviderID:  match.ProviderID,
-		Metadata:    metadata,
-		RefreshedAt: time.Now().UTC(),
+	match, err := s.provider.Resolve(ctx, evidence)
+	if errors.Is(err, catalog.ErrNotFound) || errors.Is(err, catalog.ErrUnavailable) {
+		return nil, nil
 	}
+	return match, err
 }
 
-func normalizeFingerprint(input catalog.Fingerprint) (catalog.Fingerprint, bool) {
-	input.Platform = strings.ToLower(strings.TrimSpace(input.Platform))
-	input.CRC32 = strings.ToLower(strings.TrimSpace(input.CRC32))
-	input.MD5 = strings.ToLower(strings.TrimSpace(input.MD5))
-	input.SHA1 = strings.ToLower(strings.TrimSpace(input.SHA1))
-	input.SHA256 = strings.ToLower(strings.TrimSpace(input.SHA256))
-	if input.Platform == "" {
-		return catalog.Fingerprint{}, false
+func (s *service) findExisting(ctx context.Context, evidence catalog.ResolveGame) (*catalog.Game, error) {
+	found := make(map[string]*catalog.Game)
+	for _, identifier := range evidence.Identifiers {
+		game, err := s.repository.FindGameByIdentifier(ctx, identifier)
+		if errors.Is(err, storage.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		found[game.ID] = game
 	}
-	provided := false
-	for value, size := range map[string]int{
-		input.CRC32:  8,
-		input.MD5:    32,
-		input.SHA1:   40,
-		input.SHA256: 64,
+	for _, fingerprint := range evidence.Fingerprints {
+		game, err := s.repository.FindGameByFingerprint(ctx, fingerprint)
+		if errors.Is(err, storage.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		found[game.ID] = game
+	}
+	if len(found) > 1 {
+		ids := make([]string, 0, len(found))
+		for id := range found {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		return nil, &catalog.IdentityConflict{GameIDs: ids}
+	}
+	for _, game := range found {
+		return game, nil
+	}
+	return nil, nil
+}
+
+func gameFromResolution(gameID string, evidence catalog.ResolveGame, match *catalog.ProviderMatch) (catalog.Game, *catalog.GameROM, bool) {
+	game := catalog.Game{
+		ID:             gameID,
+		Title:          evidence.TitleHint,
+		Platform:       evidence.PlatformHint,
+		MetadataSource: "client",
+		Identifiers:    slices.Clone(evidence.Identifiers),
+		Fingerprints:   slices.Clone(evidence.Fingerprints),
+		Metadata:       map[string]any{"match_method": "provisional"},
+		RefreshedAt:    time.Now().UTC(),
+	}
+	if match == nil {
+		return game, nil, game.Title != ""
+	}
+	game.Title = strings.TrimSpace(match.Title)
+	game.SortTitle = strings.TrimSpace(match.SortTitle)
+	game.Platform = strings.TrimSpace(match.Platform)
+	game.Publisher = strings.TrimSpace(match.Publisher)
+	game.Description = strings.TrimSpace(match.Description)
+	game.MetadataSource = strings.TrimSpace(match.Source)
+	game.Metadata = maps.Clone(match.Metadata)
+	if game.Metadata == nil {
+		game.Metadata = make(map[string]any)
+	}
+	game.Metadata["match_method"] = "automatic"
+	var rom *catalog.GameROM
+	if match.ROM.Source != "" && match.ROM.ProviderID != "" {
+		rom = &catalog.GameROM{
+			ID:         uuid.NewString(),
+			GameID:     gameID,
+			System:     match.ROM.System,
+			Name:       match.ROM.Name,
+			Region:     match.ROM.Region,
+			Languages:  slices.Clone(match.ROM.Languages),
+			Size:       match.ROM.Size,
+			CRC32:      strings.ToLower(match.ROM.CRC32),
+			MD5:        strings.ToLower(match.ROM.MD5),
+			SHA1:       strings.ToLower(match.ROM.SHA1),
+			SHA256:     strings.ToLower(match.ROM.SHA256),
+			Source:     match.ROM.Source,
+			SourceID:   match.ROM.ProviderID,
+			Attributes: match.ROM.Attributes,
+		}
+	}
+	return game, rom, game.Title != "" && game.MetadataSource != ""
+}
+
+func evidenceFromMatch(match *catalog.ProviderMatch) (catalog.ResolveGame, bool) {
+	if match == nil || strings.TrimSpace(match.Source) == "" || strings.TrimSpace(match.Title) == "" {
+		return catalog.ResolveGame{}, false
+	}
+	evidence := catalog.ResolveGame{
+		Identifiers:  slices.Clone(match.Identifiers),
+		Fingerprints: slices.Clone(match.Fingerprints),
+		TitleHint:    match.Title,
+		PlatformHint: match.Platform,
+	}
+	for algorithm, value := range map[string]string{
+		"crc32":  match.ROM.CRC32,
+		"md5":    match.ROM.MD5,
+		"sha1":   match.ROM.SHA1,
+		"sha256": match.ROM.SHA256,
 	} {
-		if value == "" {
-			continue
-		}
-		provided = true
-		decoded, err := hex.DecodeString(value)
-		if err != nil || len(decoded)*2 != size {
-			return catalog.Fingerprint{}, false
+		if value != "" {
+			evidence.Fingerprints = append(evidence.Fingerprints, catalog.GameFingerprint{
+				Platform: match.Platform, Algorithm: algorithm, Value: value,
+			})
 		}
 	}
-	return input, provided
+	return normalizeEvidence(evidence)
 }
 
-func mergeAndValidateROM(rom *catalog.ROMMatch, fingerprint catalog.Fingerprint) bool {
-	rom.CRC32 = strings.ToLower(rom.CRC32)
-	rom.MD5 = strings.ToLower(rom.MD5)
-	rom.SHA1 = strings.ToLower(rom.SHA1)
-	rom.SHA256 = strings.ToLower(rom.SHA256)
-	pairs := []struct {
-		requested string
-		actual    *string
-	}{
-		{fingerprint.CRC32, &rom.CRC32},
-		{fingerprint.MD5, &rom.MD5},
-		{fingerprint.SHA1, &rom.SHA1},
-		{fingerprint.SHA256, &rom.SHA256},
-	}
-	matched := false
-	for _, pair := range pairs {
-		if pair.requested == "" {
-			continue
-		}
-		if *pair.actual != "" && *pair.actual != pair.requested {
-			return false
-		}
-		if *pair.actual == pair.requested {
-			matched = true
-		}
-		if *pair.actual == "" {
-			*pair.actual = pair.requested
+func providerSupportsEvidence(provided, requested catalog.ResolveGame) bool {
+	for _, identifier := range requested.Identifiers {
+		for _, candidate := range provided.Identifiers {
+			if identifier == candidate {
+				return true
+			}
 		}
 	}
-	return matched
+	for _, fingerprint := range requested.Fingerprints {
+		for _, candidate := range provided.Fingerprints {
+			if fingerprint.Algorithm == candidate.Algorithm && fingerprint.Value == candidate.Value {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func normalizeEvidence(input catalog.ResolveGame) (catalog.ResolveGame, bool) {
+	input.TitleHint = strings.TrimSpace(input.TitleHint)
+	input.PlatformHint = strings.TrimSpace(input.PlatformHint)
+	if len(input.TitleHint) > 200 || len(input.PlatformHint) > 100 {
+		return catalog.ResolveGame{}, false
+	}
+	identifiers := make([]catalog.GameIdentifier, 0, len(input.Identifiers))
+	seenIdentifiers := make(map[catalog.GameIdentifier]bool)
+	for _, identifier := range input.Identifiers {
+		normalized, valid := normalizeIdentifier(identifier)
+		if !valid {
+			return catalog.ResolveGame{}, false
+		}
+		if !seenIdentifiers[normalized] {
+			seenIdentifiers[normalized] = true
+			identifiers = append(identifiers, normalized)
+		}
+	}
+	fingerprints := make([]catalog.GameFingerprint, 0, len(input.Fingerprints))
+	seenFingerprints := make(map[catalog.GameFingerprint]bool)
+	for _, fingerprint := range input.Fingerprints {
+		normalized, valid := normalizeFingerprint(fingerprint)
+		if !valid {
+			return catalog.ResolveGame{}, false
+		}
+		if !seenFingerprints[normalized] {
+			seenFingerprints[normalized] = true
+			fingerprints = append(fingerprints, normalized)
+		}
+	}
+	if len(identifiers) == 0 && len(fingerprints) == 0 {
+		return catalog.ResolveGame{}, false
+	}
+	slices.SortFunc(identifiers, func(left, right catalog.GameIdentifier) int {
+		if left.Namespace != right.Namespace {
+			return strings.Compare(left.Namespace, right.Namespace)
+		}
+		return strings.Compare(left.Value, right.Value)
+	})
+	slices.SortFunc(fingerprints, func(left, right catalog.GameFingerprint) int {
+		if left.Platform != right.Platform {
+			return strings.Compare(left.Platform, right.Platform)
+		}
+		if left.Algorithm != right.Algorithm {
+			return strings.Compare(left.Algorithm, right.Algorithm)
+		}
+		return strings.Compare(left.Value, right.Value)
+	})
+	input.Identifiers = identifiers
+	input.Fingerprints = fingerprints
+	return input, true
+}
+
+func normalizeIdentifier(input catalog.GameIdentifier) (catalog.GameIdentifier, bool) {
+	input.Namespace = strings.ToLower(strings.TrimSpace(input.Namespace))
+	input.Value = strings.TrimSpace(input.Value)
+	if input.Namespace == "" || len(input.Namespace) > 64 || input.Value == "" || len(input.Value) > 512 {
+		return catalog.GameIdentifier{}, false
+	}
+	for index, character := range input.Namespace {
+		valid := character >= 'a' && character <= 'z' || character >= '0' && character <= '9'
+		if index > 0 && (character == '.' || character == '_' || character == '-') {
+			valid = true
+		}
+		if !valid {
+			return catalog.GameIdentifier{}, false
+		}
+	}
+	for _, character := range input.Value {
+		if character < 0x20 || character == 0x7f {
+			return catalog.GameIdentifier{}, false
+		}
+	}
+	return input, true
+}
+
+func normalizeFingerprint(input catalog.GameFingerprint) (catalog.GameFingerprint, bool) {
+	input.Platform = strings.ToLower(strings.TrimSpace(input.Platform))
+	input.Algorithm = strings.ToLower(strings.TrimSpace(input.Algorithm))
+	input.Value = strings.ToLower(strings.TrimSpace(input.Value))
+	sizes := map[string]int{"crc32": 8, "md5": 32, "sha1": 40, "sha256": 64}
+	size, known := sizes[input.Algorithm]
+	if input.Platform == "" || len(input.Platform) > 100 || !known || len(input.Value) != size {
+		return catalog.GameFingerprint{}, false
+	}
+	decoded, err := hex.DecodeString(input.Value)
+	return input, err == nil && len(decoded)*2 == size
+}
+
+func mergeGameEvidence(game *catalog.Game, evidence catalog.ResolveGame) {
+	evidence.Identifiers = append(evidence.Identifiers, game.Identifiers...)
+	evidence.Fingerprints = append(evidence.Fingerprints, game.Fingerprints...)
+	normalized, _ := normalizeEvidence(evidence)
+	game.Identifiers = normalized.Identifiers
+	game.Fingerprints = normalized.Fingerprints
 }
 
 func translateStorageError(err error) error {
 	if errors.Is(err, storage.ErrNotFound) {
 		return catalog.ErrNotFound
+	}
+	if errors.Is(err, storage.ErrConflict) {
+		return catalog.ErrConflict
 	}
 	return err
 }

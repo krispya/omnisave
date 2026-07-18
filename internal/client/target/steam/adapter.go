@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/steam/locator"
 )
@@ -128,9 +129,8 @@ func (a *Adapter) DiscoverGames(ctx context.Context, discovered target.Target) (
 				ID:       discovered.ID + ":" + app.ID,
 				TargetID: discovered.ID,
 				Identity: target.GameIdentity{
-					Source: "steam",
-					ID:     app.ID,
-					Title:  app.Title,
+					Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: app.ID}},
+					Title:       app.Title,
 				},
 				InstallRoot: installRoot,
 				Environment: environment,
@@ -139,13 +139,14 @@ func (a *Adapter) DiscoverGames(ctx context.Context, discovered target.Target) (
 		}
 	}
 	sort.Slice(games, func(left, right int) bool {
-		return games[left].Identity.ID < games[right].Identity.ID
+		return games[left].ID < games[right].ID
 	})
 	return games, nil
 }
 
 func (a *Adapter) DiscoverSaves(ctx context.Context, discovered target.Target, game target.InstalledGame) ([]target.Save, error) {
-	if discovered.Adapter != adapterName || discovered.Root == "" || game.TargetID != discovered.ID || game.Identity.Source != "steam" {
+	appID, hasAppID := game.Identity.Identifier("steam.app")
+	if discovered.Adapter != adapterName || discovered.Root == "" || game.TargetID != discovered.ID || !hasAppID {
 		return nil, fmt.Errorf("invalid Steam game")
 	}
 	accounts, err := numericDirectories(filepath.Join(discovered.Root, "userdata"))
@@ -158,7 +159,7 @@ func (a *Adapter) DiscoverSaves(ctx context.Context, discovered target.Target, g
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		remoteDirectory := filepath.Join(discovered.Root, "userdata", accountID, game.Identity.ID, "remote")
+		remoteDirectory := filepath.Join(discovered.Root, "userdata", accountID, appID, "remote")
 		files, err := cloudFiles(remoteDirectory)
 		if err != nil {
 			return nil, err

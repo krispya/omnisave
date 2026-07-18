@@ -202,11 +202,14 @@ func TestCatalogMediaSurvivesRepositoryRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	game := catalog.Game{
-		ID:          "super-mario-world",
-		Title:       "Super Mario World",
-		Platform:    "Super Nintendo Entertainment System",
-		Provider:    "hasheous",
-		ProviderID:  "337",
+		ID:             "super-mario-world",
+		Title:          "Super Mario World",
+		Platform:       "Super Nintendo Entertainment System",
+		MetadataSource: "hasheous",
+		Identifiers:    []catalog.GameIdentifier{{Namespace: "hasheous.game", Value: "337"}},
+		Fingerprints: []catalog.GameFingerprint{{
+			Platform: "snes", Algorithm: "sha1", Value: "6b47bb75d16514b6a476aa0c73a683a2a4c18765",
+		}},
 		RefreshedAt: time.Now().UTC(),
 	}
 	rom := catalog.GameROM{
@@ -216,7 +219,7 @@ func TestCatalogMediaSurvivesRepositoryRestart(t *testing.T) {
 		Source:   "no-intro",
 		SourceID: "1628019",
 	}
-	if err := repository.SaveGame(ctx, game, rom); err != nil {
+	if err := repository.SaveGame(ctx, game, &rom); err != nil {
 		t.Fatal(err)
 	}
 	contents := []byte("cover image")
@@ -242,11 +245,11 @@ func TestCatalogMediaSurvivesRepositoryRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repository.Close()
-	stored, err := repository.FindGameByFingerprint(ctx, catalog.Fingerprint{SHA1: rom.SHA1})
+	stored, err := repository.FindGameByFingerprint(ctx, game.Fingerprints[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Title != game.Title || len(stored.Media) != 1 {
+	if stored.Title != game.Title || len(stored.Media) != 1 || len(stored.Identifiers) != 1 {
 		t.Fatalf("unexpected stored catalog game: %v", stored)
 	}
 	payload, err := repository.OpenArtifact(ctx, stored.Media[0].SHA256)
@@ -260,6 +263,38 @@ func TestCatalogMediaSurvivesRepositoryRestart(t *testing.T) {
 	}
 	if !bytes.Equal(got, contents) {
 		t.Fatalf("unexpected stored media: %q", got)
+	}
+}
+
+func TestCatalogIdentityClaimsAreAtomic(t *testing.T) {
+	ctx := context.Background()
+	repository, err := sqlite.Open(filepath.Join(t.TempDir(), "omnisave.db"), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	first := catalog.Game{
+		ID: "first", Title: "First", MetadataSource: "client", RefreshedAt: time.Now().UTC(),
+		Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "10"}},
+	}
+	if err := repository.SaveGame(ctx, first, nil); err != nil {
+		t.Fatal(err)
+	}
+	conflicting := catalog.Game{
+		ID: "second", Title: "Second", MetadataSource: "client", RefreshedAt: time.Now().UTC(),
+		Identifiers: []catalog.GameIdentifier{
+			{Namespace: "igdb.game", Value: "20"},
+			{Namespace: "steam.app", Value: "10"},
+		},
+	}
+	if err := repository.SaveGame(ctx, conflicting, nil); !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("expected an identity conflict, got %v", err)
+	}
+	if _, err := repository.GetGame(ctx, conflicting.ID); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("conflicting game was partially saved: %v", err)
+	}
+	if _, err := repository.FindGameByIdentifier(ctx, conflicting.Identifiers[0]); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("non-conflicting claim escaped the rolled back transaction: %v", err)
 	}
 }
 

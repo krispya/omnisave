@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/retroarch/locator"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/retroarch/platform"
@@ -199,17 +200,20 @@ func discoverPlaylistGames(
 		if item.Path == "" {
 			continue
 		}
+		identity := target.GameIdentity{
+			Title:       item.Label,
+			Platform:    profile.ID,
+			ContentPath: item.Path,
+		}
+		if crc32 := playlistCRC32(item.CRC32); crc32 != "" {
+			identity.Fingerprints = []catalog.GameFingerprint{{
+				Platform: profile.ID, Algorithm: "crc32", Value: crc32,
+			}}
+		}
 		games = append(games, target.InstalledGame{
-			ID:       discovered.ID + ":" + profile.ID + ":" + item.Path,
-			TargetID: discovered.ID,
-			Identity: target.GameIdentity{
-				Source:      "retroarch-playlist",
-				ID:          item.Path,
-				Title:       item.Label,
-				Platform:    profile.ID,
-				ContentPath: item.Path,
-				CRC32:       playlistCRC32(item.CRC32),
-			},
+			ID:          discovered.ID + ":" + profile.ID + ":" + item.Path,
+			TargetID:    discovered.ID,
+			Identity:    identity,
 			InstallRoot: filepath.Dir(item.Path),
 			Environment: target.CurrentEnvironment(discovered.Root),
 			Metadata:    map[string]string{"save_directory": saveDirectory},

@@ -57,8 +57,10 @@ func Resolve(game target.InstalledGame, profile Profile) ([]target.Save, error) 
 }
 
 func applies(rule Rule, game target.InstalledGame) bool {
-	if rule.Store != "" && !strings.EqualFold(rule.Store, game.Identity.Source) {
-		return false
+	if rule.Store != "" {
+		if _, ok := game.Identity.Identifier(strings.ToLower(rule.Store) + ".app"); !ok {
+			return false
+		}
 	}
 	if game.Environment.Runtime == target.RuntimeProton {
 		return rule.OS == "" || rule.OS == OSWindows
@@ -69,12 +71,13 @@ func applies(rule Rule, game target.InstalledGame) bool {
 func expand(template string, game target.InstalledGame) string {
 	environment := game.Environment
 	home := environment.Home
+	_, storeGameID, _ := game.Identity.StoreIdentifier()
 	values := map[string]string{
 		"base":            game.InstallRoot,
 		"game":            filepath.Base(game.InstallRoot),
 		"home":            home,
 		"root":            environment.StoreRoot,
-		"storeGameId":     game.Identity.ID,
+		"storeGameId":     storeGameID,
 		"winAppData":      environment.Variables["APPDATA"],
 		"winLocalAppData": environment.Variables["LOCALAPPDATA"],
 		"winProgramData":  environment.Variables["PROGRAMDATA"],

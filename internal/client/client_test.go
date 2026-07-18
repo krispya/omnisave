@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client"
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/ludusavi"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/retroarch"
@@ -60,7 +61,10 @@ func TestManualScanFindsSNESSavesOnly(t *testing.T) {
 		t.Fatalf("expected installer target, got %+v", scans[0].Target)
 	}
 	game := scans[0].Games[0].Game
-	if game.Identity.Platform != "snes" || game.Identity.Title != "Chrono Trigger" || game.Identity.CRC32 != "2d206bf7" {
+	if game.Identity.Platform != "snes" || game.Identity.Title != "Chrono Trigger" ||
+		len(game.Identity.Fingerprints) != 1 || game.Identity.Fingerprints[0] != (catalog.GameFingerprint{
+		Platform: "snes", Algorithm: "crc32", Value: "2d206bf7",
+	}) {
 		t.Fatalf("unexpected installed game: %+v", game)
 	}
 	save := scans[0].Games[0].Saves[0]
@@ -161,7 +165,8 @@ func TestManualScanFindsOneMultiFileSteamCloudSave(t *testing.T) {
 	}
 
 	game := scans[0].Games[0].Game
-	if game.Identity.Source != "steam" || game.Identity.ID != "413150" || game.Identity.Title != "Stardew Valley" {
+	steamID, ok := game.Identity.Identifier("steam.app")
+	if !ok || steamID != "413150" || game.Identity.Title != "Stardew Valley" {
 		t.Fatalf("unexpected installed game: %+v", game)
 	}
 	save := scans[0].Games[0].Saves[0]

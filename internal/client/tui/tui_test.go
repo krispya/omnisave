@@ -7,6 +7,8 @@ import (
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
+	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
+	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
 func TestCompletedScanStaysCompactUntilVerboseModeIsRequested(t *testing.T) {
@@ -95,5 +97,26 @@ func TestTrackingPromptKeepsGamesBeforeASelectedGameVisible(t *testing.T) {
 		if !strings.Contains(view, title) {
 			t.Fatalf("expected a preselected game to leave every choice visible, got %q", view)
 		}
+	}
+}
+
+func TestBindingChoicesNameBothSidesAndShowAnExistingMapping(t *testing.T) {
+	head := "revision-123456"
+	local := []tracking.LocalSave{{
+		ID: "local-save", Adapter: "steam", TargetID: "steam-one", GameTitle: "Stardew Valley", Kind: "cloud", FileCount: 3, Size: 4096,
+	}}
+	remote := []omnisave.OmniSave{{
+		ID: "remote-save", GameID: "game-123456", DisplayName: "Farm run", HeadRevisionID: &head,
+	}}
+	bindings := []tracking.Binding{{
+		Adapter: "steam", TargetID: "steam-one", LocalSaveID: "local-save", OmniSaveID: "remote-save",
+	}}
+
+	localChoices, remoteChoices := bindingChoices(local, remote, bindings)
+	if len(localChoices) != 1 || !strings.Contains(localChoices[0].label, "Steam · Stardew Valley · cloud · 3 files · 4.0 KiB · currently Farm run") {
+		t.Fatalf("unexpected local binding choice: %+v", localChoices)
+	}
+	if len(remoteChoices) != 1 || !strings.Contains(remoteChoices[0].label, "Farm run · game game-123 · head revision") {
+		t.Fatalf("unexpected remote binding choice: %+v", remoteChoices)
 	}
 }
