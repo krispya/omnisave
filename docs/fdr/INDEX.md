@@ -7,3 +7,4 @@ feature-specific decisions behind it.
 |---|---------|--------|---------------|
 | [FDR-001](FDR-001-game-identity-resolution.md) | Game Identity Resolution | Active | 2026-07-18 |
 | [FDR-002](FDR-002-game-lifecycle.md) | Game Lifecycle | Active | 2026-07-18 |
+| [FDR-003](FDR-003-automatic-save-binding.md) | Automatic Save Binding | Planned | 2026-07-18 |

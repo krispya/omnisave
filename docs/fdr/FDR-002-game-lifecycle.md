@@ -19,6 +19,10 @@ from registration and tracking alone.
 - Tracking a game is the act of library entry — "make Omnisave aware of this
   game". The game is resolved from the Catalog into the Library at track time,
   before any save is bound (resolution behavior: [FDR-001](FDR-001-game-identity-resolution.md)).
+- A stored Library identity the server no longer recognizes — its data was
+  reset, or the game was deleted there — is discarded, and the game
+  re-resolves from the current scan's evidence in the same run. Server truth
+  outranks client memory ([ADR-001](../adr/ADR-001-server-authority.md)).
 - Binding attaches a Device's Local Save to an Omnisave of a game that is
   already in the Library.
 - Each client installation identifies itself as a Device: a stable ID minted
