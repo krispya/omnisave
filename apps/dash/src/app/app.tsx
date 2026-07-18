@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import {
+  Suspense,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type FormEvent,
+} from 'react';
 import {
   deleteGame,
   deleteOmnisave,
@@ -28,8 +38,9 @@ import { FixMatchDialog } from '../features/games/fix-match-dialog.js';
 import { GameDetail } from '../features/games/game-detail.js';
 import {
   GameLibrary,
-  GameLibrarySkeleton,
+  GameLibraryLoading,
   buildLibrary,
+  preloadGameArtwork,
   type GameSummary,
 } from '../features/games/game-library.js';
 
@@ -46,17 +57,96 @@ function upsertCatalogGame(catalog: CatalogGame[], game: CatalogGame) {
     : [...catalog, game];
 }
 
-export function App() {
-  const [token, setToken] = useState(() => sessionStorage.getItem(tokenStorageKey) ?? '');
-  const [tokenInput, setTokenInput] = useState(token);
-  const [catalog, setCatalog] = useState<CatalogGame[] | null>(null);
-  const [saves, setSaves] = useState<Omnisave[]>([]);
-  const [selectedGameID, setSelectedGameID] = useState('');
-  const [selectedSaveID, setSelectedSaveID] = useState('');
+type LibrarySnapshot = {
+  catalog: CatalogGame[] | null;
+  saves: Omnisave[];
+  error: string;
+};
+
+type LibraryResource = {
+  promise: Promise<LibrarySnapshot>;
+  abort: () => void;
+};
+
+async function fetchLibrary(token: string, signal?: AbortSignal): Promise<LibrarySnapshot> {
+  try {
+    // The games endpoint is optional; saves remain a usable library fallback.
+    const [saves, catalog] = await Promise.all([
+      listOmnisaves(token, signal),
+      listGames(token, signal).catch((catalogError: unknown) => {
+        if (catalogError instanceof DOMException && catalogError.name === 'AbortError') {
+          throw catalogError;
+        }
+        return null;
+      }),
+    ]);
+    await preloadGameArtwork(token, catalog ?? [], signal);
+    return { catalog, saves, error: '' };
+  } catch (loadError) {
+    if (loadError instanceof DOMException && loadError.name === 'AbortError') {
+      return { catalog: null, saves: [], error: '' };
+    }
+    return {
+      catalog: null,
+      saves: [],
+      error: loadError instanceof Error ? loadError.message : 'Could not load the library.',
+    };
+  }
+}
+
+function createLibraryResource(token: string): LibraryResource {
+  const controller = new AbortController();
+  return {
+    promise: fetchLibrary(token, controller.signal),
+    abort: () => controller.abort(),
+  };
+}
+
+function createSettledLibraryResource(snapshot: LibrarySnapshot): LibraryResource {
+  return { promise: Promise.resolve(snapshot), abort: () => undefined };
+}
+
+const initialLibraryResources = new Map<string, LibraryResource>();
+
+function initialLibraryResource(token: string) {
+  let resource = initialLibraryResources.get(token);
+  if (!resource) {
+    resource = createLibraryResource(token);
+    initialLibraryResources.set(token, resource);
+  }
+  return resource;
+}
+
+type LibraryDashboardProps = {
+  token: string;
+  resource: LibraryResource;
+  libraryPending: boolean;
+  selectedGameID: string;
+  selectedSaveID: string;
+  onSelectGameID: (id: string) => void;
+  onSelectSaveID: (id: string) => void;
+  onCloseGame: () => void;
+  onReload: () => Promise<LibrarySnapshot>;
+  onReplace: (snapshot: LibrarySnapshot) => void;
+};
+
+function LibraryDashboard({
+  token,
+  resource,
+  libraryPending,
+  selectedGameID,
+  selectedSaveID,
+  onSelectGameID,
+  onSelectSaveID,
+  onCloseGame,
+  onReload,
+  onReplace,
+}: LibraryDashboardProps) {
+  const snapshot = use(resource.promise);
+  const { catalog, saves } = snapshot;
   const [revisions, setRevisions] = useState<Revision[]>([]);
   const [error, setError] = useState('');
   const [revisionError, setRevisionError] = useState('');
-  const [loading, setLoading] = useState(false);
   const [loadingRevisions, setLoadingRevisions] = useState(false);
   const [debugAction, setDebugAction] = useState<'game' | 'save' | 'revision' | 'fork' | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
@@ -73,42 +163,6 @@ export function App() {
     () => selectedGame?.saves.find((save) => save.id === selectedSaveID),
     [selectedGame, selectedSaveID]
   );
-
-  const loadLibrary = useCallback(async (activeToken: string, signal?: AbortSignal) => {
-    if (!activeToken) return;
-
-    setLoading(true);
-    setError('');
-    try {
-      // The games endpoints are optional server-side; without them the
-      // library falls back to games described by their saves.
-      const [nextSaves, nextCatalog] = await Promise.all([
-        listOmnisaves(activeToken, signal),
-        listGames(activeToken, signal).catch((catalogError: unknown) => {
-          if (catalogError instanceof DOMException && catalogError.name === 'AbortError') {
-            throw catalogError;
-          }
-          return null;
-        }),
-      ]);
-      setSaves(nextSaves);
-      setCatalog(nextCatalog);
-      setSelectedGameID((currentID) =>
-        (nextCatalog?.some((game) => game.id === currentID) ?? false) ||
-        nextSaves.some((save) => save.game_id === currentID)
-          ? currentID
-          : ''
-      );
-      setSelectedSaveID((currentID) =>
-        nextSaves.some((save) => save.id === currentID) ? currentID : ''
-      );
-    } catch (loadError) {
-      if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
-      setError(loadError instanceof Error ? loadError.message : 'Could not load the library.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
 
   const loadRevisionHistory = useCallback(
     async (activeToken: string, saveID: string, signal?: AbortSignal) => {
@@ -131,12 +185,6 @@ export function App() {
   );
 
   useEffect(() => {
-    const controller = new AbortController();
-    void loadLibrary(token, controller.signal);
-    return () => controller.abort();
-  }, [loadLibrary, token]);
-
-  useEffect(() => {
     setRevisions([]);
     setRevisionError('');
     if (!selectedSaveID) return;
@@ -146,38 +194,19 @@ export function App() {
     return () => controller.abort();
   }, [loadRevisionHistory, selectedSaveID, token]);
 
-  function connect(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const nextToken = tokenInput.trim();
-    sessionStorage.setItem(tokenStorageKey, nextToken);
-    setToken(nextToken);
-    if (nextToken === token) void loadLibrary(nextToken);
-  }
-
-  function disconnect() {
-    sessionStorage.removeItem(tokenStorageKey);
-    setToken('');
-    setTokenInput('');
-    setCatalog(null);
-    setSaves([]);
-    closeGame();
-    setError('');
-  }
+  useEffect(() => {
+    if (selectedGameID && !games.some((game) => game.id === selectedGameID)) onCloseGame();
+    if (selectedSaveID && !saves.some((save) => save.id === selectedSaveID)) onSelectSaveID('');
+  }, [games, onCloseGame, onSelectSaveID, saves, selectedGameID, selectedSaveID]);
 
   function openGame(game: GameSummary) {
-    setSelectedGameID(game.id);
-    setSelectedSaveID(game.saves[0]?.id ?? '');
-  }
-
-  function closeGame() {
-    setSelectedGameID('');
-    setSelectedSaveID('');
-    setRevisions([]);
-    setRevisionError('');
+    onSelectGameID(game.id);
+    onSelectSaveID(game.saves[0]?.id ?? '');
   }
 
   async function refresh() {
-    await loadLibrary(token);
+    setError('');
+    await onReload();
     if (selectedSaveID) await loadRevisionHistory(token, selectedSaveID);
   }
 
@@ -191,12 +220,13 @@ export function App() {
         token,
         games.map((game) => game.label)
       );
-      setSaves((current) => [...current, created.save]);
-      setCatalog((current) => (current ? upsertCatalogGame(current, created.game) : current));
+      onReplace({
+        catalog: catalog ? upsertCatalogGame(catalog, created.game) : null,
+        saves: [...saves, created.save],
+        error: '',
+      });
       created.catalog
-        .then((matched) =>
-          setCatalog((current) => (current ? upsertCatalogGame(current, matched) : current))
-        )
+        .then(() => onReload())
         .catch((catalogError: unknown) => {
           setError(
             catalogError instanceof Error ? catalogError.message : 'Could not match the test game.'
@@ -220,8 +250,8 @@ export function App() {
         label: selectedGame.label,
         platform: selectedGame.platform,
       });
-      await loadLibrary(token);
-      setSelectedSaveID(created.id);
+      await onReload();
+      onSelectSaveID(created.id);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : 'Could not create a save.');
     } finally {
@@ -236,11 +266,11 @@ export function App() {
     setRevisionError('');
     try {
       await createTestRevision(token, selectedSave.id, selectedSave.head_revision_id);
-      await loadLibrary(token);
+      await onReload();
       await loadRevisionHistory(token, selectedSave.id);
     } catch (createError) {
       if (createError instanceof HeadConflictError) {
-        await loadLibrary(token);
+        await onReload();
         await loadRevisionHistory(token, selectedSave.id);
       }
       setRevisionError(
@@ -267,8 +297,8 @@ export function App() {
         selectedSave.head_revision_id,
         selectedSave.display_name || 'Save'
       );
-      await loadLibrary(token);
-      setSelectedSaveID(result.omnisave.id);
+      await onReload();
+      onSelectSaveID(result.omnisave.id);
     } catch (createError) {
       setRevisionError(
         createError instanceof Error ? createError.message : 'Could not fork this save.'
@@ -281,9 +311,11 @@ export function App() {
   async function renameSave(save: Omnisave, displayName: string) {
     if (!token) return;
     const updated = await updateOmnisaveDisplayName(token, save.id, displayName);
-    setSaves((current) =>
-      current.map((candidate) => (candidate.id === updated.id ? updated : candidate))
-    );
+    onReplace({
+      catalog,
+      saves: saves.map((candidate) => (candidate.id === updated.id ? updated : candidate)),
+      error: '',
+    });
   }
 
   function requestDeleteGame(game: GameSummary) {
@@ -316,7 +348,7 @@ export function App() {
     try {
       if (deleteTarget.type === 'game') {
         await deleteGame(token, deleteTarget.game.id);
-        if (selectedGameID === deleteTarget.game.id) closeGame();
+        if (selectedGameID === deleteTarget.game.id) onCloseGame();
       } else {
         const savesToDelete =
           deleteTarget.type === 'game-saves' ? deleteTarget.game.saves : [deleteTarget.save];
@@ -326,11 +358,11 @@ export function App() {
 
         if (deleteTarget.type === 'save' && selectedSaveID === deleteTarget.save.id) {
           const nextSave = deleteTarget.game.saves.find((save) => save.id !== deleteTarget.save.id);
-          setSelectedSaveID(nextSave?.id ?? '');
+          onSelectSaveID(nextSave?.id ?? '');
         }
       }
       setDeleteTarget(undefined);
-      await loadLibrary(token);
+      await onReload();
     } catch (deleteFailure) {
       setDeleteError(
         deleteFailure instanceof Error
@@ -351,6 +383,188 @@ export function App() {
         saves.length === 1 ? 'save' : 'saves'
       }.`
     : `${games.length} ${games.length === 1 ? 'game' : 'games'} with saved progress.`;
+  const visibleError = error || snapshot.error;
+
+  return (
+    <>
+      <section
+        className={`flex justify-between gap-5 ${selectedGame ? 'items-center' : 'items-end'}`}
+      >
+        {selectedGame ? (
+          <button
+            type="button"
+            onClick={onCloseGame}
+            className="text-sm font-medium text-slate-400 transition hover:text-white"
+          >
+            ← All games
+          </button>
+        ) : (
+          <div>
+            <h1 className="text-2xl font-medium tracking-tight text-white">Games</h1>
+            <p className="mt-1.5 text-sm text-neutral-500">{librarySummary}</p>
+          </div>
+        )}
+
+        <div className="flex shrink-0 gap-3">
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            disabled={libraryPending}
+            className="rounded-md bg-white/5 px-3.5 py-2 text-sm font-medium text-neutral-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {libraryPending ? 'Refreshing…' : 'Refresh'}
+          </button>
+          <DebugMenu
+            game={selectedGame}
+            selectedSave={selectedSave}
+            action={debugAction}
+            revisionHistoryAvailable={!loadingRevisions}
+            canFork={Boolean(selectedSave?.head_revision_id)}
+            onAddRandomGame={() => void addRandomGame()}
+            onAddSave={() => void addSave()}
+            onAddRevision={() => void addRevision()}
+            onForkSave={() => void forkSave()}
+          />
+        </div>
+      </section>
+
+      {visibleError ? (
+        <div
+          role="alert"
+          className="mt-5 rounded-md border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm text-red-200"
+        >
+          {visibleError}
+        </div>
+      ) : null}
+
+      {selectedGame ? (
+        <GameDetail
+          game={selectedGame}
+          token={token}
+          selectedSave={selectedSave}
+          revisions={revisions}
+          loadingRevisions={loadingRevisions}
+          revisionError={revisionError}
+          onSelectSave={(save) => onSelectSaveID(save.id)}
+          onRequestDelete={requestDeleteSave}
+          onRenameSave={renameSave}
+        />
+      ) : (
+        <section className="mt-8" aria-label="Game library" aria-busy={libraryPending}>
+          <GameLibrary
+            games={games}
+            token={token}
+            onOpenGame={openGame}
+            onRequestFixMatch={setFixMatchTarget}
+            onRequestDeleteSaves={requestDeleteGameSaves}
+            onRequestDeleteGame={requestDeleteGame}
+          />
+        </section>
+      )}
+
+      {deleteTarget?.type === 'game' ? (
+        <DeleteGameDialog
+          game={deleteTarget.game}
+          deleting={deleting}
+          error={deleteError}
+          onCancel={cancelDelete}
+          onConfirm={() => void confirmDelete()}
+        />
+      ) : deleteTarget?.type === 'game-saves' ? (
+        <DeleteGameSavesDialog
+          game={deleteTarget.game}
+          deleting={deleting}
+          error={deleteError}
+          onCancel={cancelDelete}
+          onConfirm={() => void confirmDelete()}
+        />
+      ) : deleteTarget?.type === 'save' ? (
+        <DeleteSaveDialog
+          name={deleteTarget.name}
+          deleting={deleting}
+          error={deleteError}
+          onCancel={cancelDelete}
+          onConfirm={() => void confirmDelete()}
+        />
+      ) : null}
+      {fixMatchTarget ? (
+        <FixMatchDialog
+          game={fixMatchTarget}
+          token={token}
+          onCancel={() => setFixMatchTarget(undefined)}
+          onMatched={(game) => {
+            onReplace({
+              catalog: catalog ? upsertCatalogGame(catalog, game) : null,
+              saves,
+              error: '',
+            });
+            setFixMatchTarget(undefined);
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+export function App() {
+  const [token, setToken] = useState(() => sessionStorage.getItem(tokenStorageKey) ?? '');
+  const [tokenInput, setTokenInput] = useState(token);
+  const [resource, setResource] = useState<LibraryResource | null>(() =>
+    token ? initialLibraryResource(token) : null
+  );
+  const [selectedGameID, setSelectedGameID] = useState('');
+  const [selectedSaveID, setSelectedSaveID] = useState('');
+  const activeResource = useRef(resource);
+  const [libraryPending, startLibraryTransition] = useTransition();
+
+  const installResource = useCallback(
+    (next: LibraryResource, transition: boolean) => {
+      activeResource.current?.abort();
+      activeResource.current = next;
+      if (transition) startLibraryTransition(() => setResource(next));
+      else setResource(next);
+      return next.promise;
+    },
+    [startLibraryTransition]
+  );
+
+  const reloadLibrary = useCallback(
+    () => installResource(createLibraryResource(token), true),
+    [installResource, token]
+  );
+
+  const replaceLibrary = useCallback(
+    (snapshot: LibrarySnapshot) => {
+      void installResource(createSettledLibraryResource(snapshot), true);
+    },
+    [installResource]
+  );
+
+  function closeGame() {
+    setSelectedGameID('');
+    setSelectedSaveID('');
+  }
+
+  function connect(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextToken = tokenInput.trim();
+    if (!nextToken) return;
+
+    sessionStorage.setItem(tokenStorageKey, nextToken);
+    setToken(nextToken);
+    if (nextToken === token) void reloadLibrary();
+    else void installResource(createLibraryResource(nextToken), false);
+  }
+
+  function disconnect() {
+    activeResource.current?.abort();
+    activeResource.current = null;
+    sessionStorage.removeItem(tokenStorageKey);
+    setToken('');
+    setTokenInput('');
+    setResource(null);
+    closeGame();
+  }
 
   return (
     <div className="min-h-screen bg-[#111111] text-[#e5e5e5]">
@@ -387,125 +601,23 @@ export function App() {
       <main className="px-5 py-8 sm:px-8 lg:px-10">
         {!token ? (
           <ConnectForm token={tokenInput} onTokenChange={setTokenInput} onConnect={connect} />
-        ) : (
-          <>
-            <section
-              className={`flex justify-between gap-5 ${selectedGame ? 'items-center' : 'items-end'}`}
-            >
-              {selectedGame ? (
-                <button
-                  type="button"
-                  onClick={closeGame}
-                  className="text-sm font-medium text-slate-400 transition hover:text-white"
-                >
-                  ← All games
-                </button>
-              ) : (
-                <div>
-                  <h1 className="text-2xl font-medium tracking-tight text-white">Games</h1>
-                  <p className="mt-1.5 text-sm text-neutral-500">{librarySummary}</p>
-                </div>
-              )}
-
-              <div className="flex shrink-0 gap-3">
-                <button
-                  type="button"
-                  onClick={() => void refresh()}
-                  disabled={loading}
-                  className="rounded-md bg-white/5 px-3.5 py-2 text-sm font-medium text-neutral-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {loading ? 'Refreshing…' : 'Refresh'}
-                </button>
-                <DebugMenu
-                  game={selectedGame}
-                  selectedSave={selectedSave}
-                  action={debugAction}
-                  revisionHistoryAvailable={!loadingRevisions}
-                  canFork={Boolean(selectedSave?.head_revision_id)}
-                  onAddRandomGame={() => void addRandomGame()}
-                  onAddSave={() => void addSave()}
-                  onAddRevision={() => void addRevision()}
-                  onForkSave={() => void forkSave()}
-                />
-              </div>
-            </section>
-
-            {error ? (
-              <div
-                role="alert"
-                className="mt-5 rounded-md border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm text-red-200"
-              >
-                {error}
-              </div>
-            ) : null}
-
-            {selectedGame ? (
-              <GameDetail
-                game={selectedGame}
-                token={token}
-                selectedSave={selectedSave}
-                revisions={revisions}
-                loadingRevisions={loadingRevisions}
-                revisionError={revisionError}
-                onSelectSave={(save) => setSelectedSaveID(save.id)}
-                onRequestDelete={requestDeleteSave}
-                onRenameSave={renameSave}
-              />
-            ) : (
-              <section className="mt-8" aria-label="Game library" aria-busy={loading}>
-                {loading && games.length === 0 ? (
-                  <GameLibrarySkeleton />
-                ) : (
-                  <GameLibrary
-                    games={games}
-                    token={token}
-                    onOpenGame={openGame}
-                    onRequestFixMatch={setFixMatchTarget}
-                    onRequestDeleteSaves={requestDeleteGameSaves}
-                    onRequestDeleteGame={requestDeleteGame}
-                  />
-                )}
-              </section>
-            )}
-          </>
-        )}
+        ) : resource ? (
+          <Suspense fallback={<GameLibraryLoading />}>
+            <LibraryDashboard
+              token={token}
+              resource={resource}
+              libraryPending={libraryPending}
+              selectedGameID={selectedGameID}
+              selectedSaveID={selectedSaveID}
+              onSelectGameID={setSelectedGameID}
+              onSelectSaveID={setSelectedSaveID}
+              onCloseGame={closeGame}
+              onReload={reloadLibrary}
+              onReplace={replaceLibrary}
+            />
+          </Suspense>
+        ) : null}
       </main>
-      {deleteTarget?.type === 'game' ? (
-        <DeleteGameDialog
-          game={deleteTarget.game}
-          deleting={deleting}
-          error={deleteError}
-          onCancel={cancelDelete}
-          onConfirm={() => void confirmDelete()}
-        />
-      ) : deleteTarget?.type === 'game-saves' ? (
-        <DeleteGameSavesDialog
-          game={deleteTarget.game}
-          deleting={deleting}
-          error={deleteError}
-          onCancel={cancelDelete}
-          onConfirm={() => void confirmDelete()}
-        />
-      ) : deleteTarget?.type === 'save' ? (
-        <DeleteSaveDialog
-          name={deleteTarget.name}
-          deleting={deleting}
-          error={deleteError}
-          onCancel={cancelDelete}
-          onConfirm={() => void confirmDelete()}
-        />
-      ) : null}
-      {fixMatchTarget ? (
-        <FixMatchDialog
-          game={fixMatchTarget}
-          token={token}
-          onCancel={() => setFixMatchTarget(undefined)}
-          onMatched={(game) => {
-            setCatalog((current) => (current ? upsertCatalogGame(current, game) : current));
-            setFixMatchTarget(undefined);
-          }}
-        />
-      ) : null}
     </div>
   );
 }

@@ -143,6 +143,27 @@ function GameDetailsDialog({ game, onClose }: { game: GameSummary; onClose: () =
           {game.refreshedAt ? (
             <DetailRow label="Refreshed">{formatDate(game.refreshedAt)}</DetailRow>
           ) : null}
+          {game.provenance.length > 0 ? (
+            <DetailRow label="Provenance">
+              <span className="grid gap-1.5">
+                {game.provenance.map((record) => (
+                  <span key={record.device_id} className="flex flex-wrap gap-x-2 text-xs">
+                    <span className="text-neutral-200">{record.device_name}</span>
+                    <span className="text-slate-500">
+                      {record.adapter ? `${record.adapter} · ` : ''}
+                      {record.untracked_at
+                        ? `untracked ${formatDate(record.untracked_at)}`
+                        : record.installed
+                          ? 'installed'
+                          : 'not installed'}
+                      {' · '}tracked {formatDate(record.first_tracked_at)} · seen{' '}
+                      {formatDate(record.last_seen_at)}
+                    </span>
+                  </span>
+                ))}
+              </span>
+            </DetailRow>
+          ) : null}
           {game.identifiers.length > 0 ? (
             <DetailRow label="Identifiers">
               <span className="flex flex-wrap gap-2">
