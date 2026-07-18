@@ -153,8 +153,8 @@ const gameMediaCache = createPromiseCache<string, string>({
 });
 const failedArtworkPreloads = new Set<string>();
 
-async function loadDecodedGameMedia(token: string, media: GameMedia, signal?: AbortSignal) {
-  const blob = await loadGameMedia(token, media.url, signal);
+async function loadDecodedGameMedia(token: string, mediaURL: string, signal?: AbortSignal) {
+  const blob = await loadGameMedia(token, mediaURL, signal);
   const objectURL = URL.createObjectURL(blob);
   const image = new Image();
   image.src = objectURL;
@@ -167,8 +167,8 @@ async function loadDecodedGameMedia(token: string, media: GameMedia, signal?: Ab
   }
 }
 
-function cacheGameMedia(token: string, media: GameMedia, signal?: AbortSignal) {
-  return gameMediaCache.load(media.url, () => loadDecodedGameMedia(token, media, signal));
+function cacheGameMedia(token: string, mediaURL: string, signal?: AbortSignal) {
+  return gameMediaCache.load(mediaURL, () => loadDecodedGameMedia(token, mediaURL, signal));
 }
 
 export async function preloadGameArtwork(token: string, games: CatalogGame[], signal?: AbortSignal) {
@@ -182,7 +182,7 @@ export async function preloadGameArtwork(token: string, games: CatalogGame[], si
   for (const cover of coverList) failedArtworkPreloads.delete(cover.url);
 
   const results = await Promise.allSettled(
-    coverList.map((cover) => cacheGameMedia(token, cover, signal))
+    coverList.map((cover) => cacheGameMedia(token, cover.url, signal))
   );
   if (signal?.aborted) throw new DOMException('The library load was aborted.', 'AbortError');
   results.forEach((result, index) => {
@@ -219,7 +219,7 @@ export function GameMediaImage({
 
     let cancelled = false;
     setSource(undefined);
-    cacheGameMedia(token, media)
+    cacheGameMedia(token, media.url)
       .then((objectURL) => {
         if (!cancelled) setSource(objectURL);
       })

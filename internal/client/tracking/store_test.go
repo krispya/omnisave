@@ -14,9 +14,10 @@ func TestTrackingSelectionsSurviveRestartsAndPreserveUnavailableGames(t *testing
 		{ID: "steam:a", Adapter: "steam", Title: "Game A"},
 		{ID: "steam:b", Adapter: "steam", Title: "Game B"},
 	}
-	if err := state.ApplyVisible(firstScan, []string{"steam:a", "steam:b"}); err != nil {
+	if _, err := state.ApplyVisible(firstScan, []string{"steam:a", "steam:b"}); err != nil {
 		t.Fatal(err)
 	}
+	state.SetServerGameID("steam:a", "server-a")
 	if err := store.Save(state); err != nil {
 		t.Fatal(err)
 	}
@@ -29,13 +30,17 @@ func TestTrackingSelectionsSurviveRestartsAndPreserveUnavailableGames(t *testing
 		{ID: "steam:a", Adapter: "steam", Title: "Game A"},
 		{ID: "steam:c", Adapter: "steam", Title: "Game C"},
 	}
-	if err := reloaded.ApplyVisible(secondScan, []string{"steam:c"}); err != nil {
+	removed, err := reloaded.ApplyVisible(secondScan, []string{"steam:c"})
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	tracked := reloaded.TrackedIDs()
 	if tracked["steam:a"] || !tracked["steam:b"] || !tracked["steam:c"] {
 		t.Fatalf("expected A untracked, unavailable B preserved, and C tracked; got %+v", tracked)
+	}
+	if len(removed) != 1 || removed[0].ID != "steam:a" || removed[0].ServerGameID != "server-a" {
+		t.Fatalf("expected untracked A reported with its Library identity, got %+v", removed)
 	}
 }
 
@@ -93,7 +98,7 @@ func TestTrackingRemovalDropsVisibleBindingsAndPreservesUnavailableOnes(t *testi
 	state := tracking.NewState()
 	gameA := tracking.Game{ID: "game-a", Adapter: "steam", TargetID: "steam", Title: "Game A"}
 	gameB := tracking.Game{ID: "game-b", Adapter: "steam", TargetID: "steam", Title: "Game B"}
-	if err := state.ApplyVisible([]tracking.Game{gameA, gameB}, []string{gameA.ID, gameB.ID}); err != nil {
+	if _, err := state.ApplyVisible([]tracking.Game{gameA, gameB}, []string{gameA.ID, gameB.ID}); err != nil {
 		t.Fatal(err)
 	}
 	localA := tracking.LocalSave{ID: "save-a", Adapter: "steam", TargetID: "steam", GameID: gameA.ID}
@@ -105,7 +110,7 @@ func TestTrackingRemovalDropsVisibleBindingsAndPreservesUnavailableOnes(t *testi
 		t.Fatal(err)
 	}
 
-	if err := state.ApplyVisible([]tracking.Game{gameA}, nil); err != nil {
+	if _, err := state.ApplyVisible([]tracking.Game{gameA}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, exists := state.BindingFor(localA); exists {

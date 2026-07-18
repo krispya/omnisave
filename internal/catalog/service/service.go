@@ -273,6 +273,47 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	return translateStorageError(s.repository.DeleteGame(ctx, id))
 }
 
+func (s *service) RegisterDevice(ctx context.Context, id string, input catalog.RegisterDevice) (*catalog.Device, error) {
+	id = strings.TrimSpace(id)
+	name := strings.TrimSpace(input.Name)
+	platform := strings.TrimSpace(input.Platform)
+	if id == "" || len(id) > 128 || name == "" || len(name) > 128 || len(platform) > 64 {
+		return nil, catalog.ErrInvalid
+	}
+	now := time.Now().UTC()
+	device := catalog.Device{ID: id, Name: name, Platform: platform, CreatedAt: now, LastSeenAt: now}
+	if err := s.repository.UpsertDevice(ctx, device); err != nil {
+		return nil, translateStorageError(err)
+	}
+	return &device, nil
+}
+
+func (s *service) TrackGame(ctx context.Context, gameID, deviceID string, input catalog.TrackGame) error {
+	gameID = strings.TrimSpace(gameID)
+	deviceID = strings.TrimSpace(deviceID)
+	adapter := strings.TrimSpace(input.Adapter)
+	if gameID == "" || deviceID == "" || len(adapter) > 64 {
+		return catalog.ErrInvalid
+	}
+	now := time.Now().UTC()
+	return translateStorageError(s.repository.TrackGame(ctx, gameID, catalog.GameTracking{
+		DeviceID:       deviceID,
+		Adapter:        adapter,
+		Installed:      input.Installed,
+		FirstTrackedAt: now,
+		LastSeenAt:     now,
+	}))
+}
+
+func (s *service) UntrackGame(ctx context.Context, gameID, deviceID string) error {
+	gameID = strings.TrimSpace(gameID)
+	deviceID = strings.TrimSpace(deviceID)
+	if gameID == "" || deviceID == "" {
+		return catalog.ErrInvalid
+	}
+	return translateStorageError(s.repository.UntrackGame(ctx, gameID, deviceID, time.Now().UTC()))
+}
+
 func (s *service) OpenMedia(ctx context.Context, gameID, mediaID string) (*catalog.GameMedia, io.ReadCloser, error) {
 	media, err := s.repository.GetGameMedia(ctx, gameID, mediaID)
 	if err != nil {

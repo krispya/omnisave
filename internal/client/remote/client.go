@@ -79,6 +79,52 @@ func New(baseURL, token string, httpClient *http.Client) (*Client, error) {
 	return &Client{baseURL: baseURL, token: token, httpClient: httpClient}, nil
 }
 
+// RegisterDevice reports this installation's self-minted identity to the server.
+func (c *Client) RegisterDevice(ctx context.Context, id string, input catalog.RegisterDevice) error {
+	return c.send(ctx, http.MethodPut, "/api/v1/devices/"+url.PathEscape(id), input)
+}
+
+// TrackGame records that this device tracks a game, refreshing its provenance.
+func (c *Client) TrackGame(ctx context.Context, gameID, deviceID string, input catalog.TrackGame) error {
+	return c.send(ctx, http.MethodPut,
+		"/api/v1/games/"+url.PathEscape(gameID)+"/tracking/"+url.PathEscape(deviceID), input)
+}
+
+// UntrackGame marks this device's provenance record inactive without removing it.
+func (c *Client) UntrackGame(ctx context.Context, gameID, deviceID string) error {
+	return c.send(ctx, http.MethodDelete,
+		"/api/v1/games/"+url.PathEscape(gameID)+"/tracking/"+url.PathEscape(deviceID), nil)
+}
+
+func (c *Client) send(ctx context.Context, method, path string, payload any) error {
+	var body io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	if payload != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("contact Omnisave server: %w", err)
+	}
+	defer response.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return &ResponseError{StatusCode: response.StatusCode}
+	}
+	return nil
+}
+
 // ListOmnisaves returns the server records available as binding destinations.
 func (c *Client) ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/omnisaves", nil)

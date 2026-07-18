@@ -66,6 +66,7 @@ type model struct {
 	ctx      context.Context
 	scanner  *client.Scanner
 	verbose  bool
+	clear    bool
 	adapters []adapterState
 	events   chan tea.Msg
 	spinner  spinner.Model
@@ -101,6 +102,21 @@ func Run(ctx context.Context, scanner *client.Scanner, verbose bool) error {
 
 // Scan renders discovery progress and returns the completed results.
 func Scan(ctx context.Context, scanner *client.Scanner, verbose bool) ([]client.TargetScan, error) {
+	return runScan(ctx, scanner, scanOptions{verbose: verbose})
+}
+
+// ScanForSelection renders scan progress that clears itself once discovery
+// finishes, so a prompt that follows is the only thing left on screen.
+func ScanForSelection(ctx context.Context, scanner *client.Scanner) ([]client.TargetScan, error) {
+	return runScan(ctx, scanner, scanOptions{clear: true})
+}
+
+type scanOptions struct {
+	verbose bool
+	clear   bool
+}
+
+func runScan(ctx context.Context, scanner *client.Scanner, options scanOptions) ([]client.TargetScan, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -115,7 +131,8 @@ func Scan(ctx context.Context, scanner *client.Scanner, verbose bool) ([]client.
 	m := model{
 		ctx:      ctx,
 		scanner:  scanner,
-		verbose:  verbose,
+		verbose:  options.verbose,
+		clear:    options.clear,
 		adapters: adapters,
 		events:   make(chan tea.Msg, len(names)*2+1),
 		spinner:  indicator,
@@ -387,6 +404,9 @@ func trackingTheme() *huh.Theme {
 }
 
 func (m model) View() string {
+	if m.done && m.clear {
+		return ""
+	}
 	var view strings.Builder
 	view.WriteString(titleStyle.Render("Omnisave") + "\n")
 	if m.done {

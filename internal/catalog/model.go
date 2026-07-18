@@ -50,7 +50,41 @@ type Game struct {
 	Fingerprints    []GameFingerprint `json:"fingerprints"`
 	Metadata        map[string]any    `json:"metadata,omitempty"`
 	Media           []GameMedia       `json:"media"`
+	Provenance      []GameTracking    `json:"provenance"`
 	RefreshedAt     time.Time         `json:"refreshed_at"`
+}
+
+// Device is one self-identified client installation known to the server.
+type Device struct {
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Platform   string    `json:"platform,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+}
+
+// RegisterDevice is a Device's self-reported identity.
+type RegisterDevice struct {
+	Name     string `json:"name"`
+	Platform string `json:"platform,omitempty"`
+}
+
+// GameTracking is one Provenance record: a Device's history with a Game.
+// Untracking annotates the record; only deleting the Game removes it.
+type GameTracking struct {
+	DeviceID       string     `json:"device_id"`
+	DeviceName     string     `json:"device_name"`
+	Adapter        string     `json:"adapter,omitempty"`
+	Installed      bool       `json:"installed"`
+	FirstTrackedAt time.Time  `json:"first_tracked_at"`
+	LastSeenAt     time.Time  `json:"last_seen_at"`
+	UntrackedAt    *time.Time `json:"untracked_at,omitempty"`
+}
+
+// TrackGame reports that a Device tracks a Game.
+type TrackGame struct {
+	Adapter   string `json:"adapter,omitempty"`
+	Installed bool   `json:"installed"`
 }
 
 // GameROM records the exact provider signature associated with a game.
@@ -192,4 +226,7 @@ type Service interface {
 	Get(ctx context.Context, id string) (*Game, error)
 	Delete(ctx context.Context, id string) error
 	OpenMedia(ctx context.Context, gameID, mediaID string) (*GameMedia, io.ReadCloser, error)
+	RegisterDevice(ctx context.Context, id string, input RegisterDevice) (*Device, error)
+	TrackGame(ctx context.Context, gameID, deviceID string, input TrackGame) error
+	UntrackGame(ctx context.Context, gameID, deviceID string) error
 }
