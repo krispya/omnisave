@@ -371,28 +371,23 @@ export function App() {
           <ConnectForm token={tokenInput} onTokenChange={setTokenInput} onConnect={connect} />
         ) : (
           <>
-            <section className="flex items-end justify-between gap-5">
-              <div>
-                {selectedGame ? (
-                  <button
-                    type="button"
-                    onClick={closeGame}
-                    className="mb-4 text-sm font-medium text-slate-400 transition hover:text-white"
-                  >
-                    ← All games
-                  </button>
-                ) : null}
-                <h1 className="text-2xl font-medium tracking-tight text-white">
-                  {selectedGame ? 'Game saves' : 'Games'}
-                </h1>
-                <p className="mt-1.5 text-sm text-neutral-500">
-                  {selectedGame
-                    ? selectedGame.saves.length === 0
-                      ? 'This game has no saves yet.'
-                      : 'Choose a save to inspect its revision history.'
-                    : librarySummary}
-                </p>
-              </div>
+            <section
+              className={`flex justify-between gap-5 ${selectedGame ? 'items-center' : 'items-end'}`}
+            >
+              {selectedGame ? (
+                <button
+                  type="button"
+                  onClick={closeGame}
+                  className="text-sm font-medium text-slate-400 transition hover:text-white"
+                >
+                  ← All games
+                </button>
+              ) : (
+                <div>
+                  <h1 className="text-2xl font-medium tracking-tight text-white">Games</h1>
+                  <p className="mt-1.5 text-sm text-neutral-500">{librarySummary}</p>
+                </div>
+              )}
 
               <div className="flex shrink-0 gap-3">
                 <button

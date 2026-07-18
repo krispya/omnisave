@@ -415,14 +415,16 @@ func (g game) match(additional []catalog.GameIdentifier) *catalog.ProviderMatch 
 	if len(genres) > 0 {
 		metadata["genres"] = genres
 	}
+	platformCompany, platformName := catalog.SplitPlatform(choosePlatform(g.Platforms, ""))
 	match := &catalog.ProviderMatch{
-		Source:      "igdb",
-		Identifiers: identifiers,
-		Title:       strings.TrimSpace(g.Name),
-		Platform:    choosePlatform(g.Platforms, ""),
-		Publisher:   publisher(g.Companies),
-		Description: strings.TrimSpace(g.Summary),
-		Metadata:    metadata,
+		Source:          "igdb",
+		Identifiers:     identifiers,
+		Title:           strings.TrimSpace(g.Name),
+		Platform:        platformName,
+		PlatformCompany: platformCompany,
+		Publisher:       publisher(g.Companies),
+		Description:     strings.TrimSpace(g.Summary),
+		Metadata:        metadata,
 	}
 	if imageIDPattern.MatchString(g.Cover.ImageID) {
 		match.Media = []catalog.MediaReference{{
