@@ -1,4 +1,4 @@
-import { useDismissibleDetails } from '../../lib/use-dismissible-details.js';
+import { useDismissibleDetails } from '../lib/use-dismissible-details.js';
 
 type DeleteOptionsProps = {
   label: string;
