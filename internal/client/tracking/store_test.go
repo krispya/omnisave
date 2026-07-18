@@ -18,6 +18,7 @@ func TestTrackingSelectionsSurviveRestartsAndPreserveUnavailableGames(t *testing
 		t.Fatal(err)
 	}
 	state.SetServerGameID("steam:a", "server-a")
+	state.Server = tracking.Server{URL: "http://nas:8080", Token: "secret"}
 	if err := store.Save(state); err != nil {
 		t.Fatal(err)
 	}
@@ -25,6 +26,9 @@ func TestTrackingSelectionsSurviveRestartsAndPreserveUnavailableGames(t *testing
 	reloaded, err := store.Load()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if reloaded.Server.URL != "http://nas:8080" || reloaded.Server.Token != "secret" {
+		t.Fatalf("expected the saved server connection to survive a restart, got %+v", reloaded.Server)
 	}
 	secondScan := []tracking.Game{
 		{ID: "steam:a", Adapter: "steam", Title: "Game A"},
