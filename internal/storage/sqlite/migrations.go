@@ -204,6 +204,8 @@ var migrations = []string{
 	SELECT game_id, lower(system), 'sha1', lower(sha1) FROM game_roms WHERE system <> '' AND sha1 <> '';
 	INSERT OR IGNORE INTO game_fingerprints(game_id, platform, algorithm, value)
 	SELECT game_id, lower(system), 'sha256', lower(sha256) FROM game_roms WHERE system <> '' AND sha256 <> '';`,
+
+	`ALTER TABLE games ADD COLUMN platform_company TEXT NOT NULL DEFAULT '';`,
 }
 
 func migrate(db *sql.DB) error {

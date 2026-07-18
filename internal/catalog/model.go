@@ -38,18 +38,19 @@ type GameFingerprint struct {
 
 // Game is one server-owned canonical catalog record.
 type Game struct {
-	ID             string            `json:"id"`
-	Title          string            `json:"title"`
-	SortTitle      string            `json:"sort_title,omitempty"`
-	Platform       string            `json:"platform,omitempty"`
-	Publisher      string            `json:"publisher,omitempty"`
-	Description    string            `json:"description,omitempty"`
-	MetadataSource string            `json:"metadata_source"`
-	Identifiers    []GameIdentifier  `json:"identifiers"`
-	Fingerprints   []GameFingerprint `json:"fingerprints"`
-	Metadata       map[string]any    `json:"metadata,omitempty"`
-	Media          []GameMedia       `json:"media"`
-	RefreshedAt    time.Time         `json:"refreshed_at"`
+	ID              string            `json:"id"`
+	Title           string            `json:"title"`
+	SortTitle       string            `json:"sort_title,omitempty"`
+	Platform        string            `json:"platform,omitempty"`
+	PlatformCompany string            `json:"platform_company,omitempty"`
+	Publisher       string            `json:"publisher,omitempty"`
+	Description     string            `json:"description,omitempty"`
+	MetadataSource  string            `json:"metadata_source"`
+	Identifiers     []GameIdentifier  `json:"identifiers"`
+	Fingerprints    []GameFingerprint `json:"fingerprints"`
+	Metadata        map[string]any    `json:"metadata,omitempty"`
+	Media           []GameMedia       `json:"media"`
+	RefreshedAt     time.Time         `json:"refreshed_at"`
 }
 
 // GameROM records the exact provider signature associated with a game.
@@ -134,17 +135,18 @@ type MatchGame struct {
 
 // ProviderMatch is a provider's identity and metadata claim.
 type ProviderMatch struct {
-	Source       string
-	Identifiers  []GameIdentifier
-	Fingerprints []GameFingerprint
-	Title        string
-	SortTitle    string
-	Platform     string
-	Publisher    string
-	Description  string
-	Metadata     map[string]any
-	ROM          ROMMatch
-	Media        []MediaReference
+	Source          string
+	Identifiers     []GameIdentifier
+	Fingerprints    []GameFingerprint
+	Title           string
+	SortTitle       string
+	Platform        string
+	PlatformCompany string
+	Publisher       string
+	Description     string
+	Metadata        map[string]any
+	ROM             ROMMatch
+	Media           []MediaReference
 }
 
 // ROMMatch is an exact ROM signature returned by a catalog provider.

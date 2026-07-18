@@ -98,16 +98,18 @@ func (p *Provider) Resolve(ctx context.Context, evidence catalog.ResolveGame) (*
 	description, _ := attributes["description"].(string)
 	delete(attributes, "description")
 	attributes["external_references"] = result.Metadata
+	platformCompany, platformName := catalog.SplitPlatform(result.Platform.Name)
 	return &catalog.ProviderMatch{
-		Source:       "hasheous",
-		Identifiers:  resultIdentifiers(result),
-		Fingerprints: signatureFingerprints(result.Platform.Name, signature),
-		Title:        result.Name,
-		SortTitle:    signature.Game.SortingName,
-		Platform:     result.Platform.Name,
-		Publisher:    result.Publisher.Name,
-		Description:  description,
-		Metadata:     attributes,
+		Source:          "hasheous",
+		Identifiers:     resultIdentifiers(result),
+		Fingerprints:    signatureFingerprints(platformName, signature),
+		Title:           result.Name,
+		SortTitle:       signature.Game.SortingName,
+		Platform:        platformName,
+		PlatformCompany: platformCompany,
+		Publisher:       result.Publisher.Name,
+		Description:     description,
+		Metadata:        attributes,
 		ROM: catalog.ROMMatch{
 			ProviderID: signature.ROM.ID,
 			System:     signature.Game.System,
@@ -177,12 +179,13 @@ func compileCandidates(games []mcpGame) ([]catalog.GameCandidate, error) {
 		if strings.EqualFold(edition, strings.TrimSpace(game.Name)) {
 			edition = ""
 		}
+		_, platformName := catalog.SplitPlatform(game.Platform.Name)
 		candidates = append(candidates, catalog.GameCandidate{
 			Provider:       "hasheous",
 			ProviderID:     strconv.FormatInt(game.ID, 10),
 			Title:          game.Name,
 			Edition:        edition,
-			Platform:       game.Platform.Name,
+			Platform:       platformName,
 			Publisher:      game.Publisher.Name,
 			Year:           game.Year,
 			Region:         game.Country,

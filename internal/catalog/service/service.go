@@ -386,6 +386,7 @@ func mergeProviderMatches(base, next *catalog.ProviderMatch) *catalog.ProviderMa
 	}
 	if next.Platform != "" {
 		base.Platform = next.Platform
+		base.PlatformCompany = next.PlatformCompany
 	}
 	if next.Publisher != "" {
 		base.Publisher = next.Publisher
@@ -500,6 +501,7 @@ func gameFromResolution(gameID string, evidence catalog.ResolveGame, match *cata
 	game.Title = strings.TrimSpace(match.Title)
 	game.SortTitle = strings.TrimSpace(match.SortTitle)
 	game.Platform = strings.TrimSpace(match.Platform)
+	game.PlatformCompany = strings.TrimSpace(match.PlatformCompany)
 	game.Publisher = strings.TrimSpace(match.Publisher)
 	game.Description = strings.TrimSpace(match.Description)
 	game.MetadataSource = strings.TrimSpace(match.Source)

@@ -71,6 +71,7 @@ export type CatalogGame = {
   title: string;
   sort_title?: string;
   platform?: string;
+  platform_company?: string;
   publisher?: string;
   description?: string;
   metadata_source: string;

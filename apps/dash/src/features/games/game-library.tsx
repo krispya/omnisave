@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import {
   loadGameMedia,
   type CatalogGame,
+  type GameFingerprint,
+  type GameIdentifier,
   type GameMedia,
   type OmniSave,
 } from '../../lib/omnisave-api.js';
@@ -12,11 +14,17 @@ export type GameSummary = {
   label: string;
   sortKey: string;
   platform?: string;
+  platformCompany?: string;
   publisher?: string;
   description?: string;
+  metadataSource?: string;
+  identifiers: GameIdentifier[];
+  fingerprints: GameFingerprint[];
+  metadata?: Record<string, unknown>;
+  refreshedAt?: string;
   media: GameMedia[];
   saves: OmniSave[];
-  inCatalog: boolean;
+  inLibrary: boolean;
 };
 
 const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
@@ -35,11 +43,17 @@ export function buildLibrary(catalog: CatalogGame[] | null, saves: OmniSave[]): 
     label: game.title,
     sortKey: game.sort_title?.trim() || game.title,
     platform: game.platform,
+    platformCompany: game.platform_company,
     publisher: game.publisher,
     description: game.description,
+    metadataSource: game.metadata_source,
+    identifiers: game.identifiers ?? [],
+    fingerprints: game.fingerprints ?? [],
+    metadata: game.metadata,
+    refreshedAt: game.refreshed_at,
     media: game.media,
     saves: savesByGame.get(game.id) ?? [],
-    inCatalog: true,
+    inLibrary: true,
   }));
 
   const known = new Set(library.map((game) => game.id));
@@ -51,9 +65,11 @@ export function buildLibrary(catalog: CatalogGame[] | null, saves: OmniSave[]): 
       label,
       sortKey: label,
       platform: gameSaves[0]?.metadata?.platform,
+      identifiers: [],
+      fingerprints: [],
       media: [],
       saves: gameSaves,
-      inCatalog: false,
+      inLibrary: false,
     });
   }
 
@@ -220,9 +236,7 @@ function GameCard({
           <GameArtwork
             game={game}
             token={token}
-            className={`aspect-[3/4] w-full shadow-md shadow-black/30 ring-1 ring-white/10 transition duration-150 group-hover:scale-[1.02] group-hover:shadow-xl group-hover:shadow-black/50 group-hover:ring-[#e5a00d] ${
-              saveCount === 0 ? 'opacity-60 saturate-[0.65]' : ''
-            }`}
+            className="aspect-[3/4] w-full shadow-md shadow-black/30 ring-1 ring-white/10 transition duration-150 group-hover:scale-[1.02] group-hover:shadow-xl group-hover:shadow-black/50 group-hover:ring-[#e5a00d]"
           />
         </button>
         {saveCount > 0 ? (
@@ -236,7 +250,7 @@ function GameCard({
         <DeleteOptions
           label={game.label}
           className="absolute right-2 bottom-2 z-10 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
-          onFixMatch={game.inCatalog ? () => onRequestFixMatch(game) : undefined}
+          onFixMatch={game.inLibrary ? () => onRequestFixMatch(game) : undefined}
           deleteLabel="Delete Saves…"
           onDelete={saveCount > 0 ? () => onRequestDeleteSaves(game) : undefined}
         />
@@ -245,7 +259,7 @@ function GameCard({
         <h2 className="mt-2.5 truncate text-[13px] font-medium text-neutral-200 group-hover:text-white">
           {game.label}
         </h2>
-        <p className={`mt-1 text-xs ${saveCount === 0 ? 'text-slate-600' : 'text-slate-500'}`}>
+        <p className="mt-1 text-xs text-slate-500">
           {saveCount === 0 ? 'No saves yet' : `${saveCount} ${saveCount === 1 ? 'save' : 'saves'}`}
         </p>
       </button>
