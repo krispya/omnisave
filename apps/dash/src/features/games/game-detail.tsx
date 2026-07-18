@@ -116,7 +116,6 @@ function GameDetailsDialog({ game, onClose }: { game: GameSummary; onClose: () =
             <h2 id={titleID} className="truncate text-lg font-medium text-white">
               {game.label}
             </h2>
-            <p className="mt-0.5 text-xs text-slate-500">Details</p>
           </div>
           <button
             type="button"
