@@ -244,7 +244,7 @@ export function GameDetail({
             <div className="rounded-md border border-dashed border-white/10 bg-white/[0.02] px-6 py-14 text-center">
               <p className="text-sm font-medium text-white">This game has no saves</p>
               <p className="mx-auto mt-2 max-w-xs text-xs leading-5 text-slate-500">
-                It stays in the catalog either way. Add one with Debug → New save, or bind a local
+                It stays in your library either way. Add one with Debug → New save, or bind a local
                 save from a client.
               </p>
             </div>

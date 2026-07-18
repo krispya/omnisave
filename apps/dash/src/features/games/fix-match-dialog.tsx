@@ -29,7 +29,9 @@ export function FixMatchDialog({ game, token, onCancel, onMatched }: FixMatchDia
         setCandidates(await searchGameMatches(token, game.id, title, undefined, signal));
       } catch (searchError) {
         if (searchError instanceof DOMException && searchError.name === 'AbortError') return;
-        setError(searchError instanceof Error ? searchError.message : 'Could not search catalog.');
+        setError(
+          searchError instanceof Error ? searchError.message : 'Could not search for matches.'
+        );
       } finally {
         if (!signal?.aborted) setLoading(false);
       }
@@ -74,7 +76,7 @@ export function FixMatchDialog({ game, token, onCancel, onMatched }: FixMatchDia
                 Fix Match
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                Choose the catalog entry for {game.label}.
+                Choose the correct match for {game.label}.
               </p>
             </div>
             <button
@@ -113,7 +115,7 @@ export function FixMatchDialog({ game, token, onCancel, onMatched }: FixMatchDia
             </p>
           ) : null}
           {loading ? (
-            <p className="px-3 py-10 text-center text-sm text-slate-500">Searching catalog…</p>
+            <p className="px-3 py-10 text-center text-sm text-slate-500">Searching…</p>
           ) : candidates.length === 0 ? (
             <p className="px-3 py-10 text-center text-sm text-slate-500">No matching games found.</p>
           ) : (

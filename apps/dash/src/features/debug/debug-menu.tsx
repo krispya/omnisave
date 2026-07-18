@@ -71,7 +71,7 @@ export function DebugMenu({
         ) : (
           <DebugItem
             label={action === 'game' ? 'Creating game…' : 'New game'}
-            description="Resolve a random game into the catalog with a first save"
+            description="Add a random game to your library with its first save"
             disabled={action !== null}
             onClick={() => run(onAddRandomGame)}
           />

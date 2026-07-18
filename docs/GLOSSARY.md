@@ -12,7 +12,7 @@ Entries within each section are ordered by **conceptual flow** — foundational 
 
 Names for visible surfaces. When a name here disagrees with a file or component name in the codebase, the glossary wins — the file is the one that should rename.
 
-**Dash** — The web app (`apps/dash`) for managing the server: connection, games, and debug features. Where OmniSaves are created and browsed.
+**Dash** — The web app (`apps/dash`) for managing the server: connection, the Library, and debug features. Where OmniSaves are created and browsed.
 
 **Client CLI** — The terminal surface of the client binary: the `scan`, `track`, and `bind` commands and the prompts they render (`internal/client/tui`).
 
@@ -20,11 +20,13 @@ Names for visible surfaces. When a name here disagrees with a file or component 
 
 User-facing concepts. If a user might say the word, it goes here.
 
-**Game** — One server-owned canonical catalog record with its own UUID. Identifiers and fingerprints accumulate on a Game over time as clients and providers contribute evidence (see *Evidence*, Backend).
+**Library** — The user's collection of Games on the server — every Game resolved in, with or without saves. Dash's main surface (the poster wall) shows it. UI copy says "library", never "catalog" (see _Catalog_, Backend).
+
+**Game** — One server-owned canonical record in the Library, with its own UUID. Identifiers and fingerprints accumulate on a Game over time as clients and providers contribute evidence (see _Evidence_, Backend).
 
 **OmniSave** — One independently versioned game save on the server; the unit users create, name, fork, and bind to. Several OmniSaves can exist for the same Game — separate playthroughs or forked lineages.
 
-**Revision** — An immutable state in an OmniSave's linear history, committed as file upserts/deletes against an expected head. The newest revision is the **head**; a commit naming a stale head is rejected (see *Head Conflict*, Backend).
+**Revision** — An immutable state in an OmniSave's linear history, committed as file upserts/deletes against an expected head. The newest revision is the **head**; a commit naming a stale head is rejected (see _Head Conflict_, Backend).
 
 **Fork** — A new OmniSave started from an existing revision's snapshot. The fork records its origin (source OmniSave and revision) and then versions independently.
 
@@ -46,11 +48,11 @@ Access vocabulary. Deliberately small — there are no user accounts or roles ye
 
 Infrastructure jargon. If only contributors say the word, it goes here.
 
-**Server** — The self-hosted Go service (NAS-first) that owns the catalog, OmniSaves, and artifacts, exposed as an HTTP API under `/api/v1`. The server is the source of truth; clients hold only machine-local state.
+**Server** — The self-hosted Go service (NAS-first) that owns the Library, OmniSaves, and artifacts, exposed as an HTTP API under `/api/v1`. The server is the source of truth; clients hold only machine-local state.
 
 **Client** — The portable `omnisave-client` binary that runs where games live (Steam Deck first). It scans, tracks, binds, and syncs, talking to one server through the authenticated `remote` HTTP client (`internal/client/remote`).
 
-**Repository** — The server's persistence boundary: OmniSave records, catalog records, and artifact storage behind one interface (`internal/storage`), implemented on SQLite.
+**Repository** — The server's persistence boundary: OmniSave records, Game records, and artifact storage behind one interface (`internal/storage`), implemented on SQLite.
 
 **Artifact** — Content-addressed immutable bytes keyed by SHA-256, with a format and size. Revisions reference artifacts through **revision files** — canonical save path → artifact — so identical content is stored once and never rewritten.
 
@@ -60,15 +62,15 @@ Infrastructure jargon. If only contributors say the word, it goes here.
 
 **Target** — One application installation resolved on this machine (e.g. a RetroArch install). Targets are found by **locators**, one per install type: Steam library, application bundle, or standalone installer.
 
-**Installed Game** — One game exposed through a target, carrying identity evidence (see *Evidence*), an install root, and the environment it runs in.
+**Installed Game** — One game exposed through a target, carrying identity evidence (see _Evidence_), an install root, and the environment it runs in.
 
 **Environment** — Where an installed game runs: host OS, runtime (native or Proton), home, store root, and prefix root. Save-location rules expand against the environment — under Proton, Windows paths resolve inside the prefix (`drive_c/…`).
 
 **Save Profile** — Provider-neutral save-location knowledge for one game, expressed as **rules** — each a templated path plus the OS/store where it applies (Windows rules also apply under Proton). Currently sourced from the community Ludusavi manifest, keyed by Steam ID (`internal/client/saveprofile`).
 
-**Catalog** — The server's locally cached game identity and metadata (`internal/catalog`): Games, their exact provider ROM signatures (**GameROM**), and provider media (covers, artwork) stored as local artifacts with attribution.
+**Catalog** — The provider-hosted universe of known games: what exists and can be matched against, not what the user has (that's the _Library_, Product). `internal/catalog` currently names the server's local cache of resolved identity and metadata — Games, exact ROM signatures (**GameROM**), provider media with attribution — pending rename.
 
-**Catalog Provider** — External source the catalog consults to resolve evidence into identity and metadata claims, search by title, and fetch media. Currently the hosted Hasheous API.
+**Catalog Provider** — External service hosting the catalog, consulted to learn what games exist: resolves evidence into identity and metadata claims, searches by title, and serves media. The providers include Hasheous for ROMs and IGDB for everything else.
 
 **Evidence** — What a client submits to resolve a Game: **identifiers** (external IDs scoped to a namespace — `steam.app`, `igdb.game`, `hasheous.game`), **fingerprints** (exact-content hashes `{platform, algorithm, value}` for ROM matching), and weak descriptive hints (title, platform).
 
