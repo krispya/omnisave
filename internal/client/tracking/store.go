@@ -6,16 +6,29 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
 )
 
 // Game is the local identity retained when a discovered game is tracked.
+// ServerGameID is the Library identity resolved at track time; it stays empty
+// while the server is unreachable and is filled in on a later track run.
 type Game struct {
-	ID       string `json:"id"`
-	Adapter  string `json:"adapter"`
-	TargetID string `json:"target_id"`
-	Title    string `json:"title"`
+	ID           string `json:"id"`
+	Adapter      string `json:"adapter"`
+	TargetID     string `json:"target_id"`
+	Title        string `json:"title"`
+	ServerGameID string `json:"server_game_id,omitempty"`
+}
+
+// Device is this installation's self-minted identity (see FDR-002).
+type Device struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // LocalSave identifies one adapter-native save discovered on this machine.
@@ -42,8 +55,28 @@ type Binding struct {
 
 // State contains this machine's tracked games and save bindings.
 type State struct {
+	Device   Device          `json:"device"`
 	Games    map[string]Game `json:"games"`
 	Bindings []Binding       `json:"bindings"`
+}
+
+// EnsureDevice mints the device identity on first use and defaults its name.
+func (s *State) EnsureDevice(defaultName string) Device {
+	if s.Device.ID == "" {
+		s.Device.ID = uuid.NewString()
+	}
+	if s.Device.Name == "" {
+		s.Device.Name = defaultName
+	}
+	return s.Device
+}
+
+// SetServerGameID records the Library identity resolved for a tracked game.
+func (s *State) SetServerGameID(localID, serverID string) {
+	if game, ok := s.Games[localID]; ok {
+		game.ServerGameID = serverID
+		s.Games[localID] = game
+	}
 }
 
 // Store persists tracking state in one local JSON file.
@@ -140,10 +173,16 @@ func (s State) TrackedIDs() map[string]bool {
 	return tracked
 }
 
-// ApplyVisible updates games shown by the latest scan and preserves unavailable ones.
-func (s *State) ApplyVisible(visible []Game, selectedIDs []string) error {
+// ApplyVisible updates games shown by the latest scan and preserves unavailable
+// ones. Games kept selected retain their resolved Library identity. It returns
+// the games this application untracked, so callers can report them.
+func (s *State) ApplyVisible(visible []Game, selectedIDs []string) ([]Game, error) {
 	if s.Games == nil {
 		s.Games = make(map[string]Game)
+	}
+	previous := make(map[string]Game, len(s.Games))
+	for id, game := range s.Games {
+		previous[id] = game
 	}
 	available := make(map[string]Game, len(visible))
 	for _, game := range visible {
@@ -153,14 +192,22 @@ func (s *State) ApplyVisible(visible []Game, selectedIDs []string) error {
 	for _, id := range selectedIDs {
 		game, ok := available[id]
 		if !ok {
-			return fmt.Errorf("selected game was not discovered: %s", id)
+			return nil, fmt.Errorf("selected game was not discovered: %s", id)
 		}
+		game.ServerGameID = previous[id].ServerGameID
 		s.Games[id] = game
 	}
 	selected := make(map[string]bool, len(selectedIDs))
 	for _, id := range selectedIDs {
 		selected[id] = true
 	}
+	var removed []Game
+	for id, game := range previous {
+		if _, wasVisible := available[id]; wasVisible && !selected[id] {
+			removed = append(removed, game)
+		}
+	}
+	slices.SortFunc(removed, func(left, right Game) int { return strings.Compare(left.ID, right.ID) })
 	bindings := s.Bindings[:0]
 	for _, binding := range s.Bindings {
 		_, wasVisible := available[binding.LocalGameID]
@@ -169,7 +216,7 @@ func (s *State) ApplyVisible(visible []Game, selectedIDs []string) error {
 		}
 	}
 	s.Bindings = bindings
-	return nil
+	return removed, nil
 }
 
 // Bind maps a discovered local save to an Omnisave and clears any old sync baseline.

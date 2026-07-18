@@ -50,6 +50,9 @@ func New(saves omnisave.Service, catalogs ...catalog.Service) http.Handler {
 		mux.HandleFunc("GET /api/v1/games/{id}", api.getGame)
 		mux.HandleFunc("DELETE /api/v1/games/{id}", api.deleteGame)
 		mux.HandleFunc("GET /api/v1/games/{id}/media/{mediaID}", api.getGameMedia)
+		mux.HandleFunc("PUT /api/v1/devices/{id}", api.registerDevice)
+		mux.HandleFunc("PUT /api/v1/games/{id}/tracking/{deviceID}", api.trackGame)
+		mux.HandleFunc("DELETE /api/v1/games/{id}/tracking/{deviceID}", api.untrackGame)
 	}
 	return mux
 }
@@ -302,6 +305,41 @@ func (a *API) deleteGame(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (a *API) registerDevice(w http.ResponseWriter, r *http.Request) {
+	var input catalog.RegisterDevice
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, err)
+		return
+	}
+	device, err := a.catalog.RegisterDevice(r.Context(), r.PathValue("id"), input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, device)
+}
+
+func (a *API) trackGame(w http.ResponseWriter, r *http.Request) {
+	var input catalog.TrackGame
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := a.catalog.TrackGame(r.Context(), r.PathValue("id"), r.PathValue("deviceID"), input); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) untrackGame(w http.ResponseWriter, r *http.Request) {
+	if err := a.catalog.UntrackGame(r.Context(), r.PathValue("id"), r.PathValue("deviceID")); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (a *API) getGameMedia(w http.ResponseWriter, r *http.Request) {
 	media, payload, err := a.catalog.OpenMedia(r.Context(), r.PathValue("id"), r.PathValue("mediaID"))
 	if err != nil {
@@ -319,18 +357,20 @@ func (a *API) getGameMedia(w http.ResponseWriter, r *http.Request) {
 }
 
 type catalogGameResponse struct {
-	ID             string                    `json:"id"`
-	Title          string                    `json:"title"`
-	SortTitle      string                    `json:"sort_title,omitempty"`
-	Platform       string                    `json:"platform,omitempty"`
-	Publisher      string                    `json:"publisher,omitempty"`
-	Description    string                    `json:"description,omitempty"`
-	MetadataSource string                    `json:"metadata_source"`
-	Identifiers    []catalog.GameIdentifier  `json:"identifiers"`
-	Fingerprints   []catalog.GameFingerprint `json:"fingerprints"`
-	Metadata       map[string]any            `json:"metadata,omitempty"`
-	Media          []catalogMediaResponse    `json:"media"`
-	RefreshedAt    string                    `json:"refreshed_at"`
+	ID              string                    `json:"id"`
+	Title           string                    `json:"title"`
+	SortTitle       string                    `json:"sort_title,omitempty"`
+	Platform        string                    `json:"platform,omitempty"`
+	PlatformCompany string                    `json:"platform_company,omitempty"`
+	Publisher       string                    `json:"publisher,omitempty"`
+	Description     string                    `json:"description,omitempty"`
+	MetadataSource  string                    `json:"metadata_source"`
+	Identifiers     []catalog.GameIdentifier  `json:"identifiers"`
+	Fingerprints    []catalog.GameFingerprint `json:"fingerprints"`
+	Metadata        map[string]any            `json:"metadata,omitempty"`
+	Media           []catalogMediaResponse    `json:"media"`
+	Provenance      []catalog.GameTracking    `json:"provenance"`
+	RefreshedAt     string                    `json:"refreshed_at"`
 }
 
 type catalogResolutionResponse struct {
@@ -361,19 +401,25 @@ func gameResponse(game *catalog.Game) catalogGameResponse {
 			Attribution: item.Attribution,
 		}
 	}
+	provenance := game.Provenance
+	if provenance == nil {
+		provenance = make([]catalog.GameTracking, 0)
+	}
 	return catalogGameResponse{
-		ID:             game.ID,
-		Title:          game.Title,
-		SortTitle:      game.SortTitle,
-		Platform:       game.Platform,
-		Publisher:      game.Publisher,
-		Description:    game.Description,
-		MetadataSource: game.MetadataSource,
-		Identifiers:    game.Identifiers,
-		Fingerprints:   game.Fingerprints,
-		Metadata:       game.Metadata,
-		Media:          media,
-		RefreshedAt:    game.RefreshedAt.Format(time.RFC3339Nano),
+		ID:              game.ID,
+		Title:           game.Title,
+		SortTitle:       game.SortTitle,
+		Platform:        game.Platform,
+		PlatformCompany: game.PlatformCompany,
+		Publisher:       game.Publisher,
+		Description:     game.Description,
+		MetadataSource:  game.MetadataSource,
+		Identifiers:     game.Identifiers,
+		Fingerprints:    game.Fingerprints,
+		Metadata:        game.Metadata,
+		Media:           media,
+		Provenance:      provenance,
+		RefreshedAt:     game.RefreshedAt.Format(time.RFC3339Nano),
 	}
 }
 

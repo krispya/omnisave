@@ -206,6 +206,27 @@ var migrations = []string{
 	SELECT game_id, lower(system), 'sha256', lower(sha256) FROM game_roms WHERE system <> '' AND sha256 <> '';`,
 
 	`ALTER TABLE games ADD COLUMN platform_company TEXT NOT NULL DEFAULT '';`,
+
+	`CREATE TABLE devices (
+		id           TEXT PRIMARY KEY,
+		name         TEXT NOT NULL,
+		platform     TEXT NOT NULL,
+		created_at   TEXT NOT NULL,
+		last_seen_at TEXT NOT NULL
+	);
+
+	CREATE TABLE game_tracking (
+		game_id          TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		device_id        TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+		adapter          TEXT NOT NULL,
+		installed        INTEGER NOT NULL,
+		first_tracked_at TEXT NOT NULL,
+		last_seen_at     TEXT NOT NULL,
+		untracked_at     TEXT,
+		PRIMARY KEY (game_id, device_id)
+	);
+
+	CREATE INDEX game_tracking_by_device ON game_tracking(device_id);`,
 }
 
 func migrate(db *sql.DB) error {

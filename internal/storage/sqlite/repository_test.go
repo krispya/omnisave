@@ -381,6 +381,98 @@ func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 	}
 }
 
+// Provenance is append-only: untracking annotates the record, deleting every
+// save leaves it untouched, and only deleting the game removes it. The device
+// itself outlives its games.
+func TestProvenanceSurvivesUntrackAndSaveDeletion(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repository, err := sqlite.Open(
+		filepath.Join(directory, "omnisave.db"),
+		filepath.Join(directory, "artifacts"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves := omnisaveservice.New(repository)
+
+	game := catalog.Game{
+		ID: "super-metroid", Title: "Super Metroid",
+		MetadataSource: "hasheous", RefreshedAt: time.Now().UTC(),
+	}
+	if err := repository.SaveGame(ctx, game, nil); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	device := catalog.Device{ID: "device-1", Name: "Steam Deck", Platform: "linux", CreatedAt: now, LastSeenAt: now}
+	if err := repository.UpsertDevice(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.TrackGame(ctx, game.ID, catalog.GameTracking{
+		DeviceID: device.ID, Adapter: "retroarch", Installed: true,
+		FirstTrackedAt: now, LastSeenAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: game.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saves.Delete(ctx, save.ID); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repository.GetGame(ctx, game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Provenance) != 1 || stored.Provenance[0].DeviceName != "Steam Deck" ||
+		!stored.Provenance[0].Installed || stored.Provenance[0].UntrackedAt != nil {
+		t.Fatalf("provenance should survive save deletion: %+v", stored.Provenance)
+	}
+
+	if err := repository.UntrackGame(ctx, game.ID, device.ID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = repository.GetGame(ctx, game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Provenance) != 1 || stored.Provenance[0].UntrackedAt == nil {
+		t.Fatalf("untracking should annotate the record, not remove it: %+v", stored.Provenance)
+	}
+	firstTracked := stored.Provenance[0].FirstTrackedAt
+
+	if err := repository.TrackGame(ctx, game.ID, catalog.GameTracking{
+		DeviceID: device.ID, Adapter: "retroarch", Installed: true,
+		FirstTrackedAt: time.Now().UTC(), LastSeenAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = repository.GetGame(ctx, game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Provenance[0].UntrackedAt != nil || !stored.Provenance[0].FirstTrackedAt.Equal(firstTracked) {
+		t.Fatalf("re-tracking should clear untracking and keep the original first-tracked time: %+v", stored.Provenance)
+	}
+
+	if err := repository.DeleteGame(ctx, game.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.SaveGame(ctx, catalog.Game{
+		ID: "another-game", Title: "Another", MetadataSource: "client", RefreshedAt: time.Now().UTC(),
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.TrackGame(ctx, "another-game", catalog.GameTracking{
+		DeviceID: device.ID, FirstTrackedAt: time.Now().UTC(), LastSeenAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("the device should outlive its deleted games: %v", err)
+	}
+}
+
 func storeOmnisaveArtifact(t *testing.T, ctx context.Context, saves omnisave.Service, contents string) omnisave.Artifact {
 	t.Helper()
 	sum := sha256.Sum256([]byte(contents))

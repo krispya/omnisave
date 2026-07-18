@@ -291,6 +291,9 @@ func (r *Repository) withGameDetails(ctx context.Context, game *catalog.Game) (*
 	if game.Media, err = r.listGameMedia(ctx, game.ID); err != nil {
 		return nil, err
 	}
+	if game.Provenance, err = r.ListGameProvenance(ctx, game.ID); err != nil {
+		return nil, err
+	}
 	return game, nil
 }
 

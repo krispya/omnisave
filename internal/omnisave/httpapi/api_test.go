@@ -270,6 +270,72 @@ func TestCatalogStory(t *testing.T) {
 	}
 }
 
+// A device registers itself, tracks a resolved game, and the game's
+// provenance travels with game reads; untracking annotates the record.
+func TestDeviceTrackingStory(t *testing.T) {
+	repository := storagetest.NewMemoryRepository()
+	handler := httpapi.New(
+		omnisaveservice.New(repository),
+		catalogservice.New(repository, repository, catalogProviderStub{}),
+	)
+
+	response := request(t, handler, http.MethodPut, "/api/v1/devices/device-1", "application/json",
+		bytes.NewBufferString(`{"name":"Steam Deck","platform":"linux"}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("register device returned %d: %s", response.Code, response.Body.String())
+	}
+
+	response = request(t, handler, http.MethodPost, "/api/v1/games/resolve", "application/json",
+		bytes.NewBufferString(`{
+			"fingerprints":[{"platform":"snes","algorithm":"sha1","value":"6b47bb75d16514b6a476aa0c73a683a2a4c18765"}]
+		}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("resolve returned %d: %s", response.Code, response.Body.String())
+	}
+	var resolved struct {
+		Game struct {
+			ID string `json:"id"`
+		} `json:"game"`
+	}
+	decodeResponse(t, response, &resolved)
+
+	trackPath := "/api/v1/games/" + resolved.Game.ID + "/tracking/device-1"
+	response = request(t, handler, http.MethodPut, trackPath, "application/json",
+		bytes.NewBufferString(`{"adapter":"retroarch","installed":true}`))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("track returned %d: %s", response.Code, response.Body.String())
+	}
+
+	response = request(t, handler, http.MethodGet, "/api/v1/games/"+resolved.Game.ID, "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("get game returned %d: %s", response.Code, response.Body.String())
+	}
+	var game struct {
+		Provenance []struct {
+			DeviceName  string  `json:"device_name"`
+			Adapter     string  `json:"adapter"`
+			Installed   bool    `json:"installed"`
+			UntrackedAt *string `json:"untracked_at"`
+		} `json:"provenance"`
+	}
+	decodeResponse(t, response, &game)
+	if len(game.Provenance) != 1 || game.Provenance[0].DeviceName != "Steam Deck" ||
+		game.Provenance[0].Adapter != "retroarch" || !game.Provenance[0].Installed ||
+		game.Provenance[0].UntrackedAt != nil {
+		t.Fatalf("unexpected provenance: %+v", game.Provenance)
+	}
+
+	response = request(t, handler, http.MethodDelete, trackPath, "", nil)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("untrack returned %d: %s", response.Code, response.Body.String())
+	}
+	response = request(t, handler, http.MethodGet, "/api/v1/games/"+resolved.Game.ID, "", nil)
+	decodeResponse(t, response, &game)
+	if len(game.Provenance) != 1 || game.Provenance[0].UntrackedAt == nil {
+		t.Fatalf("untracking should keep an annotated record: %+v", game.Provenance)
+	}
+}
+
 func TestManualCatalogMatchStory(t *testing.T) {
 	repository := storagetest.NewMemoryRepository()
 	handler := httpapi.New(
