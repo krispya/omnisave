@@ -22,14 +22,16 @@ const (
 type API struct {
 	saves   omnisave.Service
 	catalog catalog.Service
+	events  *eventBroker
 }
 
 func New(saves omnisave.Service, catalogs ...catalog.Service) http.Handler {
-	api := &API{saves: saves}
+	api := &API{saves: saves, events: newEventBroker()}
 	if len(catalogs) > 0 {
 		api.catalog = catalogs[0]
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/events", api.streamEvents)
 	mux.HandleFunc("POST /api/v1/omnisaves", api.create)
 	mux.HandleFunc("GET /api/v1/omnisaves", api.list)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}", api.get)
@@ -68,6 +70,7 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publishLibraryChanged()
 	w.Header().Set("Location", "/api/v1/omnisaves/"+save.ID)
 	writeJSON(w, http.StatusCreated, save)
 }
@@ -104,6 +107,7 @@ func (a *API) update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publishLibraryChanged()
 	writeJSON(w, http.StatusOK, save)
 }
 
@@ -112,6 +116,7 @@ func (a *API) delete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publishLibraryChanged()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -126,6 +131,7 @@ func (a *API) addRevision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publishLibraryChanged()
 	w.Header().Set("Location", "/api/v1/omnisaves/"+revision.OmnisaveID+"/revisions/"+revision.ID)
 	writeJSON(w, http.StatusCreated, revision)
 }
@@ -162,6 +168,7 @@ func (a *API) fork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publishLibraryChanged()
 	w.Header().Set("Location", "/api/v1/omnisaves/"+result.Omnisave.ID)
 	writeJSON(w, http.StatusCreated, result)
 }
@@ -233,6 +240,7 @@ func (a *API) resolveGame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publishLibraryChanged()
 	writeJSON(w, http.StatusOK, catalogResolutionResponse{
 		Game:   gameResponse(&resolution.Game),
 		Status: resolution.Status,
@@ -285,6 +293,7 @@ func (a *API) matchGame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publishLibraryChanged()
 	writeJSON(w, http.StatusOK, gameResponse(game))
 }
 
@@ -302,6 +311,7 @@ func (a *API) deleteGame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publishLibraryChanged()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -316,6 +326,7 @@ func (a *API) registerDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publishLibraryChanged()
 	writeJSON(w, http.StatusOK, device)
 }
 
@@ -329,6 +340,7 @@ func (a *API) trackGame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publishLibraryChanged()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -337,6 +349,7 @@ func (a *API) untrackGame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publishLibraryChanged()
 	w.WriteHeader(http.StatusNoContent)
 }
 
