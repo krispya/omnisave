@@ -11,45 +11,26 @@ import (
 )
 
 const selectGame = `SELECT id, title, sort_title, platform, publisher, description,
-	provider, provider_id, metadata, refreshed_at FROM games`
+	provider, metadata, refreshed_at FROM games`
 
-func (r *Repository) FindGameByFingerprint(ctx context.Context, fingerprint catalog.Fingerprint) (*catalog.Game, error) {
+func (r *Repository) FindGameByIdentifier(ctx context.Context, identifier catalog.GameIdentifier) (*catalog.Game, error) {
 	game, err := scanGame(r.db.QueryRowContext(ctx, selectGame+` WHERE id = (
-		SELECT game_id FROM game_roms WHERE
-			(? <> '' AND sha256 = ?) OR
-			(? <> '' AND sha1 = ?) OR
-			(? <> '' AND md5 = ?) OR
-			(? <> '' AND crc32 = ?)
-		ORDER BY CASE
-			WHEN ? <> '' AND sha256 = ? THEN 1
-			WHEN ? <> '' AND sha1 = ? THEN 2
-			WHEN ? <> '' AND md5 = ? THEN 3
-			ELSE 4 END
-		LIMIT 1
-	)`,
-		fingerprint.SHA256, fingerprint.SHA256,
-		fingerprint.SHA1, fingerprint.SHA1,
-		fingerprint.MD5, fingerprint.MD5,
-		fingerprint.CRC32, fingerprint.CRC32,
-		fingerprint.SHA256, fingerprint.SHA256,
-		fingerprint.SHA1, fingerprint.SHA1,
-		fingerprint.MD5, fingerprint.MD5,
-	))
+		SELECT game_id FROM game_identifiers WHERE namespace = ? AND value = ?
+	)`, identifier.Namespace, identifier.Value))
 	if err != nil {
 		return nil, translateNotFound(err)
 	}
-	return r.withGameMedia(ctx, game)
+	return r.withGameDetails(ctx, game)
 }
 
-func (r *Repository) FindGameByProvider(ctx context.Context, provider, providerID string) (*catalog.Game, error) {
-	game, err := scanGame(r.db.QueryRowContext(ctx,
-		selectGame+` WHERE provider = ? AND provider_id = ? ORDER BY refreshed_at DESC LIMIT 1`,
-		provider, providerID,
-	))
+func (r *Repository) FindGameByFingerprint(ctx context.Context, fingerprint catalog.GameFingerprint) (*catalog.Game, error) {
+	game, err := scanGame(r.db.QueryRowContext(ctx, selectGame+` WHERE id = (
+		SELECT game_id FROM game_fingerprints WHERE platform = ? AND algorithm = ? AND value = ?
+	)`, fingerprint.Platform, fingerprint.Algorithm, fingerprint.Value))
 	if err != nil {
 		return nil, translateNotFound(err)
 	}
-	return r.withGameMedia(ctx, game)
+	return r.withGameDetails(ctx, game)
 }
 
 func (r *Repository) GetGame(ctx context.Context, id string) (*catalog.Game, error) {
@@ -57,7 +38,7 @@ func (r *Repository) GetGame(ctx context.Context, id string) (*catalog.Game, err
 	if err != nil {
 		return nil, translateNotFound(err)
 	}
-	return r.withGameMedia(ctx, game)
+	return r.withGameDetails(ctx, game)
 }
 
 func (r *Repository) ListGames(ctx context.Context) ([]catalog.Game, error) {
@@ -81,24 +62,16 @@ func (r *Repository) ListGames(ctx context.Context) ([]catalog.Game, error) {
 		return nil, err
 	}
 	for index := range games {
-		media, err := r.listGameMedia(ctx, games[index].ID)
+		game, err := r.withGameDetails(ctx, &games[index])
 		if err != nil {
 			return nil, err
 		}
-		games[index].Media = media
+		games[index] = *game
 	}
 	return games, nil
 }
 
-func (r *Repository) SaveGame(ctx context.Context, game catalog.Game, rom catalog.GameROM) error {
-	languages, err := json.Marshal(rom.Languages)
-	if err != nil {
-		return err
-	}
-	attributes, err := json.Marshal(rom.Attributes)
-	if err != nil {
-		return err
-	}
+func (r *Repository) SaveGame(ctx context.Context, game catalog.Game, rom *catalog.GameROM) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -107,33 +80,77 @@ func (r *Repository) SaveGame(ctx context.Context, game catalog.Game, rom catalo
 	if err := saveGameMetadata(ctx, tx, game); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO game_roms(
-		id, game_id, system, name, region, languages, size, crc32, md5, sha1, sha256, source, source_id, attributes
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(id) DO UPDATE SET
-		game_id = excluded.game_id,
-		system = excluded.system,
-		name = excluded.name,
-		region = excluded.region,
-		languages = excluded.languages,
-		size = excluded.size,
-		crc32 = excluded.crc32,
-		md5 = excluded.md5,
-		sha1 = excluded.sha1,
-		sha256 = excluded.sha256,
-		source = excluded.source,
-		source_id = excluded.source_id,
-		attributes = excluded.attributes`,
-		rom.ID, rom.GameID, rom.System, rom.Name, rom.Region, string(languages), rom.Size,
-		rom.CRC32, rom.MD5, rom.SHA1, rom.SHA256, rom.Source, rom.SourceID, string(attributes),
-	); err != nil {
-		return err
+	for _, identifier := range game.Identifiers {
+		if err := claimIdentity(ctx, tx, "game_identifiers", game.ID,
+			[]string{"namespace", "value"}, []any{identifier.Namespace, identifier.Value}); err != nil {
+			return err
+		}
+	}
+	for _, fingerprint := range game.Fingerprints {
+		if err := claimIdentity(ctx, tx, "game_fingerprints", game.ID,
+			[]string{"platform", "algorithm", "value"}, []any{fingerprint.Platform, fingerprint.Algorithm, fingerprint.Value}); err != nil {
+			return err
+		}
+	}
+	if rom != nil {
+		if err := saveGameROM(ctx, tx, *rom); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
 
-func (r *Repository) SaveGameMetadata(ctx context.Context, game catalog.Game) error {
-	return saveGameMetadata(ctx, r.db, game)
+func claimIdentity(ctx context.Context, tx *sql.Tx, table, gameID string, columns []string, values []any) error {
+	query := "INSERT OR IGNORE INTO " + table + "(game_id"
+	placeholders := "?"
+	for _, column := range columns {
+		query += ", " + column
+		placeholders += ", ?"
+	}
+	query += ") VALUES (" + placeholders + ")"
+	arguments := append([]any{gameID}, values...)
+	if _, err := tx.ExecContext(ctx, query, arguments...); err != nil {
+		return err
+	}
+	where := ""
+	for index, column := range columns {
+		if index > 0 {
+			where += " AND "
+		}
+		where += column + " = ?"
+	}
+	var owner string
+	if err := tx.QueryRowContext(ctx, "SELECT game_id FROM "+table+" WHERE "+where, values...).Scan(&owner); err != nil {
+		return err
+	}
+	if owner != gameID {
+		return storage.ErrConflict
+	}
+	return nil
+}
+
+func saveGameROM(ctx context.Context, tx *sql.Tx, rom catalog.GameROM) error {
+	languages, err := json.Marshal(rom.Languages)
+	if err != nil {
+		return err
+	}
+	attributes, err := json.Marshal(rom.Attributes)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO game_roms(
+		id, game_id, system, name, region, languages, size, crc32, md5, sha1, sha256, source, source_id, attributes
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		game_id = excluded.game_id, system = excluded.system, name = excluded.name,
+		region = excluded.region, languages = excluded.languages, size = excluded.size,
+		crc32 = excluded.crc32, md5 = excluded.md5, sha1 = excluded.sha1,
+		sha256 = excluded.sha256, source = excluded.source, source_id = excluded.source_id,
+		attributes = excluded.attributes`,
+		rom.ID, rom.GameID, rom.System, rom.Name, rom.Region, string(languages), rom.Size,
+		rom.CRC32, rom.MD5, rom.SHA1, rom.SHA256, rom.Source, rom.SourceID, string(attributes),
+	)
+	return err
 }
 
 type contextExecutor interface {
@@ -147,19 +164,13 @@ func saveGameMetadata(ctx context.Context, executor contextExecutor, game catalo
 	}
 	_, err = executor.ExecContext(ctx, `INSERT INTO games(
 		id, title, sort_title, platform, publisher, description, provider, provider_id, metadata, refreshed_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
-		title = excluded.title,
-		sort_title = excluded.sort_title,
-		platform = excluded.platform,
-		publisher = excluded.publisher,
-		description = excluded.description,
-		provider = excluded.provider,
-		provider_id = excluded.provider_id,
-		metadata = excluded.metadata,
-		refreshed_at = excluded.refreshed_at`,
+		title = excluded.title, sort_title = excluded.sort_title, platform = excluded.platform,
+		publisher = excluded.publisher, description = excluded.description, provider = excluded.provider,
+		provider_id = '', metadata = excluded.metadata, refreshed_at = excluded.refreshed_at`,
 		game.ID, game.Title, game.SortTitle, game.Platform, game.Publisher, game.Description,
-		game.Provider, game.ProviderID, string(metadata), game.RefreshedAt.Format(time.RFC3339Nano),
+		game.MetadataSource, string(metadata), game.RefreshedAt.Format(time.RFC3339Nano),
 	)
 	return err
 }
@@ -169,12 +180,8 @@ func (r *Repository) SaveGameMedia(ctx context.Context, media catalog.GameMedia)
 		id, game_id, kind, position, format, sha256, size, provider, provider_id, attribution
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(game_id, kind, position) DO UPDATE SET
-		format = excluded.format,
-		sha256 = excluded.sha256,
-		size = excluded.size,
-		provider = excluded.provider,
-		provider_id = excluded.provider_id,
-		attribution = excluded.attribution`,
+		format = excluded.format, sha256 = excluded.sha256, size = excluded.size,
+		provider = excluded.provider, provider_id = excluded.provider_id, attribution = excluded.attribution`,
 		media.ID, media.GameID, media.Kind, media.Position, media.Format, media.SHA256,
 		media.Size, media.Provider, media.ProviderID, media.Attribution,
 	)
@@ -193,13 +200,54 @@ func (r *Repository) GetGameMedia(ctx context.Context, gameID, mediaID string) (
 	return media, translateNotFound(err)
 }
 
-func (r *Repository) withGameMedia(ctx context.Context, game *catalog.Game) (*catalog.Game, error) {
-	media, err := r.listGameMedia(ctx, game.ID)
+func (r *Repository) withGameDetails(ctx context.Context, game *catalog.Game) (*catalog.Game, error) {
+	var err error
+	if game.Identifiers, err = r.listGameIdentifiers(ctx, game.ID); err != nil {
+		return nil, err
+	}
+	if game.Fingerprints, err = r.listGameFingerprints(ctx, game.ID); err != nil {
+		return nil, err
+	}
+	if game.Media, err = r.listGameMedia(ctx, game.ID); err != nil {
+		return nil, err
+	}
+	return game, nil
+}
+
+func (r *Repository) listGameIdentifiers(ctx context.Context, gameID string) ([]catalog.GameIdentifier, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT namespace, value FROM game_identifiers
+		WHERE game_id = ? ORDER BY namespace, value`, gameID)
 	if err != nil {
 		return nil, err
 	}
-	game.Media = media
-	return game, nil
+	defer rows.Close()
+	items := make([]catalog.GameIdentifier, 0)
+	for rows.Next() {
+		var item catalog.GameIdentifier
+		if err := rows.Scan(&item.Namespace, &item.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *Repository) listGameFingerprints(ctx context.Context, gameID string) ([]catalog.GameFingerprint, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT platform, algorithm, value FROM game_fingerprints
+		WHERE game_id = ? ORDER BY platform, algorithm, value`, gameID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]catalog.GameFingerprint, 0)
+	for rows.Next() {
+		var item catalog.GameFingerprint
+		if err := rows.Scan(&item.Platform, &item.Algorithm, &item.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (r *Repository) listGameMedia(ctx context.Context, gameID string) ([]catalog.GameMedia, error) {
@@ -226,7 +274,7 @@ func scanGame(row scanner) (*catalog.Game, error) {
 	var metadata, refreshedAt string
 	if err := row.Scan(
 		&game.ID, &game.Title, &game.SortTitle, &game.Platform, &game.Publisher,
-		&game.Description, &game.Provider, &game.ProviderID, &metadata, &refreshedAt,
+		&game.Description, &game.MetadataSource, &metadata, &refreshedAt,
 	); err != nil {
 		return nil, err
 	}

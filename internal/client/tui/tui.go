@@ -15,6 +15,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
+	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
+	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
 type adapterStage int
@@ -85,6 +87,10 @@ var (
 	ErrAborted = errors.New("client interaction aborted")
 	// ErrNoGames indicates that a scan produced nothing that can be tracked.
 	ErrNoGames = errors.New("no games discovered")
+	// ErrNoSaves indicates that tracked games have no discovered saves to bind.
+	ErrNoSaves = errors.New("no local saves discovered")
+	// ErrNoOmniSaves indicates that the server has no binding destinations.
+	ErrNoOmniSaves = errors.New("no OmniSaves available")
 )
 
 // Run scans configured adapters and renders their progress and results.
@@ -259,10 +265,7 @@ func trackingChoiceGroups(scans []client.TargetScan, tracked map[string]bool) []
 		}
 		group := gameChoiceGroup{label: displayName(scan.Target.Adapter)}
 		for _, game := range scan.Games {
-			title := game.Game.Identity.Title
-			if title == "" {
-				title = game.Game.Identity.Source + " " + game.Game.Identity.ID
-			}
+			title := game.Game.Identity.DisplayTitle(game.Game.ID)
 			stats := summarize([]client.TargetScan{{Games: []client.GameScan{game}}})
 			metadata := "  ·  " + strings.Join(stats.saveStats(), " · ")
 			group.choices = append(group.choices, gameChoice{
@@ -276,12 +279,105 @@ func trackingChoiceGroups(scans []client.TargetScan, tracked map[string]bool) []
 	return groups
 }
 
+// BindingSelection maps one discovered native save to one server OmniSave.
+type BindingSelection struct {
+	Local    tracking.LocalSave
+	OmniSave omnisave.OmniSave
+}
+
+type bindingChoice struct {
+	label string
+	index int
+}
+
+// SelectBinding prompts for one exact local-to-server save mapping.
+func SelectBinding(local []tracking.LocalSave, remote []omnisave.OmniSave, bindings []tracking.Binding) (BindingSelection, error) {
+	if len(local) == 0 {
+		return BindingSelection{}, ErrNoSaves
+	}
+	if len(remote) == 0 {
+		return BindingSelection{}, ErrNoOmniSaves
+	}
+	localChoices, remoteChoices := bindingChoices(local, remote, bindings)
+	localIndex, remoteIndex := 0, 0
+	form := huh.NewForm(huh.NewGroup(
+		bindingSelect("Local save", localChoices, &localIndex),
+		bindingSelect("OmniSave", remoteChoices, &remoteIndex),
+	).Title("Choose what this machine syncs"))
+	form.WithTheme(trackingTheme())
+	if err := form.Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return BindingSelection{}, ErrAborted
+		}
+		return BindingSelection{}, err
+	}
+	return BindingSelection{Local: local[localIndex], OmniSave: remote[remoteIndex]}, nil
+}
+
+func bindingSelect(title string, choices []bindingChoice, value *int) *huh.Select[int] {
+	options := make([]huh.Option[int], 0, len(choices))
+	for _, choice := range choices {
+		options = append(options, huh.NewOption(choice.label, choice.index))
+	}
+	height := len(options) + 2
+	if height > 10 {
+		height = 10
+	}
+	return huh.NewSelect[int]().
+		Title(title).
+		Options(options...).
+		Height(height).
+		Filtering(len(options) > 6).
+		Value(value)
+}
+
+func bindingChoices(local []tracking.LocalSave, remote []omnisave.OmniSave, bindings []tracking.Binding) ([]bindingChoice, []bindingChoice) {
+	remoteNames := make(map[string]string, len(remote))
+	for _, save := range remote {
+		remoteNames[save.ID] = save.DisplayName
+	}
+	localChoices := make([]bindingChoice, 0, len(local))
+	for index, save := range local {
+		parts := []string{displayName(save.Adapter), save.GameTitle, save.Kind, count(save.FileCount, "file"), formatBytes(save.Size)}
+		for _, binding := range bindings {
+			if binding.Adapter == save.Adapter && binding.TargetID == save.TargetID && binding.LocalSaveID == save.ID {
+				name := remoteNames[binding.OmniSaveID]
+				if name == "" {
+					name = shortID(binding.OmniSaveID)
+				}
+				parts = append(parts, "currently "+name)
+				break
+			}
+		}
+		localChoices = append(localChoices, bindingChoice{label: strings.Join(parts, " · "), index: index})
+	}
+	remoteChoices := make([]bindingChoice, 0, len(remote))
+	for index, save := range remote {
+		parts := []string{save.DisplayName, "game " + shortID(save.GameID)}
+		if save.HeadRevisionID == nil {
+			parts = append(parts, "no revisions")
+		} else {
+			parts = append(parts, "head "+shortID(*save.HeadRevisionID))
+		}
+		remoteChoices = append(remoteChoices, bindingChoice{label: strings.Join(parts, " · "), index: index})
+	}
+	return localChoices, remoteChoices
+}
+
+func shortID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
+}
+
 func trackingTheme() *huh.Theme {
 	theme := huh.ThemeBase()
 	theme.Focused.Base = theme.Focused.Base.BorderForeground(mutedStyle.GetForeground())
 	theme.Focused.Title = titleStyle
 	theme.Focused.Description = mutedStyle
 	theme.Focused.MultiSelectSelector = accentStyle.SetString("› ")
+	theme.Focused.SelectSelector = accentStyle.SetString("› ")
 	theme.Focused.SelectedPrefix = successStyle.SetString("◉ ")
 	theme.Focused.UnselectedPrefix = mutedStyle.SetString("○ ")
 	theme.Focused.SelectedOption = nameStyle.UnsetBold()
@@ -396,10 +492,7 @@ func renderDetails(scans []client.TargetScan, verbose bool) string {
 			continue
 		}
 		for gameIndex, game := range scan.Games {
-			title := game.Game.Identity.Title
-			if title == "" {
-				title = game.Game.Identity.Source + " " + game.Game.Identity.ID
-			}
+			title := game.Game.Identity.DisplayTitle(game.Game.ID)
 			stats := summarize([]client.TargetScan{{Games: []client.GameScan{game}}})
 			fmt.Fprintf(&view, "%s%s %s  %s\n", childIndent, treeBranch(gameIndex, len(scan.Games)), nameStyle.Render(title), mutedStyle.Render(strings.Join(stats.saveStats(), " · ")))
 			if len(game.Saves) == 0 {
@@ -442,10 +535,7 @@ func renderGames(scans []client.TargetScan) string {
 
 	var view strings.Builder
 	for index, game := range games {
-		title := game.Game.Identity.Title
-		if title == "" {
-			title = game.Game.Identity.Source + " " + game.Game.Identity.ID
-		}
+		title := game.Game.Identity.DisplayTitle(game.Game.ID)
 		stats := summarize([]client.TargetScan{{Games: []client.GameScan{game}}})
 		fmt.Fprintf(&view, "  %s %s  %s\n", treeBranch(index, len(games)), nameStyle.Render(title), mutedStyle.Render(strings.Join(stats.saveStats(), " · ")))
 	}

@@ -43,7 +43,7 @@ func New(saves omnisave.Service, catalogs ...catalog.Service) http.Handler {
 	mux.HandleFunc("HEAD /api/v1/artifacts/{sha256}", api.headArtifact)
 	mux.HandleFunc("GET /api/v1/artifacts/{sha256}", api.getArtifact)
 	if api.catalog != nil {
-		mux.HandleFunc("POST /api/v1/games/identify", api.identifyGame)
+		mux.HandleFunc("POST /api/v1/games/resolve", api.resolveGame)
 		mux.HandleFunc("GET /api/v1/games", api.listGames)
 		mux.HandleFunc("GET /api/v1/games/{id}/match-candidates", api.searchGameMatches)
 		mux.HandleFunc("PUT /api/v1/games/{id}/match", api.matchGame)
@@ -218,18 +218,21 @@ func (a *API) getArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *API) identifyGame(w http.ResponseWriter, r *http.Request) {
-	var input catalog.IdentifyGame
+func (a *API) resolveGame(w http.ResponseWriter, r *http.Request) {
+	var input catalog.ResolveGame
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, err)
 		return
 	}
-	game, err := a.catalog.Identify(r.Context(), input)
+	resolution, err := a.catalog.Resolve(r.Context(), input)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, gameResponse(game))
+	writeJSON(w, http.StatusOK, catalogResolutionResponse{
+		Game:   gameResponse(&resolution.Game),
+		Status: resolution.Status,
+	})
 }
 
 func (a *API) listGames(w http.ResponseWriter, r *http.Request) {
@@ -307,17 +310,23 @@ func (a *API) getGameMedia(w http.ResponseWriter, r *http.Request) {
 }
 
 type catalogGameResponse struct {
-	ID          string                 `json:"id"`
-	Title       string                 `json:"title"`
-	SortTitle   string                 `json:"sort_title,omitempty"`
-	Platform    string                 `json:"platform,omitempty"`
-	Publisher   string                 `json:"publisher,omitempty"`
-	Description string                 `json:"description,omitempty"`
-	Provider    string                 `json:"provider"`
-	ProviderID  string                 `json:"provider_id"`
-	Metadata    map[string]any         `json:"metadata,omitempty"`
-	Media       []catalogMediaResponse `json:"media"`
-	RefreshedAt string                 `json:"refreshed_at"`
+	ID             string                    `json:"id"`
+	Title          string                    `json:"title"`
+	SortTitle      string                    `json:"sort_title,omitempty"`
+	Platform       string                    `json:"platform,omitempty"`
+	Publisher      string                    `json:"publisher,omitempty"`
+	Description    string                    `json:"description,omitempty"`
+	MetadataSource string                    `json:"metadata_source"`
+	Identifiers    []catalog.GameIdentifier  `json:"identifiers"`
+	Fingerprints   []catalog.GameFingerprint `json:"fingerprints"`
+	Metadata       map[string]any            `json:"metadata,omitempty"`
+	Media          []catalogMediaResponse    `json:"media"`
+	RefreshedAt    string                    `json:"refreshed_at"`
+}
+
+type catalogResolutionResponse struct {
+	Game   catalogGameResponse      `json:"game"`
+	Status catalog.ResolutionStatus `json:"status"`
 }
 
 type catalogMediaResponse struct {
@@ -344,17 +353,18 @@ func gameResponse(game *catalog.Game) catalogGameResponse {
 		}
 	}
 	return catalogGameResponse{
-		ID:          game.ID,
-		Title:       game.Title,
-		SortTitle:   game.SortTitle,
-		Platform:    game.Platform,
-		Publisher:   game.Publisher,
-		Description: game.Description,
-		Provider:    game.Provider,
-		ProviderID:  game.ProviderID,
-		Metadata:    game.Metadata,
-		Media:       media,
-		RefreshedAt: game.RefreshedAt.Format(time.RFC3339Nano),
+		ID:             game.ID,
+		Title:          game.Title,
+		SortTitle:      game.SortTitle,
+		Platform:       game.Platform,
+		Publisher:      game.Publisher,
+		Description:    game.Description,
+		MetadataSource: game.MetadataSource,
+		Identifiers:    game.Identifiers,
+		Fingerprints:   game.Fingerprints,
+		Metadata:       game.Metadata,
+		Media:          media,
+		RefreshedAt:    game.RefreshedAt.Format(time.RFC3339Nano),
 	}
 }
 
@@ -378,6 +388,15 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	var identityConflict *catalog.IdentityConflict
+	if errors.As(err, &identityConflict) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":    "identity_conflict",
+			"status":   http.StatusConflict,
+			"game_ids": identityConflict.GameIDs,
+		})
+		return
+	}
 	var conflict *omnisave.HeadConflict
 	if errors.As(err, &conflict) {
 		writeJSON(w, http.StatusConflict, map[string]any{
@@ -405,6 +424,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, catalog.ErrUnavailable):
 		status = http.StatusServiceUnavailable
+	case errors.Is(err, catalog.ErrConflict):
+		status = http.StatusConflict
 	default:
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {

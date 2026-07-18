@@ -44,15 +44,17 @@ func TestProviderIdentifiesNoIntroGameAndOpensArtwork(t *testing.T) {
 	defer server.Close()
 	provider := hasheous.New(server.URL, server.Client())
 
-	match, err := provider.Identify(context.Background(), catalog.Fingerprint{
-		Platform: "snes",
-		SHA1:     "6b47bb75d16514b6a476aa0c73a683a2a4c18765",
-	})
+	match, err := provider.Resolve(context.Background(), catalog.ResolveGame{Fingerprints: []catalog.GameFingerprint{{
+		Platform: "snes", Algorithm: "sha1", Value: "6b47bb75d16514b6a476aa0c73a683a2a4c18765",
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if match.Title != "Super Mario World" || match.ROM.Region != "United States" {
 		t.Fatalf("unexpected match: %v", match)
+	}
+	if len(match.Identifiers) != 2 || match.Identifiers[1].Namespace != "igdb.game" {
+		t.Fatalf("expected Hasheous and IGDB identities: %v", match.Identifiers)
 	}
 	if len(match.Media) != 1 || match.Media[0].Kind != "cover" || match.Media[0].Attribution != "IGDB" {
 		t.Fatalf("unexpected media: %v", match.Media)

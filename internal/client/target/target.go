@@ -3,7 +3,10 @@ package target
 
 import (
 	"context"
+	"strings"
 	"time"
+
+	"github.com/krisbaumgartner/omnisave/internal/catalog"
 )
 
 // Target is one application installation resolved on this machine.
@@ -17,12 +20,39 @@ type Target struct {
 
 // GameIdentity carries adapter evidence for identifying an installed game.
 type GameIdentity struct {
-	Source      string
-	ID          string
-	Title       string
-	Platform    string
-	ContentPath string
-	CRC32       string
+	Identifiers  []catalog.GameIdentifier
+	Fingerprints []catalog.GameFingerprint
+	Title        string
+	Platform     string
+	ContentPath  string
+}
+
+// Identifier returns an external ID in the requested namespace.
+func (identity GameIdentity) Identifier(namespace string) (string, bool) {
+	for _, identifier := range identity.Identifiers {
+		if strings.EqualFold(identifier.Namespace, namespace) {
+			return identifier.Value, true
+		}
+	}
+	return "", false
+}
+
+// StoreIdentifier returns the first store application identity.
+func (identity GameIdentity) StoreIdentifier() (store, value string, ok bool) {
+	for _, identifier := range identity.Identifiers {
+		if strings.HasSuffix(identifier.Namespace, ".app") {
+			return strings.TrimSuffix(identifier.Namespace, ".app"), identifier.Value, true
+		}
+	}
+	return "", "", false
+}
+
+// DisplayTitle returns the discovered title or a local fallback.
+func (identity GameIdentity) DisplayTitle(fallback string) string {
+	if strings.TrimSpace(identity.Title) != "" {
+		return identity.Title
+	}
+	return fallback
 }
 
 // Environment describes where an installed game runs on this machine.

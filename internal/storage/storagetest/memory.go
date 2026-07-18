@@ -194,22 +194,23 @@ func copyStringPointer(source *string) *string {
 	return &copy
 }
 
-func (r *MemoryRepository) FindGameByFingerprint(_ context.Context, fingerprint catalog.Fingerprint) (*catalog.Game, error) {
-	for _, rom := range r.roms {
-		if (fingerprint.SHA256 != "" && fingerprint.SHA256 == rom.SHA256) ||
-			(fingerprint.SHA1 != "" && fingerprint.SHA1 == rom.SHA1) ||
-			(fingerprint.MD5 != "" && fingerprint.MD5 == rom.MD5) ||
-			(fingerprint.CRC32 != "" && fingerprint.CRC32 == rom.CRC32) {
-			return r.game(rom.GameID)
+func (r *MemoryRepository) FindGameByIdentifier(_ context.Context, identifier catalog.GameIdentifier) (*catalog.Game, error) {
+	for _, game := range r.games {
+		for _, candidate := range game.Identifiers {
+			if candidate == identifier {
+				return r.game(game.ID)
+			}
 		}
 	}
 	return nil, storage.ErrNotFound
 }
 
-func (r *MemoryRepository) FindGameByProvider(_ context.Context, provider, providerID string) (*catalog.Game, error) {
+func (r *MemoryRepository) FindGameByFingerprint(_ context.Context, fingerprint catalog.GameFingerprint) (*catalog.Game, error) {
 	for _, game := range r.games {
-		if game.Provider == provider && game.ProviderID == providerID {
-			return r.game(game.ID)
+		for _, candidate := range game.Fingerprints {
+			if candidate == fingerprint {
+				return r.game(game.ID)
+			}
 		}
 	}
 	return nil, storage.ErrNotFound
@@ -228,16 +229,27 @@ func (r *MemoryRepository) ListGames(context.Context) ([]catalog.Game, error) {
 	return games, nil
 }
 
-func (r *MemoryRepository) SaveGame(_ context.Context, game catalog.Game, rom catalog.GameROM) error {
+func (r *MemoryRepository) SaveGame(_ context.Context, game catalog.Game, rom *catalog.GameROM) error {
+	for _, existing := range r.games {
+		if existing.ID == game.ID {
+			continue
+		}
+		for _, identifier := range game.Identifiers {
+			if slices.Contains(existing.Identifiers, identifier) {
+				return storage.ErrConflict
+			}
+		}
+		for _, fingerprint := range game.Fingerprints {
+			if slices.Contains(existing.Fingerprints, fingerprint) {
+				return storage.ErrConflict
+			}
+		}
+	}
 	game.Media = nil
 	r.games[game.ID] = game
-	r.roms[rom.ID] = rom
-	return nil
-}
-
-func (r *MemoryRepository) SaveGameMetadata(_ context.Context, game catalog.Game) error {
-	game.Media = nil
-	r.games[game.ID] = game
+	if rom != nil {
+		r.roms[rom.ID] = *rom
+	}
 	return nil
 }
 

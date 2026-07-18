@@ -213,32 +213,50 @@ func TestCatalogStory(t *testing.T) {
 	games := catalogservice.New(repository, repository, catalogProviderStub{})
 	handler := httpapi.New(saves, games)
 
-	response := request(t, handler, http.MethodPost, "/api/v1/games/identify", "application/json",
+	response := request(t, handler, http.MethodPost, "/api/v1/games/resolve", "application/json",
 		bytes.NewBufferString(`{
-			"game_id":"super-mario-world",
-			"fingerprint":{"platform":"snes","sha1":"6b47bb75d16514b6a476aa0c73a683a2a4c18765"}
+			"fingerprints":[{"platform":"snes","algorithm":"sha1","value":"6b47bb75d16514b6a476aa0c73a683a2a4c18765"}]
 		}`))
 	if response.Code != http.StatusOK {
 		t.Fatalf("identify returned %d: %s", response.Code, response.Body.String())
 	}
 	var identified struct {
-		ID    string `json:"id"`
-		Media []struct {
-			ID  string `json:"id"`
-			URL string `json:"url"`
-		} `json:"media"`
+		Status catalog.ResolutionStatus `json:"status"`
+		Game   struct {
+			ID    string `json:"id"`
+			Media []struct {
+				ID  string `json:"id"`
+				URL string `json:"url"`
+			} `json:"media"`
+		} `json:"game"`
 	}
 	decodeResponse(t, response, &identified)
-	if identified.ID != "super-mario-world" || len(identified.Media) != 1 {
+	if identified.Status != catalog.ResolutionCreated || identified.Game.ID == "" || len(identified.Game.Media) != 1 {
 		t.Fatalf("unexpected identified game: %v", identified)
 	}
 
-	response = request(t, handler, http.MethodGet, identified.Media[0].URL, "", nil)
+	response = request(t, handler, http.MethodGet, identified.Game.Media[0].URL, "", nil)
 	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "image/png" {
 		t.Fatalf("unexpected media response: %d %q", response.Code, response.Body.String())
 	}
 	if response.Body.String() != testCoverImage {
 		t.Fatalf("unexpected media: %q", response.Body.String())
+	}
+
+	response = request(t, handler, http.MethodPost, "/api/v1/games/resolve", "application/json",
+		bytes.NewBufferString(`{"identifiers":[{"namespace":"hasheous.game","value":"337"}]}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("resolve known identifier returned %d: %s", response.Code, response.Body.String())
+	}
+	var reused struct {
+		Status catalog.ResolutionStatus `json:"status"`
+		Game   struct {
+			ID string `json:"id"`
+		} `json:"game"`
+	}
+	decodeResponse(t, response, &reused)
+	if reused.Status != catalog.ResolutionExisting || reused.Game.ID != identified.Game.ID {
+		t.Fatalf("identifier did not resolve to the canonical game: %v", reused)
 	}
 
 	response = request(t, handler, http.MethodGet, "/api/v1/games", "", nil)
@@ -293,9 +311,9 @@ type catalogProviderStub struct{}
 
 const testCoverImage = "\x89PNG\r\n\x1a\ncover image"
 
-func (catalogProviderStub) Identify(_ context.Context, fingerprint catalog.Fingerprint) (*catalog.ProviderMatch, error) {
+func (catalogProviderStub) Resolve(_ context.Context, evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
 	match := catalogStubMatch()
-	match.ROM.SHA1 = fingerprint.SHA1
+	match.Fingerprints = append(match.Fingerprints, evidence.Fingerprints...)
 	return match, nil
 }
 
@@ -316,10 +334,10 @@ func (catalogProviderStub) Match(context.Context, string) (*catalog.ProviderMatc
 
 func catalogStubMatch() *catalog.ProviderMatch {
 	return &catalog.ProviderMatch{
-		Provider:   "hasheous",
-		ProviderID: "337",
-		Title:      "Super Mario World",
-		Platform:   "Super Nintendo Entertainment System",
+		Source:      "hasheous",
+		Identifiers: []catalog.GameIdentifier{{Namespace: "hasheous.game", Value: "337"}},
+		Title:       "Super Mario World",
+		Platform:    "Super Nintendo Entertainment System",
 		ROM: catalog.ROMMatch{
 			ProviderID: "1628019",
 			Source:     "no-intro",

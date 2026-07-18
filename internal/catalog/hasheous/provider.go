@@ -36,15 +36,20 @@ func New(baseURL string, client *http.Client) *Provider {
 	return &Provider{baseURL: strings.TrimRight(baseURL, "/"), client: client}
 }
 
-func (p *Provider) Identify(ctx context.Context, fingerprint catalog.Fingerprint) (*catalog.ProviderMatch, error) {
+func (p *Provider) Resolve(ctx context.Context, evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
 	hashes := make(map[string]string)
-	for name, value := range map[string]string{
-		"crc": fingerprint.CRC32, "md5": fingerprint.MD5,
-		"sha1": fingerprint.SHA1, "sha256": fingerprint.SHA256,
-	} {
-		if value != "" {
-			hashes[name] = value
+	for _, fingerprint := range evidence.Fingerprints {
+		name := fingerprint.Algorithm
+		if name == "crc32" {
+			name = "crc"
 		}
+		if existing := hashes[name]; existing != "" && !strings.EqualFold(existing, fingerprint.Value) {
+			return nil, catalog.ErrInvalid
+		}
+		hashes[name] = fingerprint.Value
+	}
+	if len(hashes) == 0 {
+		return nil, catalog.ErrNotFound
 	}
 	body, err := json.Marshal(hashes)
 	if err != nil {
@@ -82,7 +87,7 @@ func (p *Provider) Identify(ctx context.Context, fingerprint catalog.Fingerprint
 	if err := decoder.Decode(&result); err != nil {
 		return nil, catalog.ErrUnavailable
 	}
-	signature, ok := bestSignature(result.Signatures.NoIntros, fingerprint)
+	signature, ok := bestSignature(result.Signatures.NoIntros, evidence.Fingerprints)
 	if !ok || result.ID == 0 || result.Name == "" {
 		return nil, catalog.ErrNotFound
 	}
@@ -92,14 +97,15 @@ func (p *Provider) Identify(ctx context.Context, fingerprint catalog.Fingerprint
 	delete(attributes, "description")
 	attributes["external_references"] = result.Metadata
 	return &catalog.ProviderMatch{
-		Provider:    "hasheous",
-		ProviderID:  strconv.FormatInt(result.ID, 10),
-		Title:       result.Name,
-		SortTitle:   signature.Game.SortingName,
-		Platform:    result.Platform.Name,
-		Publisher:   result.Publisher.Name,
-		Description: description,
-		Metadata:    attributes,
+		Source:       "hasheous",
+		Identifiers:  resultIdentifiers(result),
+		Fingerprints: signatureFingerprints(result.Platform.Name, signature),
+		Title:        result.Name,
+		SortTitle:    signature.Game.SortingName,
+		Platform:     result.Platform.Name,
+		Publisher:    result.Publisher.Name,
+		Description:  description,
+		Metadata:     attributes,
 		ROM: catalog.ROMMatch{
 			ProviderID: signature.ROM.ID,
 			System:     signature.Game.System,
@@ -190,13 +196,7 @@ func (p *Provider) Match(ctx context.Context, selectionToken string) (*catalog.P
 	if err != nil {
 		return nil, catalog.ErrInvalid
 	}
-	match, err := p.Identify(ctx, catalog.Fingerprint{
-		Platform: selection.Platform,
-		CRC32:    strings.ToLower(selection.CRC32),
-		MD5:      strings.ToLower(selection.MD5),
-		SHA1:     strings.ToLower(selection.SHA1),
-		SHA256:   strings.ToLower(selection.SHA256),
-	})
+	match, err := p.Resolve(ctx, catalog.ResolveGame{Fingerprints: selectionFingerprints(selection)})
 	if err != nil {
 		return nil, err
 	}
@@ -359,6 +359,58 @@ type matchSelection struct {
 	SHA256   string `json:"sha256,omitempty"`
 }
 
+func resultIdentifiers(result lookupResponse) []catalog.GameIdentifier {
+	identifiers := []catalog.GameIdentifier{{Namespace: "hasheous.game", Value: strconv.FormatInt(result.ID, 10)}}
+	for _, item := range result.Metadata {
+		if item.ID == "" || !strings.EqualFold(item.Status, "mapped") {
+			continue
+		}
+		namespace := ""
+		switch {
+		case strings.EqualFold(item.Source, "igdb"):
+			namespace = "igdb.game"
+		}
+		if namespace != "" {
+			identifiers = append(identifiers, catalog.GameIdentifier{Namespace: namespace, Value: item.ID})
+		}
+	}
+	return identifiers
+}
+
+func signatureFingerprints(platform string, signature signatureResult) []catalog.GameFingerprint {
+	var fingerprints []catalog.GameFingerprint
+	for algorithm, value := range map[string]string{
+		"crc32":  signature.ROM.CRC,
+		"md5":    signature.ROM.MD5,
+		"sha1":   signature.ROM.SHA1,
+		"sha256": signature.ROM.SHA256,
+	} {
+		if value != "" {
+			fingerprints = append(fingerprints, catalog.GameFingerprint{
+				Platform: platform, Algorithm: algorithm, Value: strings.ToLower(value),
+			})
+		}
+	}
+	return fingerprints
+}
+
+func selectionFingerprints(selection matchSelection) []catalog.GameFingerprint {
+	var fingerprints []catalog.GameFingerprint
+	for algorithm, value := range map[string]string{
+		"crc32":  selection.CRC32,
+		"md5":    selection.MD5,
+		"sha1":   selection.SHA1,
+		"sha256": selection.SHA256,
+	} {
+		if value != "" {
+			fingerprints = append(fingerprints, catalog.GameFingerprint{
+				Platform: selection.Platform, Algorithm: algorithm, Value: strings.ToLower(value),
+			})
+		}
+	}
+	return fingerprints
+}
+
 func searchPlatform(platform string) string {
 	platform = strings.TrimSpace(platform)
 	normalized := strings.ToLower(platform)
@@ -447,11 +499,11 @@ func decodeSelection(token string) (matchSelection, error) {
 	return selection, nil
 }
 
-func bestSignature(signatures []signatureResult, fingerprint catalog.Fingerprint) (signatureResult, bool) {
+func bestSignature(signatures []signatureResult, fingerprints []catalog.GameFingerprint) (signatureResult, bool) {
 	bestScore := 0
 	bestIndex := -1
 	for index, signature := range signatures {
-		score, matches := signatureScore(signature, fingerprint)
+		score, matches := signatureScore(signature, fingerprints)
 		if matches && score > bestScore {
 			bestScore = score
 			bestIndex = index
@@ -463,19 +515,20 @@ func bestSignature(signatures []signatureResult, fingerprint catalog.Fingerprint
 	return signatures[bestIndex], true
 }
 
-func signatureScore(signature signatureResult, fingerprint catalog.Fingerprint) (int, bool) {
-	pairs := [][2]string{
-		{fingerprint.CRC32, signature.ROM.CRC},
-		{fingerprint.MD5, signature.ROM.MD5},
-		{fingerprint.SHA1, signature.ROM.SHA1},
-		{fingerprint.SHA256, signature.ROM.SHA256},
+func signatureScore(signature signatureResult, fingerprints []catalog.GameFingerprint) (int, bool) {
+	actual := map[string]string{
+		"crc32":  signature.ROM.CRC,
+		"md5":    signature.ROM.MD5,
+		"sha1":   signature.ROM.SHA1,
+		"sha256": signature.ROM.SHA256,
 	}
 	score := 0
-	for _, pair := range pairs {
-		if pair[0] == "" || pair[1] == "" {
+	for _, fingerprint := range fingerprints {
+		value := actual[fingerprint.Algorithm]
+		if value == "" {
 			continue
 		}
-		if !strings.EqualFold(pair[0], pair[1]) {
+		if !strings.EqualFold(fingerprint.Value, value) {
 			return 0, false
 		}
 		score++

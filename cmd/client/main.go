@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
+	"github.com/krisbaumgartner/omnisave/internal/client/remote"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/retroarch"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/steam"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
@@ -33,12 +34,99 @@ func run(ctx context.Context, arguments []string) error {
 		return runScan(ctx, scanner, arguments[1:])
 	case "track":
 		return runTrack(ctx, scanner, arguments[1:])
+	case "bind":
+		return runBind(ctx, scanner, arguments[1:])
 	case "help", "-h", "--help":
 		printUsage()
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q; use scan or track", arguments[0])
+		return fmt.Errorf("unknown command %q; use scan, track, or bind", arguments[0])
 	}
+}
+
+func runBind(ctx context.Context, scanner *client.Scanner, arguments []string) error {
+	flags := flag.NewFlagSet("bind", flag.ContinueOnError)
+	statePath := flags.String("state", "", "path to local tracking state")
+	serverURL := flags.String("server", environmentOr("OMNISAVE_SERVER_URL", "http://localhost:8080"), "OmniSave server URL")
+	token := flags.String("token", os.Getenv("OMNISAVE_API_TOKEN"), "OmniSave API token")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	server, err := remote.New(*serverURL, *token, nil)
+	if err != nil {
+		return err
+	}
+
+	scans, err := tui.Scan(ctx, scanner, false)
+	if errors.Is(err, tui.ErrAborted) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+
+	store, err := trackingStore(*statePath)
+	if err != nil {
+		return err
+	}
+	state, err := store.Load()
+	if err != nil {
+		return err
+	}
+	local := trackedLocalSaves(state, tracking.SavesFromScans(scans))
+	if len(local) == 0 {
+		fmt.Println("No saves were discovered for tracked games. Run track first or create a save in the game.")
+		return nil
+	}
+	remoteSaves, err := server.ListOmniSaves(ctx)
+	if err != nil {
+		return err
+	}
+	selection, err := tui.SelectBinding(local, remoteSaves, state.Bindings)
+	if errors.Is(err, tui.ErrAborted) {
+		return nil
+	}
+	if errors.Is(err, tui.ErrNoOmniSaves) {
+		fmt.Println("The server has no OmniSaves to bind. Create one in the dashboard first.")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := state.Bind(selection.Local, selection.OmniSave.ID); err != nil {
+		return err
+	}
+	if err := store.Save(state); err != nil {
+		return err
+	}
+	fmt.Printf("✓ %s (%s) will sync with %s.\n", selection.Local.GameTitle, selection.Local.Kind, selection.OmniSave.DisplayName)
+	return nil
+}
+
+func trackingStore(path string) (*tracking.Store, error) {
+	if path != "" {
+		return tracking.NewStore(path), nil
+	}
+	return tracking.DefaultStore()
+}
+
+func trackedLocalSaves(state tracking.State, saves []tracking.LocalSave) []tracking.LocalSave {
+	tracked := state.TrackedIDs()
+	selected := make([]tracking.LocalSave, 0, len(saves))
+	for _, save := range saves {
+		if tracked[save.GameID] {
+			selected = append(selected, save)
+		}
+	}
+	return selected
+}
+
+func environmentOr(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func runScan(ctx context.Context, scanner *client.Scanner, arguments []string) error {
@@ -72,14 +160,9 @@ func runTrack(ctx context.Context, scanner *client.Scanner, arguments []string) 
 	}
 	fmt.Println()
 
-	var store *tracking.Store
-	if *statePath != "" {
-		store = tracking.NewStore(*statePath)
-	} else {
-		store, err = tracking.DefaultStore()
-		if err != nil {
-			return err
-		}
+	store, err := trackingStore(*statePath)
+	if err != nil {
+		return err
 	}
 	state, err := store.Load()
 	if err != nil {
@@ -116,8 +199,10 @@ func printUsage() {
 Usage:
   omnisave-client scan [--verbose]
   omnisave-client track [--state path]
+  OMNISAVE_API_TOKEN=... omnisave-client bind [--server URL] [--state path]
 
 Commands:
   scan   Discover installed targets, games, and saves without changing state
-  track  Choose which discovered games should be synchronized`)
+  track  Choose which discovered games should be synchronized
+  bind   Choose which OmniSave a discovered local save should synchronize with`)
 }

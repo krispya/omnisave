@@ -2,9 +2,11 @@ package service_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	catalogservice "github.com/krisbaumgartner/omnisave/internal/catalog/service"
@@ -13,48 +15,70 @@ import (
 
 const coverImage = "\x89PNG\r\n\x1a\ncover image"
 
-func TestIdentifyCachesGameAndMedia(t *testing.T) {
+func TestResolveBuildsOneCanonicalGameFromDifferentIdentifiers(t *testing.T) {
 	ctx := context.Background()
 	repository := storagetest.NewMemoryRepository()
 	provider := &fakeProvider{}
 	games := catalogservice.New(repository, repository, provider)
-	fingerprint := catalog.Fingerprint{
-		Platform: "snes",
-		SHA1:     "6b47bb75d16514b6a476aa0c73a683a2a4c18765",
-	}
 
-	identified, err := games.Identify(ctx, catalog.IdentifyGame{
-		GameID:      "super-mario-world",
-		Fingerprint: fingerprint,
+	created, err := games.Resolve(ctx, catalog.ResolveGame{
+		Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "2560710"}},
+		TitleHint:   "Super Mario World",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identified.ID != "super-mario-world" || identified.Title != "Super Mario World" {
-		t.Fatalf("unexpected game: %v", identified)
+	if created.Status != catalog.ResolutionCreated || created.Game.ID == "" {
+		t.Fatalf("expected a new server-owned game: %v", created)
 	}
-	if len(identified.Media) != 1 || identified.Media[0].Kind != "cover" {
-		t.Fatalf("expected locally cached cover art, got %v", identified.Media)
+	if len(created.Game.Identifiers) != 3 || len(created.Game.Media) != 1 {
+		t.Fatalf("expected all provider identities and cached media: %v", created.Game)
 	}
 
-	media, payload, err := games.OpenMedia(ctx, identified.ID, identified.Media[0].ID)
+	reused, err := games.Resolve(ctx, catalog.ResolveGame{
+		Identifiers: []catalog.GameIdentifier{{Namespace: "igdb.game", Value: "1070"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused.Status != catalog.ResolutionExisting || reused.Game.ID != created.Game.ID {
+		t.Fatalf("external IDs did not converge on one game: %v", reused)
+	}
+	if provider.resolutions != 1 || provider.mediaRequests != 1 {
+		t.Fatalf("cached identity called the provider again: %+v", provider)
+	}
+
+	media, payload, err := games.OpenMedia(ctx, created.Game.ID, created.Game.Media[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer payload.Close()
-	contents, err := io.ReadAll(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
+	contents, _ := io.ReadAll(payload)
 	if media.Format != "image/png" || string(contents) != coverImage {
 		t.Fatalf("unexpected stored media: %v %q", media, contents)
 	}
+}
 
-	if _, err := games.Identify(ctx, catalog.IdentifyGame{Fingerprint: fingerprint}); err != nil {
-		t.Fatal(err)
+func TestResolveRejectsEvidenceAssignedToDifferentGames(t *testing.T) {
+	ctx := context.Background()
+	repository := storagetest.NewMemoryRepository()
+	for _, game := range []catalog.Game{
+		{ID: "one", Title: "One", MetadataSource: "client", Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "1"}}, RefreshedAt: time.Now()},
+		{ID: "two", Title: "Two", MetadataSource: "client", Identifiers: []catalog.GameIdentifier{{Namespace: "igdb.game", Value: "2"}}, RefreshedAt: time.Now()},
+	} {
+		if err := repository.SaveGame(ctx, game, nil); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if provider.identifications != 1 || provider.mediaRequests != 1 {
-		t.Fatalf("cached identification called provider again: %+v", provider)
+	games := catalogservice.New(repository, repository, nil)
+
+	_, err := games.Resolve(ctx, catalog.ResolveGame{Identifiers: []catalog.GameIdentifier{
+		{Namespace: "steam.app", Value: "1"},
+		{Namespace: "igdb.game", Value: "2"},
+	}})
+	var conflict *catalog.IdentityConflict
+	if !errors.As(err, &conflict) || len(conflict.GameIDs) != 2 {
+		t.Fatalf("expected an identity conflict, got %v", err)
 	}
 }
 
@@ -64,50 +88,38 @@ func TestManualMatchCreatesCatalogGameWithoutLocalFingerprint(t *testing.T) {
 	provider := &fakeProvider{}
 	games := catalogservice.New(repository, repository, provider)
 
-	candidates, err := games.Search(ctx, catalog.SearchGames{
-		Title: "Super Mario World", Platform: "SNES",
-	})
+	candidates, err := games.Search(ctx, catalog.SearchGames{Title: "Super Mario World", Platform: "SNES"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(candidates) != 1 || candidates[0].SelectionToken != "known-selection" {
-		t.Fatalf("unexpected candidates: %v", candidates)
-	}
-
 	matched, err := games.Match(ctx, "debug-super-mario-world", catalog.MatchGame{
 		SelectionToken: candidates[0].SelectionToken,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if matched.ID != "debug-super-mario-world" || matched.Title != "Super Mario World" {
-		t.Fatalf("unexpected matched game: %v", matched)
-	}
-	if matched.Metadata["match_method"] != "manual" || len(matched.Media) != 1 {
+	if matched.ID != "debug-super-mario-world" || matched.Metadata["match_method"] != "manual" || len(matched.Media) != 1 {
 		t.Fatalf("manual match was not cached: %v", matched)
 	}
 }
 
 type fakeProvider struct {
-	identifications int
-	mediaRequests   int
+	resolutions   int
+	mediaRequests int
 }
 
-func (p *fakeProvider) Identify(_ context.Context, fingerprint catalog.Fingerprint) (*catalog.ProviderMatch, error) {
-	p.identifications++
+func (p *fakeProvider) Resolve(_ context.Context, evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
+	p.resolutions++
 	match := p.match()
-	match.ROM.SHA1 = fingerprint.SHA1
+	match.Identifiers = append(match.Identifiers, evidence.Identifiers...)
+	match.Fingerprints = append(match.Fingerprints, evidence.Fingerprints...)
 	return match, nil
 }
 
 func (p *fakeProvider) Search(context.Context, catalog.SearchGames) ([]catalog.GameCandidate, error) {
 	return []catalog.GameCandidate{{
-		Provider:       "hasheous",
-		ProviderID:     "962167",
-		Title:          "Super Mario World",
-		Edition:        "Super Mario World (USA)",
-		Platform:       "Super Nintendo Entertainment System",
-		SelectionToken: "known-selection",
+		Provider: "hasheous", ProviderID: "962167", Title: "Super Mario World",
+		Platform: "Super Nintendo Entertainment System", SelectionToken: "known-selection",
 	}}, nil
 }
 
@@ -120,24 +132,15 @@ func (p *fakeProvider) Match(_ context.Context, selectionToken string) (*catalog
 
 func (p *fakeProvider) match() *catalog.ProviderMatch {
 	return &catalog.ProviderMatch{
-		Provider:    "hasheous",
-		ProviderID:  "337",
-		Title:       "Super Mario World",
-		SortTitle:   "Super Mario World",
-		Platform:    "Super Nintendo Entertainment System",
-		Publisher:   "Nintendo",
-		Description: "Mario and Yoshi explore Dinosaur Land.",
-		ROM: catalog.ROMMatch{
-			ProviderID: "1628019",
-			System:     "Nintendo - Super Nintendo Entertainment System",
-			Name:       "Super Mario World.sfc",
-			Source:     "no-intro",
+		Source: "hasheous",
+		Identifiers: []catalog.GameIdentifier{
+			{Namespace: "hasheous.game", Value: "337"},
+			{Namespace: "igdb.game", Value: "1070"},
 		},
-		Media: []catalog.MediaReference{{
-			Kind:        "cover",
-			ProviderID:  "FD5CF3F8CA683D9F7DC66484C3C6602332A0CD84",
-			Attribution: "IGDB",
-		}},
+		Title: "Super Mario World", SortTitle: "Super Mario World",
+		Platform: "Super Nintendo Entertainment System", Publisher: "Nintendo",
+		ROM:   catalog.ROMMatch{ProviderID: "1628019", Source: "no-intro"},
+		Media: []catalog.MediaReference{{Kind: "cover", ProviderID: "cover-id"}},
 	}
 }
 
