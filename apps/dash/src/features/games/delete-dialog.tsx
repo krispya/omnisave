@@ -74,6 +74,26 @@ function DeleteDialog({
 
 type DeleteStateProps = Pick<DeleteDialogProps, 'deleting' | 'error' | 'onCancel' | 'onConfirm'>;
 
+export function DeleteGameDialog({ game, ...state }: DeleteStateProps & { game: GameSummary }) {
+  return (
+    <DeleteDialog
+      {...state}
+      title={`Delete ${game.label}?`}
+      description={
+        game.saves.length > 0 ? (
+          <>
+            This permanently removes {game.label} from your library and deletes{' '}
+            {game.saves.length === 1 ? 'its save' : `all ${game.saves.length} of its saves`}, their
+            revision history, and any unshared artifacts. This cannot be undone.
+          </>
+        ) : (
+          <>This permanently removes {game.label} from your library. This cannot be undone.</>
+        )
+      }
+    />
+  );
+}
+
 export function DeleteGameSavesDialog({ game, ...state }: DeleteStateProps & { game: GameSummary }) {
   return (
     <DeleteDialog

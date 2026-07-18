@@ -180,12 +180,14 @@ export function GameLibrary({
   onOpenGame,
   onRequestFixMatch,
   onRequestDeleteSaves,
+  onRequestDeleteGame,
 }: {
   games: GameSummary[];
   token: string;
   onOpenGame: (game: GameSummary) => void;
   onRequestFixMatch: (game: GameSummary) => void;
   onRequestDeleteSaves: (game: GameSummary) => void;
+  onRequestDeleteGame: (game: GameSummary) => void;
 }) {
   if (games.length === 0) {
     return (
@@ -208,6 +210,7 @@ export function GameLibrary({
           onOpenGame={onOpenGame}
           onRequestFixMatch={onRequestFixMatch}
           onRequestDeleteSaves={onRequestDeleteSaves}
+          onRequestDeleteGame={onRequestDeleteGame}
         />
       ))}
     </div>
@@ -220,12 +223,14 @@ function GameCard({
   onOpenGame,
   onRequestFixMatch,
   onRequestDeleteSaves,
+  onRequestDeleteGame,
 }: {
   game: GameSummary;
   token: string;
   onOpenGame: (game: GameSummary) => void;
   onRequestFixMatch: (game: GameSummary) => void;
   onRequestDeleteSaves: (game: GameSummary) => void;
+  onRequestDeleteGame: (game: GameSummary) => void;
 }) {
   const saveCount = game.saves.length;
 
@@ -253,6 +258,7 @@ function GameCard({
           onFixMatch={game.inLibrary ? () => onRequestFixMatch(game) : undefined}
           deleteLabel="Delete Saves…"
           onDelete={saveCount > 0 ? () => onRequestDeleteSaves(game) : undefined}
+          onDeleteGame={game.inLibrary ? () => onRequestDeleteGame(game) : undefined}
         />
       </div>
       <button type="button" onClick={() => onOpenGame(game)} className="block w-full text-left">

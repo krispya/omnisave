@@ -298,6 +298,89 @@ func TestCatalogIdentityClaimsAreAtomic(t *testing.T) {
 	}
 }
 
+// Deleting a game removes the game record, every OmniSave that references it
+// along with their revision history, and any artifacts no other record uses.
+func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repository, err := sqlite.Open(
+		filepath.Join(directory, "omnisave.db"),
+		filepath.Join(directory, "artifacts"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves := omnisaveservice.New(repository)
+
+	game := catalog.Game{
+		ID: "super-metroid", Title: "Super Metroid",
+		MetadataSource: "hasheous", RefreshedAt: time.Now().UTC(),
+	}
+	if err := repository.SaveGame(ctx, game, nil); err != nil {
+		t.Fatal(err)
+	}
+	cover := []byte("cover image")
+	coverSum := sha256.Sum256(cover)
+	coverHash := hex.EncodeToString(coverSum[:])
+	if err := repository.StoreArtifact(ctx, storage.Artifact{
+		Format: "image/png", SHA256: coverHash, Size: int64(len(cover)),
+	}, bytes.NewReader(cover)); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.SaveGameMedia(ctx, catalog.GameMedia{
+		ID: "sm-cover", GameID: game.ID, Kind: "cover", Format: "image/png",
+		SHA256: coverHash, Size: int64(len(cover)), Provider: "hasheous", ProviderID: "cover-id",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	doomed, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: game.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := storeOmniSaveArtifact(t, ctx, saves, "shared contents")
+	if _, err := saves.CommitRevision(ctx, doomed.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: shared}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	survivor, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "another-game"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saves.CommitRevision(ctx, survivor.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: shared}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repository.DeleteGame(ctx, game.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repository.GetGame(ctx, game.ID); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("deleted game should be gone, got %v", err)
+	}
+	if _, err := saves.Get(ctx, doomed.ID); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("the game's save should be gone, got %v", err)
+	}
+	if _, err := saves.OpenArtifact(ctx, coverHash); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("unreferenced cover artifact should be deleted, got %v", err)
+	}
+	payload, err := saves.OpenArtifact(ctx, shared.SHA256)
+	if err != nil {
+		t.Fatalf("artifact shared with another game's save should remain: %v", err)
+	}
+	payload.Close()
+	if _, err := saves.Get(ctx, survivor.ID); err != nil {
+		t.Fatalf("the other game's save should remain: %v", err)
+	}
+	if err := repository.DeleteGame(ctx, game.ID); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("deleting a missing game should report not found, got %v", err)
+	}
+}
+
 func storeOmniSaveArtifact(t *testing.T, ctx context.Context, saves omnisave.Service, contents string) omnisave.Artifact {
 	t.Helper()
 	sum := sha256.Sum256([]byte(contents))

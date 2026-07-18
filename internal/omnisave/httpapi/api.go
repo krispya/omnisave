@@ -48,6 +48,7 @@ func New(saves omnisave.Service, catalogs ...catalog.Service) http.Handler {
 		mux.HandleFunc("GET /api/v1/games/{id}/match-candidates", api.searchGameMatches)
 		mux.HandleFunc("PUT /api/v1/games/{id}/match", api.matchGame)
 		mux.HandleFunc("GET /api/v1/games/{id}", api.getGame)
+		mux.HandleFunc("DELETE /api/v1/games/{id}", api.deleteGame)
 		mux.HandleFunc("GET /api/v1/games/{id}/media/{mediaID}", api.getGameMedia)
 	}
 	return mux
@@ -291,6 +292,14 @@ func (a *API) getGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, gameResponse(game))
+}
+
+func (a *API) deleteGame(w http.ResponseWriter, r *http.Request) {
+	if err := a.catalog.Delete(r.Context(), r.PathValue("id")); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) getGameMedia(w http.ResponseWriter, r *http.Request) {

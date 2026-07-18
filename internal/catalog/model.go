@@ -190,5 +190,6 @@ type Service interface {
 	Match(ctx context.Context, gameID string, input MatchGame) (*Game, error)
 	List(ctx context.Context) ([]Game, error)
 	Get(ctx context.Context, id string) (*Game, error)
+	Delete(ctx context.Context, id string) error
 	OpenMedia(ctx context.Context, gameID, mediaID string) (*GameMedia, io.ReadCloser, error)
 }

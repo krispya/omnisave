@@ -47,6 +47,7 @@ type CatalogRepository interface {
 	GetGame(ctx context.Context, id string) (*catalog.Game, error)
 	ListGames(ctx context.Context) ([]catalog.Game, error)
 	SaveGame(ctx context.Context, game catalog.Game, rom *catalog.GameROM) error
+	DeleteGame(ctx context.Context, id string) error
 	SaveGameMedia(ctx context.Context, media catalog.GameMedia) error
 	ClearGameMedia(ctx context.Context, gameID string) error
 	GetGameMedia(ctx context.Context, gameID, mediaID string) (*catalog.GameMedia, error)

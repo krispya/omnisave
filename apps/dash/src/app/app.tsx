@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
+  deleteGame,
   deleteOmniSave,
   listGames,
   listOmniSaves,
@@ -18,7 +19,11 @@ import {
   forkTestSave,
 } from '../features/debug/debug-actions.js';
 import { DebugMenu } from '../features/debug/debug-menu.js';
-import { DeleteGameSavesDialog, DeleteSaveDialog } from '../features/games/delete-dialog.js';
+import {
+  DeleteGameDialog,
+  DeleteGameSavesDialog,
+  DeleteSaveDialog,
+} from '../features/games/delete-dialog.js';
 import { FixMatchDialog } from '../features/games/fix-match-dialog.js';
 import { GameDetail } from '../features/games/game-detail.js';
 import {
@@ -31,6 +36,7 @@ import {
 const tokenStorageKey = 'omnisave.api-token';
 
 type DeleteTarget =
+  | { type: 'game'; game: GameSummary }
   | { type: 'game-saves'; game: GameSummary }
   | { type: 'save'; game: GameSummary; save: OmniSave; name: string };
 
@@ -280,6 +286,11 @@ export function App() {
     );
   }
 
+  function requestDeleteGame(game: GameSummary) {
+    setDeleteError('');
+    setDeleteTarget({ type: 'game', game });
+  }
+
   function requestDeleteGameSaves(game: GameSummary) {
     setDeleteError('');
     setDeleteTarget({ type: 'game-saves', game });
@@ -303,15 +314,20 @@ export function App() {
     setDeleting(true);
     setDeleteError('');
     try {
-      const savesToDelete =
-        deleteTarget.type === 'game-saves' ? deleteTarget.game.saves : [deleteTarget.save];
-      for (const save of savesToDelete) {
-        await deleteOmniSave(token, save.id);
-      }
+      if (deleteTarget.type === 'game') {
+        await deleteGame(token, deleteTarget.game.id);
+        if (selectedGameID === deleteTarget.game.id) closeGame();
+      } else {
+        const savesToDelete =
+          deleteTarget.type === 'game-saves' ? deleteTarget.game.saves : [deleteTarget.save];
+        for (const save of savesToDelete) {
+          await deleteOmniSave(token, save.id);
+        }
 
-      if (deleteTarget.type === 'save' && selectedSaveID === deleteTarget.save.id) {
-        const nextSave = deleteTarget.game.saves.find((save) => save.id !== deleteTarget.save.id);
-        setSelectedSaveID(nextSave?.id ?? '');
+        if (deleteTarget.type === 'save' && selectedSaveID === deleteTarget.save.id) {
+          const nextSave = deleteTarget.game.saves.find((save) => save.id !== deleteTarget.save.id);
+          setSelectedSaveID(nextSave?.id ?? '');
+        }
       }
       setDeleteTarget(undefined);
       await loadLibrary(token);
@@ -319,9 +335,11 @@ export function App() {
       setDeleteError(
         deleteFailure instanceof Error
           ? deleteFailure.message
-          : deleteTarget.type === 'game-saves'
-            ? 'Could not delete these saves.'
-            : 'Could not delete this save.'
+          : deleteTarget.type === 'game'
+            ? 'Could not delete this game.'
+            : deleteTarget.type === 'game-saves'
+              ? 'Could not delete these saves.'
+              : 'Could not delete this save.'
       );
     } finally {
       setDeleting(false);
@@ -444,6 +462,7 @@ export function App() {
                     onOpenGame={openGame}
                     onRequestFixMatch={setFixMatchTarget}
                     onRequestDeleteSaves={requestDeleteGameSaves}
+                    onRequestDeleteGame={requestDeleteGame}
                   />
                 )}
               </section>
@@ -451,7 +470,15 @@ export function App() {
           </>
         )}
       </main>
-      {deleteTarget?.type === 'game-saves' ? (
+      {deleteTarget?.type === 'game' ? (
+        <DeleteGameDialog
+          game={deleteTarget.game}
+          deleting={deleting}
+          error={deleteError}
+          onCancel={cancelDelete}
+          onConfirm={() => void confirmDelete()}
+        />
+      ) : deleteTarget?.type === 'game-saves' ? (
         <DeleteGameSavesDialog
           game={deleteTarget.game}
           deleting={deleting}
