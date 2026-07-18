@@ -1,10 +1,12 @@
-import { Suspense, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   deleteOmniSave,
+  listGames,
   listOmniSaves,
   listRevisions,
   HeadConflictError,
   updateOmniSaveDisplayName,
+  type CatalogGame,
   type OmniSave,
   type Revision,
 } from '../lib/omnisave-api.js';
@@ -16,28 +18,32 @@ import {
   forkTestSave,
 } from '../features/debug/debug-actions.js';
 import { DebugMenu } from '../features/debug/debug-menu.js';
-import { DeleteGameDialog, DeleteSaveDialog } from '../features/games/delete-dialog.js';
+import { DeleteGameSavesDialog, DeleteSaveDialog } from '../features/games/delete-dialog.js';
 import { FixMatchDialog } from '../features/games/fix-match-dialog.js';
-import { clearCatalogCache, primeCatalogGame } from '../features/games/game-catalog-cache.js';
 import { GameDetail } from '../features/games/game-detail.js';
 import {
-  GameDetailSkeleton,
   GameLibrary,
   GameLibrarySkeleton,
-  ResolvedGame,
-  groupOmniSavesByGame,
+  buildLibrary,
   type GameSummary,
 } from '../features/games/game-library.js';
 
 const tokenStorageKey = 'omnisave.api-token';
 
 type DeleteTarget =
-  | { type: 'game'; game: GameSummary }
+  | { type: 'game-saves'; game: GameSummary }
   | { type: 'save'; game: GameSummary; save: OmniSave; name: string };
+
+function upsertCatalogGame(catalog: CatalogGame[], game: CatalogGame) {
+  return catalog.some((candidate) => candidate.id === game.id)
+    ? catalog.map((candidate) => (candidate.id === game.id ? game : candidate))
+    : [...catalog, game];
+}
 
 export function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem(tokenStorageKey) ?? '');
   const [tokenInput, setTokenInput] = useState(token);
+  const [catalog, setCatalog] = useState<CatalogGame[] | null>(null);
   const [saves, setSaves] = useState<OmniSave[]>([]);
   const [selectedGameID, setSelectedGameID] = useState('');
   const [selectedSaveID, setSelectedSaveID] = useState('');
@@ -52,7 +58,7 @@ export function App() {
   const [deleteError, setDeleteError] = useState('');
   const [fixMatchTarget, setFixMatchTarget] = useState<GameSummary>();
 
-  const games = useMemo(() => groupOmniSavesByGame(saves), [saves]);
+  const games = useMemo(() => buildLibrary(catalog, saves), [catalog, saves]);
   const selectedGame = useMemo(
     () => games.find((game) => game.id === selectedGameID),
     [games, selectedGameID]
@@ -62,24 +68,37 @@ export function App() {
     [selectedGame, selectedSaveID]
   );
 
-  const loadSaves = useCallback(async (activeToken: string, signal?: AbortSignal) => {
+  const loadLibrary = useCallback(async (activeToken: string, signal?: AbortSignal) => {
     if (!activeToken) return;
 
     setLoading(true);
     setError('');
-    clearCatalogCache(activeToken);
     try {
-      const nextSaves = await listOmniSaves(activeToken, signal);
+      // The catalog endpoints are optional server-side; without them the
+      // library falls back to games described by their saves.
+      const [nextSaves, nextCatalog] = await Promise.all([
+        listOmniSaves(activeToken, signal),
+        listGames(activeToken, signal).catch((catalogError: unknown) => {
+          if (catalogError instanceof DOMException && catalogError.name === 'AbortError') {
+            throw catalogError;
+          }
+          return null;
+        }),
+      ]);
       setSaves(nextSaves);
+      setCatalog(nextCatalog);
       setSelectedGameID((currentID) =>
-        nextSaves.some((save) => save.game_id === currentID) ? currentID : ''
+        (nextCatalog?.some((game) => game.id === currentID) ?? false) ||
+        nextSaves.some((save) => save.game_id === currentID)
+          ? currentID
+          : ''
       );
       setSelectedSaveID((currentID) =>
         nextSaves.some((save) => save.id === currentID) ? currentID : ''
       );
     } catch (loadError) {
       if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
-      setError(loadError instanceof Error ? loadError.message : 'Could not load OmniSaves.');
+      setError(loadError instanceof Error ? loadError.message : 'Could not load the library.');
     } finally {
       setLoading(false);
     }
@@ -107,9 +126,9 @@ export function App() {
 
   useEffect(() => {
     const controller = new AbortController();
-    void loadSaves(token, controller.signal);
+    void loadLibrary(token, controller.signal);
     return () => controller.abort();
-  }, [loadSaves, token]);
+  }, [loadLibrary, token]);
 
   useEffect(() => {
     setRevisions([]);
@@ -126,15 +145,15 @@ export function App() {
     const nextToken = tokenInput.trim();
     sessionStorage.setItem(tokenStorageKey, nextToken);
     setToken(nextToken);
-    if (nextToken === token) void loadSaves(nextToken);
+    if (nextToken === token) void loadLibrary(nextToken);
   }
 
   function disconnect() {
     sessionStorage.removeItem(tokenStorageKey);
     setToken('');
     setTokenInput('');
+    setCatalog(null);
     setSaves([]);
-    clearCatalogCache(token);
     closeGame();
     setError('');
   }
@@ -152,7 +171,7 @@ export function App() {
   }
 
   async function refresh() {
-    await loadSaves(token);
+    await loadLibrary(token);
     if (selectedSaveID) await loadRevisionHistory(token, selectedSaveID);
   }
 
@@ -166,14 +185,17 @@ export function App() {
         token,
         games.map((game) => game.label)
       );
-      const catalogPromise = created.catalog.catch((catalogError: unknown) => {
-        setError(
-          catalogError instanceof Error ? catalogError.message : 'Could not match the test game.'
-        );
-        return null;
-      });
-      primeCatalogGame(token, created.save.game_id, catalogPromise);
       setSaves((current) => [...current, created.save]);
+      setCatalog((current) => (current ? upsertCatalogGame(current, created.game) : current));
+      created.catalog
+        .then((matched) =>
+          setCatalog((current) => (current ? upsertCatalogGame(current, matched) : current))
+        )
+        .catch((catalogError: unknown) => {
+          setError(
+            catalogError instanceof Error ? catalogError.message : 'Could not match the test game.'
+          );
+        });
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : 'Could not create an OmniSave.');
     } finally {
@@ -192,7 +214,7 @@ export function App() {
         label: selectedGame.label,
         platform: selectedGame.platform,
       });
-      await loadSaves(token);
+      await loadLibrary(token);
       setSelectedSaveID(created.id);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : 'Could not create a save.');
@@ -208,11 +230,11 @@ export function App() {
     setRevisionError('');
     try {
       await createTestRevision(token, selectedSave.id, selectedSave.head_revision_id);
-      await loadSaves(token);
+      await loadLibrary(token);
       await loadRevisionHistory(token, selectedSave.id);
     } catch (createError) {
       if (createError instanceof HeadConflictError) {
-        await loadSaves(token);
+        await loadLibrary(token);
         await loadRevisionHistory(token, selectedSave.id);
       }
       setRevisionError(
@@ -239,7 +261,7 @@ export function App() {
         selectedSave.head_revision_id,
         selectedSave.display_name || 'Save'
       );
-      await loadSaves(token);
+      await loadLibrary(token);
       setSelectedSaveID(result.omnisave.id);
     } catch (createError) {
       setRevisionError(
@@ -258,9 +280,9 @@ export function App() {
     );
   }
 
-  function requestDeleteGame(game: GameSummary) {
+  function requestDeleteGameSaves(game: GameSummary) {
     setDeleteError('');
-    setDeleteTarget({ type: 'game', game });
+    setDeleteTarget({ type: 'game-saves', game });
   }
 
   function requestDeleteSave(save: OmniSave, name: string) {
@@ -282,7 +304,7 @@ export function App() {
     setDeleteError('');
     try {
       const savesToDelete =
-        deleteTarget.type === 'game' ? deleteTarget.game.saves : [deleteTarget.save];
+        deleteTarget.type === 'game-saves' ? deleteTarget.game.saves : [deleteTarget.save];
       for (const save of savesToDelete) {
         await deleteOmniSave(token, save.id);
       }
@@ -292,17 +314,25 @@ export function App() {
         setSelectedSaveID(nextSave?.id ?? '');
       }
       setDeleteTarget(undefined);
-      await loadSaves(token);
+      await loadLibrary(token);
     } catch (deleteFailure) {
       setDeleteError(
         deleteFailure instanceof Error
           ? deleteFailure.message
-          : `Could not delete this ${deleteTarget.type}.`
+          : deleteTarget.type === 'game-saves'
+            ? 'Could not delete these saves.'
+            : 'Could not delete this save.'
       );
     } finally {
       setDeleting(false);
     }
   }
+
+  const librarySummary = catalog
+    ? `${games.length} ${games.length === 1 ? 'game' : 'games'} in the catalog · ${saves.length} ${
+        saves.length === 1 ? 'save' : 'saves'
+      }.`
+    : `${games.length} ${games.length === 1 ? 'game' : 'games'} with saved progress.`;
 
   return (
     <div className="min-h-screen bg-[#111111] text-[#e5e5e5]">
@@ -357,8 +387,10 @@ export function App() {
                 </h1>
                 <p className="mt-1.5 text-sm text-neutral-500">
                   {selectedGame
-                    ? 'Choose a save to inspect its revision history.'
-                    : `${games.length} ${games.length === 1 ? 'game' : 'games'} with saved progress.`}
+                    ? selectedGame.saves.length === 0
+                      ? 'This game has no saves yet.'
+                      : 'Choose a save to inspect its revision history.'
+                    : librarySummary}
                 </p>
               </div>
 
@@ -395,25 +427,19 @@ export function App() {
             ) : null}
 
             {selectedGame ? (
-              <Suspense fallback={<GameDetailSkeleton />}>
-                <ResolvedGame game={selectedGame} token={token}>
-                  {(resolvedGame) => (
-                    <GameDetail
-                      game={resolvedGame}
-                      token={token}
-                      selectedSave={selectedSave}
-                      revisions={revisions}
-                      loadingRevisions={loadingRevisions}
-                      revisionError={revisionError}
-                      onSelectSave={(save) => setSelectedSaveID(save.id)}
-                      onRequestDelete={requestDeleteSave}
-                      onRenameSave={renameSave}
-                    />
-                  )}
-                </ResolvedGame>
-              </Suspense>
+              <GameDetail
+                game={selectedGame}
+                token={token}
+                selectedSave={selectedSave}
+                revisions={revisions}
+                loadingRevisions={loadingRevisions}
+                revisionError={revisionError}
+                onSelectSave={(save) => setSelectedSaveID(save.id)}
+                onRequestDelete={requestDeleteSave}
+                onRenameSave={renameSave}
+              />
             ) : (
-              <section className="mt-8" aria-label="Games with saves" aria-busy={loading}>
+              <section className="mt-8" aria-label="Game library" aria-busy={loading}>
                 {loading && games.length === 0 ? (
                   <GameLibrarySkeleton />
                 ) : (
@@ -422,7 +448,7 @@ export function App() {
                     token={token}
                     onOpenGame={openGame}
                     onRequestFixMatch={setFixMatchTarget}
-                    onRequestDelete={requestDeleteGame}
+                    onRequestDeleteSaves={requestDeleteGameSaves}
                   />
                 )}
               </section>
@@ -430,8 +456,8 @@ export function App() {
           </>
         )}
       </main>
-      {deleteTarget?.type === 'game' ? (
-        <DeleteGameDialog
+      {deleteTarget?.type === 'game-saves' ? (
+        <DeleteGameSavesDialog
           game={deleteTarget.game}
           deleting={deleting}
           error={deleteError}
@@ -453,8 +479,7 @@ export function App() {
           token={token}
           onCancel={() => setFixMatchTarget(undefined)}
           onMatched={(game) => {
-            primeCatalogGame(token, game.id, Promise.resolve(game));
-            setSaves((current) => [...current]);
+            setCatalog((current) => (current ? upsertCatalogGame(current, game) : current));
             setFixMatchTarget(undefined);
           }}
         />
