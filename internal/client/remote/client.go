@@ -1,4 +1,4 @@
-// Package remote accesses the OmniSave server from an installed client.
+// Package remote accesses the Omnisave server from an installed client.
 package remote
 
 import (
@@ -18,7 +18,7 @@ import (
 
 const maxResponseBody = 1 << 20
 
-// Client is an authenticated OmniSave API client.
+// Client is an authenticated Omnisave API client.
 type Client struct {
 	baseURL    string
 	token      string
@@ -39,7 +39,7 @@ func (c *Client) ResolveGame(ctx context.Context, input catalog.ResolveGame) (*c
 	request.Header.Set("Content-Type", "application/json")
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("contact OmniSave server: %w", err)
+		return nil, fmt.Errorf("contact Omnisave server: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
@@ -59,19 +59,19 @@ type ResponseError struct {
 }
 
 func (e *ResponseError) Error() string {
-	return fmt.Sprintf("OmniSave server returned %s", http.StatusText(e.StatusCode))
+	return fmt.Sprintf("Omnisave server returned %s", http.StatusText(e.StatusCode))
 }
 
-// New creates a client for one OmniSave server.
+// New creates a client for one Omnisave server.
 func New(baseURL, token string, httpClient *http.Client) (*Client, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" ||
 		(parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return nil, fmt.Errorf("invalid OmniSave server URL")
+		return nil, fmt.Errorf("invalid Omnisave server URL")
 	}
 	if strings.TrimSpace(token) == "" {
-		return nil, fmt.Errorf("OmniSave API token is required")
+		return nil, fmt.Errorf("Omnisave API token is required")
 	}
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 15 * time.Second}
@@ -79,8 +79,8 @@ func New(baseURL, token string, httpClient *http.Client) (*Client, error) {
 	return &Client{baseURL: baseURL, token: token, httpClient: httpClient}, nil
 }
 
-// ListOmniSaves returns the server records available as binding destinations.
-func (c *Client) ListOmniSaves(ctx context.Context) ([]omnisave.OmniSave, error) {
+// ListOmnisaves returns the server records available as binding destinations.
+func (c *Client) ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/omnisaves", nil)
 	if err != nil {
 		return nil, err
@@ -88,17 +88,17 @@ func (c *Client) ListOmniSaves(ctx context.Context) ([]omnisave.OmniSave, error)
 	request.Header.Set("Authorization", "Bearer "+c.token)
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("contact OmniSave server: %w", err)
+		return nil, fmt.Errorf("contact Omnisave server: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
 		return nil, &ResponseError{StatusCode: response.StatusCode}
 	}
-	var saves []omnisave.OmniSave
+	var saves []omnisave.Omnisave
 	decoder := json.NewDecoder(io.LimitReader(response.Body, maxResponseBody))
 	if err := decoder.Decode(&saves); err != nil {
-		return nil, fmt.Errorf("decode OmniSave list: %w", err)
+		return nil, fmt.Errorf("decode Omnisave list: %w", err)
 	}
 	return saves, nil
 }

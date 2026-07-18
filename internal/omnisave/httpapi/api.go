@@ -1,4 +1,4 @@
-// Package httpapi exposes the OmniSave service over HTTP.
+// Package httpapi exposes the Omnisave service over HTTP.
 package httpapi
 
 import (
@@ -55,7 +55,7 @@ func New(saves omnisave.Service, catalogs ...catalog.Service) http.Handler {
 }
 
 func (a *API) create(w http.ResponseWriter, r *http.Request) {
-	var input omnisave.CreateOmniSave
+	var input omnisave.CreateOmnisave
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, err)
 		return
@@ -76,7 +76,7 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if saves == nil {
-		saves = []omnisave.OmniSave{}
+		saves = []omnisave.Omnisave{}
 	}
 	writeJSON(w, http.StatusOK, saves)
 }
@@ -91,7 +91,7 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) update(w http.ResponseWriter, r *http.Request) {
-	var input omnisave.UpdateOmniSave
+	var input omnisave.UpdateOmnisave
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, err)
 		return
@@ -123,7 +123,7 @@ func (a *API) addRevision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	w.Header().Set("Location", "/api/v1/omnisaves/"+revision.OmniSaveID+"/revisions/"+revision.ID)
+	w.Header().Set("Location", "/api/v1/omnisaves/"+revision.OmnisaveID+"/revisions/"+revision.ID)
 	writeJSON(w, http.StatusCreated, revision)
 }
 
@@ -149,7 +149,7 @@ func (a *API) listRevisions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) fork(w http.ResponseWriter, r *http.Request) {
-	var input omnisave.ForkOmniSave
+	var input omnisave.ForkOmnisave
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, err)
 		return
@@ -159,7 +159,7 @@ func (a *API) fork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	w.Header().Set("Location", "/api/v1/omnisaves/"+result.OmniSave.ID)
+	w.Header().Set("Location", "/api/v1/omnisaves/"+result.Omnisave.ID)
 	writeJSON(w, http.StatusCreated, result)
 }
 

@@ -138,7 +138,7 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("OmniSave API listening on %s", config.ListenAddr)
+	log.Printf("Omnisave API listening on %s", config.ListenAddr)
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("server: %v", err)
 	}

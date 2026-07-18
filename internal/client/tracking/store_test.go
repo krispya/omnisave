@@ -39,7 +39,7 @@ func TestTrackingSelectionsSurviveRestartsAndPreserveUnavailableGames(t *testing
 	}
 }
 
-func TestOneLocalSaveBindsToOneOmniSaveWhileMachinesCanShareIt(t *testing.T) {
+func TestOneLocalSaveBindsToOneOmnisaveWhileMachinesCanShareIt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "client.json")
 	store := tracking.NewStore(path)
 	state := tracking.NewState()
@@ -68,11 +68,11 @@ func TestOneLocalSaveBindsToOneOmniSaveWhileMachinesCanShareIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	binding, ok := reloaded.BindingFor(local)
-	if !ok || binding.OmniSaveID != "save-b" {
+	if !ok || binding.OmnisaveID != "save-b" {
 		t.Fatalf("expected rebinding to replace the local save's destination, got %+v", reloaded.Bindings)
 	}
 	if binding.LastSyncedRevisionID != nil {
-		t.Fatal("expected rebinding not to carry a sync baseline from the old OmniSave")
+		t.Fatal("expected rebinding not to carry a sync baseline from the old Omnisave")
 	}
 
 	otherMachine := tracking.NewState()
@@ -84,8 +84,8 @@ func TestOneLocalSaveBindsToOneOmniSaveWhileMachinesCanShareIt(t *testing.T) {
 	}, "save-b"); err != nil {
 		t.Fatal(err)
 	}
-	if otherMachine.Bindings[0].OmniSaveID != binding.OmniSaveID {
-		t.Fatal("expected independent machines to be allowed to target the same OmniSave")
+	if otherMachine.Bindings[0].OmnisaveID != binding.OmnisaveID {
+		t.Fatal("expected independent machines to be allowed to target the same Omnisave")
 	}
 }
 

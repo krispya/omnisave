@@ -47,8 +47,8 @@ func run(ctx context.Context, arguments []string) error {
 func runBind(ctx context.Context, scanner *client.Scanner, arguments []string) error {
 	flags := flag.NewFlagSet("bind", flag.ContinueOnError)
 	statePath := flags.String("state", "", "path to local tracking state")
-	serverURL := flags.String("server", environmentOr("OMNISAVE_SERVER_URL", "http://localhost:8080"), "OmniSave server URL")
-	token := flags.String("token", os.Getenv("OMNISAVE_API_TOKEN"), "OmniSave API token")
+	serverURL := flags.String("server", environmentOr("OMNISAVE_SERVER_URL", "http://localhost:8080"), "Omnisave server URL")
+	token := flags.String("token", os.Getenv("OMNISAVE_API_TOKEN"), "Omnisave API token")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -79,7 +79,7 @@ func runBind(ctx context.Context, scanner *client.Scanner, arguments []string) e
 		fmt.Println("No saves were discovered for tracked games. Run track first or create a save in the game.")
 		return nil
 	}
-	remoteSaves, err := server.ListOmniSaves(ctx)
+	remoteSaves, err := server.ListOmnisaves(ctx)
 	if err != nil {
 		return err
 	}
@@ -87,20 +87,20 @@ func runBind(ctx context.Context, scanner *client.Scanner, arguments []string) e
 	if errors.Is(err, tui.ErrAborted) {
 		return nil
 	}
-	if errors.Is(err, tui.ErrNoOmniSaves) {
-		fmt.Println("The server has no OmniSaves to bind. Create one in the dashboard first.")
+	if errors.Is(err, tui.ErrNoOmnisaves) {
+		fmt.Println("The server has no Omnisaves to bind. Create one in the dashboard first.")
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if err := state.Bind(selection.Local, selection.OmniSave.ID); err != nil {
+	if err := state.Bind(selection.Local, selection.Omnisave.ID); err != nil {
 		return err
 	}
 	if err := store.Save(state); err != nil {
 		return err
 	}
-	fmt.Printf("✓ %s (%s) will sync with %s.\n", selection.Local.GameTitle, selection.Local.Kind, selection.OmniSave.DisplayName)
+	fmt.Printf("✓ %s (%s) will sync with %s.\n", selection.Local.GameTitle, selection.Local.Kind, selection.Omnisave.DisplayName)
 	return nil
 }
 
@@ -194,7 +194,7 @@ func runTrack(ctx context.Context, scanner *client.Scanner, arguments []string) 
 }
 
 func printUsage() {
-	fmt.Println(`OmniSave client
+	fmt.Println(`Omnisave client
 
 Usage:
   omnisave-client scan [--verbose]
@@ -204,5 +204,5 @@ Usage:
 Commands:
   scan   Discover installed targets, games, and saves without changing state
   track  Choose which discovered games should be synchronized
-  bind   Choose which OmniSave a discovered local save should synchronize with`)
+  bind   Choose which Omnisave a discovered local save should synchronize with`)
 }

@@ -1,4 +1,4 @@
-export type OmniSave = {
+export type Omnisave = {
   id: string;
   game_id: string;
   display_name: string;
@@ -147,8 +147,8 @@ async function requestBlob(path: string, token: string, signal?: AbortSignal) {
   return response.blob();
 }
 
-export function listOmniSaves(token: string, signal?: AbortSignal) {
-  return request<OmniSave[]>('/api/v1/omnisaves', token, { signal });
+export function listOmnisaves(token: string, signal?: AbortSignal) {
+  return request<Omnisave[]>('/api/v1/omnisaves', token, { signal });
 }
 
 export function listGames(token: string, signal?: AbortSignal) {
@@ -208,23 +208,23 @@ export function fixGameMatch(token: string, gameID: string, selectionToken: stri
   });
 }
 
-export function deleteOmniSave(token: string, omniSaveID: string) {
-  return request<void>(`/api/v1/omnisaves/${omniSaveID}`, token, { method: 'DELETE' });
+export function deleteOmnisave(token: string, omnisaveID: string) {
+  return request<void>(`/api/v1/omnisaves/${omnisaveID}`, token, { method: 'DELETE' });
 }
 
 export function deleteGame(token: string, gameID: string) {
   return request<void>(`/api/v1/games/${encodeURIComponent(gameID)}`, token, { method: 'DELETE' });
 }
 
-export function updateOmniSaveDisplayName(token: string, omniSaveID: string, displayName: string) {
-  return request<OmniSave>(`/api/v1/omnisaves/${omniSaveID}`, token, {
+export function updateOmnisaveDisplayName(token: string, omnisaveID: string, displayName: string) {
+  return request<Omnisave>(`/api/v1/omnisaves/${omnisaveID}`, token, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ display_name: displayName }),
   });
 }
 
-export function createOmniSave(
+export function createOmnisave(
   token: string,
   input: {
     gameID: string;
@@ -232,7 +232,7 @@ export function createOmniSave(
     metadata?: Record<string, string>;
   }
 ) {
-  return request<OmniSave>('/api/v1/omnisaves', token, {
+  return request<Omnisave>('/api/v1/omnisaves', token, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -243,13 +243,13 @@ export function createOmniSave(
   });
 }
 
-export function listRevisions(token: string, omniSaveID: string, signal?: AbortSignal) {
-  return request<Revision[]>(`/api/v1/omnisaves/${omniSaveID}/revisions`, token, { signal });
+export function listRevisions(token: string, omnisaveID: string, signal?: AbortSignal) {
+  return request<Revision[]>(`/api/v1/omnisaves/${omnisaveID}/revisions`, token, { signal });
 }
 
 export function commitRevision(
   token: string,
-  omniSaveID: string,
+  omnisaveID: string,
   input: {
     expectedHeadID: string | null;
     upserts?: CommitFile[];
@@ -257,7 +257,7 @@ export function commitRevision(
     metadata?: Record<string, string>;
   }
 ) {
-  return request<Revision>(`/api/v1/omnisaves/${omniSaveID}/revisions`, token, {
+  return request<Revision>(`/api/v1/omnisaves/${omnisaveID}/revisions`, token, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -269,13 +269,13 @@ export function commitRevision(
   });
 }
 
-export function forkOmniSave(
+export function forkOmnisave(
   token: string,
-  omniSaveID: string,
+  omnisaveID: string,
   input: { revisionID: string; displayName?: string; metadata?: Record<string, string> }
 ) {
-  return request<{ omnisave: OmniSave; revision: Revision }>(
-    `/api/v1/omnisaves/${omniSaveID}/forks`,
+  return request<{ omnisave: Omnisave; revision: Revision }>(
+    `/api/v1/omnisaves/${omnisaveID}/forks`,
     token,
     {
       method: 'POST',

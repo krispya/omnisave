@@ -5,7 +5,7 @@ import {
   type GameFingerprint,
   type GameIdentifier,
   type GameMedia,
-  type OmniSave,
+  type Omnisave,
 } from '../../lib/omnisave-api.js';
 import { createPromiseCache } from '../cache/promise-cache.js';
 import { DeleteOptions } from './delete-options.js';
@@ -24,7 +24,7 @@ export type GameSummary = {
   metadata?: Record<string, unknown>;
   refreshedAt?: string;
   media: GameMedia[];
-  saves: OmniSave[];
+  saves: Omnisave[];
   inLibrary: boolean;
 };
 
@@ -33,8 +33,8 @@ const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: tr
 // The server's Library is the source of truth: every Game appears whether or
 // not it has saves. Saves whose game the server does not list (games endpoints
 // disabled, or out of sync) still render, described by their own metadata.
-export function buildLibrary(catalog: CatalogGame[] | null, saves: OmniSave[]): GameSummary[] {
-  const savesByGame = new Map<string, OmniSave[]>();
+export function buildLibrary(catalog: CatalogGame[] | null, saves: Omnisave[]): GameSummary[] {
+  const savesByGame = new Map<string, Omnisave[]>();
   for (const save of saves) {
     savesByGame.set(save.game_id, [...(savesByGame.get(save.game_id) ?? []), save]);
   }

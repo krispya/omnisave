@@ -22,14 +22,14 @@ type HeadConflict struct {
 func (e *HeadConflict) Error() string { return ErrConflict.Error() }
 func (e *HeadConflict) Unwrap() error { return ErrConflict }
 
-// OmniSaveRepository persists save records without applying application rules.
-type OmniSaveRepository interface {
-	InsertOmniSave(ctx context.Context, save omnisave.OmniSave) error
-	ListOmniSaves(ctx context.Context) ([]omnisave.OmniSave, error)
-	GetOmniSave(ctx context.Context, id string) (*omnisave.OmniSave, error)
-	UpdateOmniSaveDisplayName(ctx context.Context, id, displayName string) error
-	DeleteOmniSave(ctx context.Context, id string) error
-	ForkOmniSave(ctx context.Context, save omnisave.OmniSave, initial omnisave.Revision) error
+// OmnisaveRepository persists save records without applying application rules.
+type OmnisaveRepository interface {
+	InsertOmnisave(ctx context.Context, save omnisave.Omnisave) error
+	ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, error)
+	GetOmnisave(ctx context.Context, id string) (*omnisave.Omnisave, error)
+	UpdateOmnisaveDisplayName(ctx context.Context, id, displayName string) error
+	DeleteOmnisave(ctx context.Context, id string) error
+	ForkOmnisave(ctx context.Context, save omnisave.Omnisave, initial omnisave.Revision) error
 
 	CommitRevision(ctx context.Context, expectedHeadID *string, revision omnisave.Revision) error
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*omnisave.Revision, error)
@@ -69,7 +69,7 @@ type ArtifactStore interface {
 
 // Repository provides all persistence used by the server.
 type Repository interface {
-	OmniSaveRepository
+	OmnisaveRepository
 	CatalogRepository
 	ArtifactStore
 }

@@ -17,7 +17,7 @@ import (
 
 // MemoryRepository stores test data in memory without applying service rules.
 type MemoryRepository struct {
-	saves     map[string]omnisave.OmniSave
+	saves     map[string]omnisave.Omnisave
 	revisions map[string][]omnisave.Revision
 	blobs     map[string][]byte
 	games     map[string]catalog.Game
@@ -27,7 +27,7 @@ type MemoryRepository struct {
 
 func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{
-		saves:     make(map[string]omnisave.OmniSave),
+		saves:     make(map[string]omnisave.Omnisave),
 		revisions: make(map[string][]omnisave.Revision),
 		blobs:     make(map[string][]byte),
 		games:     make(map[string]catalog.Game),
@@ -36,20 +36,20 @@ func NewMemoryRepository() *MemoryRepository {
 	}
 }
 
-func (r *MemoryRepository) InsertOmniSave(_ context.Context, save omnisave.OmniSave) error {
+func (r *MemoryRepository) InsertOmnisave(_ context.Context, save omnisave.Omnisave) error {
 	r.saves[save.ID] = save
 	return nil
 }
 
-func (r *MemoryRepository) ListOmniSaves(context.Context) ([]omnisave.OmniSave, error) {
-	result := make([]omnisave.OmniSave, 0, len(r.saves))
+func (r *MemoryRepository) ListOmnisaves(context.Context) ([]omnisave.Omnisave, error) {
+	result := make([]omnisave.Omnisave, 0, len(r.saves))
 	for _, save := range r.saves {
 		result = append(result, save)
 	}
 	return result, nil
 }
 
-func (r *MemoryRepository) GetOmniSave(_ context.Context, id string) (*omnisave.OmniSave, error) {
+func (r *MemoryRepository) GetOmnisave(_ context.Context, id string) (*omnisave.Omnisave, error) {
 	save, ok := r.saves[id]
 	if !ok {
 		return nil, storage.ErrNotFound
@@ -57,7 +57,7 @@ func (r *MemoryRepository) GetOmniSave(_ context.Context, id string) (*omnisave.
 	return &save, nil
 }
 
-func (r *MemoryRepository) UpdateOmniSaveDisplayName(_ context.Context, id, displayName string) error {
+func (r *MemoryRepository) UpdateOmnisaveDisplayName(_ context.Context, id, displayName string) error {
 	save, ok := r.saves[id]
 	if !ok {
 		return storage.ErrNotFound
@@ -67,7 +67,7 @@ func (r *MemoryRepository) UpdateOmniSaveDisplayName(_ context.Context, id, disp
 	return nil
 }
 
-func (r *MemoryRepository) DeleteOmniSave(_ context.Context, id string) error {
+func (r *MemoryRepository) DeleteOmnisave(_ context.Context, id string) error {
 	if _, ok := r.saves[id]; !ok {
 		return storage.ErrNotFound
 	}
@@ -110,7 +110,7 @@ func (r *MemoryRepository) DeleteOmniSave(_ context.Context, id string) error {
 	return nil
 }
 
-func (r *MemoryRepository) ForkOmniSave(_ context.Context, save omnisave.OmniSave, initial omnisave.Revision) error {
+func (r *MemoryRepository) ForkOmnisave(_ context.Context, save omnisave.Omnisave, initial omnisave.Revision) error {
 	if _, exists := r.saves[save.ID]; exists {
 		return storage.ErrConflict
 	}
@@ -120,16 +120,16 @@ func (r *MemoryRepository) ForkOmniSave(_ context.Context, save omnisave.OmniSav
 }
 
 func (r *MemoryRepository) CommitRevision(_ context.Context, expectedHeadID *string, revision omnisave.Revision) error {
-	save, ok := r.saves[revision.OmniSaveID]
+	save, ok := r.saves[revision.OmnisaveID]
 	if !ok {
 		return storage.ErrNotFound
 	}
 	if !equalStringPointers(save.HeadRevisionID, expectedHeadID) {
 		return &storage.HeadConflict{ActualHeadID: copyStringPointer(save.HeadRevisionID)}
 	}
-	r.revisions[revision.OmniSaveID] = append(r.revisions[revision.OmniSaveID], revision)
+	r.revisions[revision.OmnisaveID] = append(r.revisions[revision.OmnisaveID], revision)
 	save.HeadRevisionID = &revision.ID
-	r.saves[revision.OmniSaveID] = save
+	r.saves[revision.OmnisaveID] = save
 	return nil
 }
 
@@ -259,7 +259,7 @@ func (r *MemoryRepository) DeleteGame(ctx context.Context, id string) error {
 	}
 	for saveID, save := range r.saves {
 		if save.GameID == id {
-			r.DeleteOmniSave(ctx, saveID)
+			r.DeleteOmnisave(ctx, saveID)
 		}
 	}
 	delete(r.games, id)

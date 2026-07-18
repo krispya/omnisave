@@ -102,7 +102,7 @@ export function DeleteGameSavesDialog({ game, ...state }: DeleteStateProps & { g
       description={
         <>
           This permanently deletes {game.saves.length}{' '}
-          {game.saves.length === 1 ? 'OmniSave' : 'OmniSaves'}, their revision history, and any
+          {game.saves.length === 1 ? 'Omnisave' : 'Omnisaves'}, their revision history, and any
           unshared artifacts. {game.label} stays in your library. This cannot be undone.
         </>
       }

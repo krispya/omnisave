@@ -1,4 +1,4 @@
-import type { OmniSave } from '../../lib/omnisave-api.js';
+import type { Omnisave } from '../../lib/omnisave-api.js';
 import { useDismissibleDetails } from '../../lib/use-dismissible-details.js';
 import type { GameSummary } from '../games/game-library.js';
 import { defaultSaveName, displaySaveName } from '../games/save-name.js';
@@ -7,7 +7,7 @@ type DebugAction = 'game' | 'save' | 'revision' | 'fork' | null;
 
 type DebugMenuProps = {
   game?: GameSummary;
-  selectedSave?: OmniSave;
+  selectedSave?: Omnisave;
   action: DebugAction;
   revisionHistoryAvailable: boolean;
   canFork: boolean;

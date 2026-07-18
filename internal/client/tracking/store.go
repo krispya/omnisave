@@ -30,13 +30,13 @@ type LocalSave struct {
 	Size      int64
 }
 
-// Binding maps one local save to one independently versioned OmniSave.
+// Binding maps one local save to one independently versioned Omnisave.
 type Binding struct {
 	Adapter              string  `json:"adapter"`
 	TargetID             string  `json:"target_id"`
 	LocalSaveID          string  `json:"local_save_id"`
 	LocalGameID          string  `json:"local_game_id"`
-	OmniSaveID           string  `json:"omnisave_id"`
+	OmnisaveID           string  `json:"omnisave_id"`
 	LastSyncedRevisionID *string `json:"last_synced_revision_id"`
 }
 
@@ -172,7 +172,7 @@ func (s *State) ApplyVisible(visible []Game, selectedIDs []string) error {
 	return nil
 }
 
-// Bind maps a discovered local save to an OmniSave and clears any old sync baseline.
+// Bind maps a discovered local save to an Omnisave and clears any old sync baseline.
 func (s *State) Bind(local LocalSave, omnisaveID string) error {
 	if local.ID == "" || local.Adapter == "" || local.TargetID == "" || local.GameID == "" || omnisaveID == "" {
 		return fmt.Errorf("binding identities must not be empty")
@@ -182,7 +182,7 @@ func (s *State) Bind(local LocalSave, omnisaveID string) error {
 		TargetID:    local.TargetID,
 		LocalSaveID: local.ID,
 		LocalGameID: local.GameID,
-		OmniSaveID:  omnisaveID,
+		OmnisaveID:  omnisaveID,
 	}
 	for index := range s.Bindings {
 		if sameLocalSave(s.Bindings[index], binding) {
@@ -213,7 +213,7 @@ func (s *State) RecordSynced(local LocalSave, omnisaveID, revisionID string) err
 	probe := Binding{Adapter: local.Adapter, TargetID: local.TargetID, LocalSaveID: local.ID}
 	for index := range s.Bindings {
 		if sameLocalSave(s.Bindings[index], probe) {
-			if s.Bindings[index].OmniSaveID != omnisaveID {
+			if s.Bindings[index].OmnisaveID != omnisaveID {
 				return fmt.Errorf("local save binding changed")
 			}
 			s.Bindings[index].LastSyncedRevisionID = &revisionID
@@ -227,7 +227,7 @@ func (s State) validateBindings() error {
 	seen := make(map[string]bool, len(s.Bindings))
 	for _, binding := range s.Bindings {
 		if binding.Adapter == "" || binding.TargetID == "" || binding.LocalSaveID == "" ||
-			binding.LocalGameID == "" || binding.OmniSaveID == "" {
+			binding.LocalGameID == "" || binding.OmnisaveID == "" {
 			return fmt.Errorf("binding identities must not be empty")
 		}
 		if binding.LastSyncedRevisionID != nil && *binding.LastSyncedRevisionID == "" {

@@ -29,22 +29,22 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	saves := omnisaveservice.New(repository)
-	save, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald-usa"})
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	displayName := "Before the final boss"
-	if _, err := saves.Update(ctx, save.ID, omnisave.UpdateOmniSave{DisplayName: &displayName}); err != nil {
+	if _, err := saves.Update(ctx, save.ID, omnisave.UpdateOmnisave{DisplayName: &displayName}); err != nil {
 		t.Fatal(err)
 	}
-	artifact := storeOmniSaveArtifact(t, ctx, saves, "game-save contents")
+	artifact := storeOmnisaveArtifact(t, ctx, saves, "game-save contents")
 	revision, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
 		Upserts: []omnisave.RevisionFile{{Path: "pokemon.sav", Artifact: artifact}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	fork, err := saves.Fork(ctx, save.ID, omnisave.ForkOmniSave{
+	fork, err := saves.Fork(ctx, save.ID, omnisave.ForkOmnisave{
 		RevisionID: revision.ID, DisplayName: "Alternate route",
 	})
 	if err != nil {
@@ -79,11 +79,11 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 	if err != nil || stored.HeadRevisionID == nil || *stored.HeadRevisionID != revision.ID {
 		t.Fatalf("unexpected head after restart: %v, %v", stored, err)
 	}
-	storedFork, err := saves.Get(ctx, fork.OmniSave.ID)
+	storedFork, err := saves.Get(ctx, fork.Omnisave.ID)
 	if err != nil || storedFork.ForkedFrom == nil || storedFork.ForkedFrom.RevisionID != revision.ID {
 		t.Fatalf("unexpected fork after restart: %v, %v", storedFork, err)
 	}
-	forkHistory, err := saves.ListRevisions(ctx, fork.OmniSave.ID)
+	forkHistory, err := saves.ListRevisions(ctx, fork.Omnisave.ID)
 	if err != nil || len(forkHistory) != 1 || len(forkHistory[0].Files) != 1 {
 		t.Fatalf("unexpected fork history after restart: %v, %v", forkHistory, err)
 	}
@@ -101,7 +101,7 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 	}
 }
 
-func TestDeleteOmniSaveKeepsSharedArtifacts(t *testing.T) {
+func TestDeleteOmnisaveKeepsSharedArtifacts(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
 	repository, err := sqlite.Open(
@@ -114,15 +114,15 @@ func TestDeleteOmniSaveKeepsSharedArtifacts(t *testing.T) {
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 
-	first, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald"})
+	first, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald"})
+	second, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifact := storeOmniSaveArtifact(t, ctx, saves, "shared contents")
+	artifact := storeOmnisaveArtifact(t, ctx, saves, "shared contents")
 	_, err = saves.CommitRevision(ctx, first.ID, omnisave.CreateRevision{
 		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
 	})
@@ -161,11 +161,11 @@ func TestCommitAndRefMovementAreAtomic(t *testing.T) {
 	}
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
-	save, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald"})
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifact := storeOmniSaveArtifact(t, ctx, saves, "snapshot")
+	artifact := storeOmnisaveArtifact(t, ctx, saves, "snapshot")
 	root, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
 		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
 	})
@@ -298,7 +298,7 @@ func TestCatalogIdentityClaimsAreAtomic(t *testing.T) {
 	}
 }
 
-// Deleting a game removes the game record, every OmniSave that references it
+// Deleting a game removes the game record, every Omnisave that references it
 // along with their revision history, and any artifacts no other record uses.
 func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 	ctx := context.Background()
@@ -335,17 +335,17 @@ func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	doomed, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: game.ID})
+	doomed, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: game.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	shared := storeOmniSaveArtifact(t, ctx, saves, "shared contents")
+	shared := storeOmnisaveArtifact(t, ctx, saves, "shared contents")
 	if _, err := saves.CommitRevision(ctx, doomed.ID, omnisave.CreateRevision{
 		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: shared}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	survivor, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "another-game"})
+	survivor, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "another-game"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +381,7 @@ func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 	}
 }
 
-func storeOmniSaveArtifact(t *testing.T, ctx context.Context, saves omnisave.Service, contents string) omnisave.Artifact {
+func storeOmnisaveArtifact(t *testing.T, ctx context.Context, saves omnisave.Service, contents string) omnisave.Artifact {
 	t.Helper()
 	sum := sha256.Sum256([]byte(contents))
 	artifact := omnisave.Artifact{

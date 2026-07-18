@@ -28,7 +28,7 @@ func TestNetworkClientStory(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("create returned %d: %s", response.Code, response.Body.String())
 	}
-	var save omnisave.OmniSave
+	var save omnisave.Omnisave
 	decodeResponse(t, response, &save)
 	missingBody := bytes.NewBufferString(`{
 		"expected_head_id":null,
@@ -81,7 +81,7 @@ func TestNetworkClientStory(t *testing.T) {
 	}
 
 	response = request(t, handler, http.MethodGet, "/api/v1/omnisaves/"+save.ID, "", nil)
-	var storedSave omnisave.OmniSave
+	var storedSave omnisave.Omnisave
 	decodeResponse(t, response, &storedSave)
 	if storedSave.HeadRevisionID == nil || *storedSave.HeadRevisionID != revision.ID {
 		t.Fatalf("unexpected head: %v", storedSave.HeadRevisionID)
@@ -101,7 +101,7 @@ func TestNetworkClientStory(t *testing.T) {
 	}
 	var fork omnisave.ForkResult
 	decodeResponse(t, response, &fork)
-	if fork.OmniSave.ForkedFrom == nil || fork.OmniSave.ForkedFrom.RevisionID != revision.ID ||
+	if fork.Omnisave.ForkedFrom == nil || fork.Omnisave.ForkedFrom.RevisionID != revision.ID ||
 		len(fork.Revision.Files) != 2 {
 		t.Fatalf("unexpected fork: %v", fork)
 	}
@@ -129,7 +129,7 @@ func TestNetworkClientStory(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("fork should retain the shared artifact: %d", response.Code)
 	}
-	response = request(t, handler, http.MethodDelete, "/api/v1/omnisaves/"+fork.OmniSave.ID, "", nil)
+	response = request(t, handler, http.MethodDelete, "/api/v1/omnisaves/"+fork.Omnisave.ID, "", nil)
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("delete fork returned %d: %s", response.Code, response.Body.String())
 	}
@@ -156,7 +156,7 @@ func uploadArtifact(t *testing.T, handler http.Handler, contents string) omnisav
 	return artifact
 }
 
-func TestUpdateOmniSaveDisplayName(t *testing.T) {
+func TestUpdateOmnisaveDisplayName(t *testing.T) {
 	handler := httpapi.New(omnisaveservice.New(storagetest.NewMemoryRepository()))
 
 	response := request(t, handler, http.MethodPost, "/api/v1/omnisaves", "application/json",
@@ -164,7 +164,7 @@ func TestUpdateOmniSaveDisplayName(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("create returned %d: %s", response.Code, response.Body.String())
 	}
-	var created omnisave.OmniSave
+	var created omnisave.Omnisave
 	decodeResponse(t, response, &created)
 
 	response = request(t, handler, http.MethodPatch, "/api/v1/omnisaves/"+created.ID, "application/json",
@@ -172,14 +172,14 @@ func TestUpdateOmniSaveDisplayName(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("update returned %d: %s", response.Code, response.Body.String())
 	}
-	var updated omnisave.OmniSave
+	var updated omnisave.Omnisave
 	decodeResponse(t, response, &updated)
 	if updated.DisplayName != "Before the final boss" {
 		t.Fatalf("unexpected updated save: %v", updated)
 	}
 
 	response = request(t, handler, http.MethodGet, "/api/v1/omnisaves/"+created.ID, "", nil)
-	var stored omnisave.OmniSave
+	var stored omnisave.Omnisave
 	decodeResponse(t, response, &stored)
 	if stored.DisplayName != "Before the final boss" {
 		t.Fatalf("display name was not persisted: %v", stored)

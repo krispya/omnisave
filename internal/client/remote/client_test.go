@@ -11,7 +11,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
 )
 
-func TestClientListsOmniSavesForBinding(t *testing.T) {
+func TestClientListsOmnisavesForBinding(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.Path != "/api/v1/omnisaves" {
 			t.Fatalf("unexpected path: %s", request.URL.Path)
@@ -30,7 +30,7 @@ func TestClientListsOmniSavesForBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saves, err := client.ListOmniSaves(context.Background())
+	saves, err := client.ListOmnisaves(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

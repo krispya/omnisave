@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   deleteGame,
-  deleteOmniSave,
+  deleteOmnisave,
   listGames,
-  listOmniSaves,
+  listOmnisaves,
   listRevisions,
   HeadConflictError,
-  updateOmniSaveDisplayName,
+  updateOmnisaveDisplayName,
   type CatalogGame,
-  type OmniSave,
+  type Omnisave,
   type Revision,
 } from '../lib/omnisave-api.js';
 import { ConnectForm } from '../features/connection/connect-form.js';
 import {
-  createRandomTestOmniSave,
+  createRandomTestOmnisave,
   createTestRevision,
   createTestSave,
   forkTestSave,
@@ -38,7 +38,7 @@ const tokenStorageKey = 'omnisave.api-token';
 type DeleteTarget =
   | { type: 'game'; game: GameSummary }
   | { type: 'game-saves'; game: GameSummary }
-  | { type: 'save'; game: GameSummary; save: OmniSave; name: string };
+  | { type: 'save'; game: GameSummary; save: Omnisave; name: string };
 
 function upsertCatalogGame(catalog: CatalogGame[], game: CatalogGame) {
   return catalog.some((candidate) => candidate.id === game.id)
@@ -50,7 +50,7 @@ export function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem(tokenStorageKey) ?? '');
   const [tokenInput, setTokenInput] = useState(token);
   const [catalog, setCatalog] = useState<CatalogGame[] | null>(null);
-  const [saves, setSaves] = useState<OmniSave[]>([]);
+  const [saves, setSaves] = useState<Omnisave[]>([]);
   const [selectedGameID, setSelectedGameID] = useState('');
   const [selectedSaveID, setSelectedSaveID] = useState('');
   const [revisions, setRevisions] = useState<Revision[]>([]);
@@ -83,7 +83,7 @@ export function App() {
       // The games endpoints are optional server-side; without them the
       // library falls back to games described by their saves.
       const [nextSaves, nextCatalog] = await Promise.all([
-        listOmniSaves(activeToken, signal),
+        listOmnisaves(activeToken, signal),
         listGames(activeToken, signal).catch((catalogError: unknown) => {
           if (catalogError instanceof DOMException && catalogError.name === 'AbortError') {
             throw catalogError;
@@ -187,7 +187,7 @@ export function App() {
     setDebugAction('game');
     setError('');
     try {
-      const created = await createRandomTestOmniSave(
+      const created = await createRandomTestOmnisave(
         token,
         games.map((game) => game.label)
       );
@@ -203,7 +203,7 @@ export function App() {
           );
         });
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : 'Could not create an OmniSave.');
+      setError(createError instanceof Error ? createError.message : 'Could not create an Omnisave.');
     } finally {
       setDebugAction(null);
     }
@@ -278,9 +278,9 @@ export function App() {
     }
   }
 
-  async function renameSave(save: OmniSave, displayName: string) {
+  async function renameSave(save: Omnisave, displayName: string) {
     if (!token) return;
-    const updated = await updateOmniSaveDisplayName(token, save.id, displayName);
+    const updated = await updateOmnisaveDisplayName(token, save.id, displayName);
     setSaves((current) =>
       current.map((candidate) => (candidate.id === updated.id ? updated : candidate))
     );
@@ -296,7 +296,7 @@ export function App() {
     setDeleteTarget({ type: 'game-saves', game });
   }
 
-  function requestDeleteSave(save: OmniSave, name: string) {
+  function requestDeleteSave(save: Omnisave, name: string) {
     if (!selectedGame) return;
     setDeleteError('');
     setDeleteTarget({ type: 'save', game: selectedGame, save, name });
@@ -321,7 +321,7 @@ export function App() {
         const savesToDelete =
           deleteTarget.type === 'game-saves' ? deleteTarget.game.saves : [deleteTarget.save];
         for (const save of savesToDelete) {
-          await deleteOmniSave(token, save.id);
+          await deleteOmnisave(token, save.id);
         }
 
         if (deleteTarget.type === 'save' && selectedSaveID === deleteTarget.save.id) {
@@ -360,7 +360,7 @@ export function App() {
             <span className="grid size-8 place-items-center rounded-md bg-[#e5a00d] text-sm font-black text-black">
               O
             </span>
-            <span className="text-sm font-semibold text-white">OmniSave</span>
+            <span className="text-sm font-semibold text-white">Omnisave</span>
           </button>
 
           <div className="flex items-center gap-3">
