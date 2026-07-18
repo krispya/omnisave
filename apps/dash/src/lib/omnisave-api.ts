@@ -117,6 +117,71 @@ export type GameMatchCandidate = {
   selection_token: string;
 };
 
+export type ServerEvent = {
+  id: string;
+  type: string;
+  data: string;
+};
+
+export class EventStreamAuthError extends Error {
+  constructor() {
+    super('The API token was not accepted.');
+    this.name = 'EventStreamAuthError';
+  }
+}
+
+export function createServerEventParser(onEvent: (event: ServerEvent) => void, initialEventID = '') {
+  let buffer = '';
+  let lastEventID = initialEventID;
+  let eventType = '';
+  let data = '';
+
+  function processLine(line: string) {
+    if (line === '') {
+      if (data) {
+        onEvent({
+          id: lastEventID,
+          type: eventType || 'message',
+          data: data.endsWith('\n') ? data.slice(0, -1) : data,
+        });
+      }
+      eventType = '';
+      data = '';
+      return;
+    }
+    if (line.startsWith(':')) return;
+
+    const separator = line.indexOf(':');
+    const field = separator === -1 ? line : line.slice(0, separator);
+    let value = separator === -1 ? '' : line.slice(separator + 1);
+    if (value.startsWith(' ')) value = value.slice(1);
+    if (field === 'id' && !value.includes('\0')) lastEventID = value;
+    else if (field === 'event') eventType = value;
+    else if (field === 'data') data += `${value}\n`;
+  }
+
+  return {
+    push(chunk: string) {
+      buffer += chunk;
+      let newline = buffer.indexOf('\n');
+      while (newline !== -1) {
+        const line = buffer.slice(0, newline).replace(/\r$/, '');
+        buffer = buffer.slice(newline + 1);
+        processLine(line);
+        newline = buffer.indexOf('\n');
+      }
+    },
+    finish() {
+      if (buffer) processLine(buffer.replace(/\r$/, ''));
+      processLine('');
+      buffer = '';
+    },
+    lastEventID() {
+      return lastEventID;
+    },
+  };
+}
+
 const apiBaseURL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
@@ -156,6 +221,45 @@ async function requestBlob(path: string, token: string, signal?: AbortSignal) {
 
   if (!response.ok) throw new Error(`Request failed (${response.status}).`);
   return response.blob();
+}
+
+export async function streamServerEvents(
+  token: string,
+  options: {
+    signal: AbortSignal;
+    lastEventID?: string;
+    onOpen: () => void;
+    onEvent: (event: ServerEvent) => void;
+  }
+) {
+  const headers = new Headers({
+    Accept: 'text/event-stream',
+    Authorization: `Bearer ${token}`,
+  });
+  if (options.lastEventID) headers.set('Last-Event-ID', options.lastEventID);
+
+  const response = await fetch(`${apiBaseURL}/api/v1/events`, {
+    signal: options.signal,
+    headers,
+  });
+  if (response.status === 401) throw new EventStreamAuthError();
+  if (!response.ok || !response.body) {
+    throw new Error(`Event stream failed (${response.status}).`);
+  }
+
+  options.onOpen();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const parser = createServerEventParser(options.onEvent, options.lastEventID);
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    parser.push(decoder.decode(value, { stream: !done }));
+    if (done) {
+      parser.finish();
+      return parser.lastEventID();
+    }
+  }
 }
 
 export function listOmnisaves(token: string, signal?: AbortSignal) {

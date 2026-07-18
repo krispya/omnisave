@@ -43,6 +43,7 @@ import {
   preloadGameArtwork,
   type GameSummary,
 } from '../features/games/game-library.js';
+import { useLibraryEvents, type LibraryEventStatus } from '../features/games/use-library-events.js';
 
 const tokenStorageKey = 'omnisave.api-token';
 
@@ -68,7 +69,11 @@ type LibraryResource = {
   abort: () => void;
 };
 
-async function fetchLibrary(token: string, signal?: AbortSignal): Promise<LibrarySnapshot> {
+async function fetchLibrary(
+  token: string,
+  signal?: AbortSignal,
+  fallback?: LibrarySnapshot
+): Promise<LibrarySnapshot> {
   try {
     // The games endpoint is optional; saves remain a usable library fallback.
     const [saves, catalog] = await Promise.all([
@@ -84,20 +89,22 @@ async function fetchLibrary(token: string, signal?: AbortSignal): Promise<Librar
     return { catalog, saves, error: '' };
   } catch (loadError) {
     if (loadError instanceof DOMException && loadError.name === 'AbortError') {
-      return { catalog: null, saves: [], error: '' };
+      return fallback ?? { catalog: null, saves: [], error: '' };
     }
+    const error = loadError instanceof Error ? loadError.message : 'Could not load the library.';
+    if (fallback) return { ...fallback, error };
     return {
       catalog: null,
       saves: [],
-      error: loadError instanceof Error ? loadError.message : 'Could not load the library.',
+      error,
     };
   }
 }
 
-function createLibraryResource(token: string): LibraryResource {
+function createLibraryResource(token: string, fallback?: LibrarySnapshot): LibraryResource {
   const controller = new AbortController();
   return {
-    promise: fetchLibrary(token, controller.signal),
+    promise: fetchLibrary(token, controller.signal, fallback),
     abort: () => controller.abort(),
   };
 }
@@ -128,6 +135,8 @@ type LibraryDashboardProps = {
   onCloseGame: () => void;
   onReload: () => Promise<LibrarySnapshot>;
   onReplace: (snapshot: LibrarySnapshot) => void;
+  onSnapshot: (snapshot: LibrarySnapshot) => void;
+  onEventStatusChange: (status: LibraryEventStatus) => void;
 };
 
 function LibraryDashboard({
@@ -141,6 +150,8 @@ function LibraryDashboard({
   onCloseGame,
   onReload,
   onReplace,
+  onSnapshot,
+  onEventStatusChange,
 }: LibraryDashboardProps) {
   const snapshot = use(resource.promise);
   const { catalog, saves } = snapshot;
@@ -163,6 +174,8 @@ function LibraryDashboard({
     () => selectedGame?.saves.find((save) => save.id === selectedSaveID),
     [selectedGame, selectedSaveID]
   );
+
+  useEffect(() => onSnapshot(snapshot), [onSnapshot, snapshot]);
 
   const loadRevisionHistory = useCallback(
     async (activeToken: string, saveID: string, signal?: AbortSignal) => {
@@ -204,11 +217,13 @@ function LibraryDashboard({
     onSelectSaveID(game.saves[0]?.id ?? '');
   }
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setError('');
     await onReload();
     if (selectedSaveID) await loadRevisionHistory(token, selectedSaveID);
-  }
+  }, [loadRevisionHistory, onReload, selectedSaveID, token]);
+
+  useLibraryEvents({ token, onRefresh: refresh, onStatusChange: onEventStatusChange });
 
   async function addRandomGame() {
     if (!token) return;
@@ -405,27 +420,17 @@ function LibraryDashboard({
           </div>
         )}
 
-        <div className="flex shrink-0 gap-3">
-          <button
-            type="button"
-            onClick={() => void refresh()}
-            disabled={libraryPending}
-            className="rounded-md bg-white/5 px-3.5 py-2 text-sm font-medium text-neutral-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {libraryPending ? 'Refreshing…' : 'Refresh'}
-          </button>
-          <DebugMenu
-            game={selectedGame}
-            selectedSave={selectedSave}
-            action={debugAction}
-            revisionHistoryAvailable={!loadingRevisions}
-            canFork={Boolean(selectedSave?.head_revision_id)}
-            onAddRandomGame={() => void addRandomGame()}
-            onAddSave={() => void addSave()}
-            onAddRevision={() => void addRevision()}
-            onForkSave={() => void forkSave()}
-          />
-        </div>
+        <DebugMenu
+          game={selectedGame}
+          selectedSave={selectedSave}
+          action={debugAction}
+          revisionHistoryAvailable={!loadingRevisions}
+          canFork={Boolean(selectedSave?.head_revision_id)}
+          onAddRandomGame={() => void addRandomGame()}
+          onAddSave={() => void addSave()}
+          onAddRevision={() => void addRevision()}
+          onForkSave={() => void forkSave()}
+        />
       </section>
 
       {visibleError ? (
@@ -515,7 +520,9 @@ export function App() {
   const [selectedGameID, setSelectedGameID] = useState('');
   const [selectedSaveID, setSelectedSaveID] = useState('');
   const activeResource = useRef(resource);
+  const latestSnapshot = useRef<LibrarySnapshot | undefined>(undefined);
   const [libraryPending, startLibraryTransition] = useTransition();
+  const [eventStatus, setEventStatus] = useState<LibraryEventStatus>('connecting');
 
   const installResource = useCallback(
     (next: LibraryResource, transition: boolean) => {
@@ -529,16 +536,21 @@ export function App() {
   );
 
   const reloadLibrary = useCallback(
-    () => installResource(createLibraryResource(token), true),
+    () => installResource(createLibraryResource(token, latestSnapshot.current), true),
     [installResource, token]
   );
 
   const replaceLibrary = useCallback(
     (snapshot: LibrarySnapshot) => {
+      latestSnapshot.current = snapshot;
       void installResource(createSettledLibraryResource(snapshot), true);
     },
     [installResource]
   );
+
+  const rememberSnapshot = useCallback((snapshot: LibrarySnapshot) => {
+    latestSnapshot.current = snapshot;
+  }, []);
 
   function closeGame() {
     setSelectedGameID('');
@@ -551,20 +563,44 @@ export function App() {
     if (!nextToken) return;
 
     sessionStorage.setItem(tokenStorageKey, nextToken);
+    setEventStatus('connecting');
     setToken(nextToken);
     if (nextToken === token) void reloadLibrary();
-    else void installResource(createLibraryResource(nextToken), false);
+    else {
+      latestSnapshot.current = undefined;
+      void installResource(createLibraryResource(nextToken), false);
+    }
   }
 
   function disconnect() {
     activeResource.current?.abort();
     activeResource.current = null;
+    latestSnapshot.current = undefined;
     sessionStorage.removeItem(tokenStorageKey);
     setToken('');
     setTokenInput('');
     setResource(null);
     closeGame();
   }
+
+  const connectionLabel = !token
+    ? 'Not connected'
+    : libraryPending
+      ? 'Syncing…'
+      : eventStatus === 'live'
+        ? 'Connected'
+        : eventStatus === 'unauthorized'
+          ? 'Authentication failed'
+          : eventStatus === 'retrying'
+            ? 'Reconnecting…'
+            : 'Connecting…';
+  const connectionColor = !token
+    ? 'bg-neutral-600'
+    : eventStatus === 'unauthorized'
+      ? 'bg-red-400'
+      : eventStatus === 'live'
+        ? 'bg-[#e5a00d]'
+        : 'bg-sky-400';
 
   return (
     <div className="min-h-screen bg-[#111111] text-[#e5e5e5]">
@@ -579,11 +615,8 @@ export function App() {
 
           <div className="flex items-center gap-3">
             <span className="hidden items-center gap-2 text-xs text-slate-400 sm:flex">
-              <span
-                className={`size-1.5 rounded-full ${token ? 'bg-[#e5a00d]' : 'bg-neutral-600'}`}
-                aria-hidden="true"
-              />
-              {token ? 'Connected' : 'Not connected'}
+              <span className={`size-1.5 rounded-full ${connectionColor}`} aria-hidden="true" />
+              {connectionLabel}
             </span>
             {token ? (
               <button
@@ -614,6 +647,8 @@ export function App() {
               onCloseGame={closeGame}
               onReload={reloadLibrary}
               onReplace={replaceLibrary}
+              onSnapshot={rememberSnapshot}
+              onEventStatusChange={setEventStatus}
             />
           </Suspense>
         ) : null}

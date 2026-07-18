@@ -35,8 +35,11 @@ from registration and tracking alone.
 - Deleting the game removes everything — its saves, revision history,
   unshared artifacts, and provenance. This is the lifecycle's only act of
   forgetting.
-- Game reads include provenance, so the Dash can show it (details view first;
-  install-status chips later).
+- Game reads include provenance so any game view can present it without a
+  separate request.
+- An open view refreshes automatically when games, saves, revisions, or
+  provenance change. Initial view loading uses a spinner; background refreshes
+  keep settled content visible until its replacement is ready.
 - Device liveness (last seen) updates on explicit acts — registration,
   tracking, sync — not on every request.
 
@@ -91,8 +94,8 @@ Sync cadence is fresh enough for "last seen 3 days ago".
 
 **Decision:** Reading a game returns its provenance alongside media and
 identifiers rather than through a separate fetch.
-**Why:** The Dash shows provenance with the game; one request keeps the UI
-simple, and response weight is irrelevant at self-hosted scale.
+**Why:** Game views show provenance alongside the game; one request keeps
+clients simple, and response weight is irrelevant at self-hosted scale.
 **Tradeoff:** List responses carry data most views ignore.
 
 ### 7. "Device" is a new term; "Target" is not reused
@@ -107,15 +110,27 @@ the catalog/library ambiguity.
 ### 8. Resolution stays free of device context
 
 **Decision:** Track intent is reported separately from identity resolution.
-**Why:** The Dash debug flow and future manual adds resolve games with no
+**Why:** Debug resolution and future manual-add flows resolve games with no
 device involved; keeping resolution pure preserves FDR-001's single
 responsibility.
 **Tradeoff:** Track time makes two calls where one might do.
+
+### 9. Server events invalidate; reads replace
+
+**Decision:** Open Library views refresh automatically instead of requiring a
+manual refresh. A server event invalidates the current view, which is replaced
+from ordinary API reads as described by
+[ADR-002](../adr/ADR-002-sse-view-invalidation.md).
+**Why:** Events announce that server truth changed without creating a second
+state model for games, saves, revisions, or provenance.
+**Tradeoff:** Reconnection and burst coalescing add client complexity, and a
+reconnect may perform a redundant read to guarantee convergence.
 
 ## Related
 
 - **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — the
   source-of-truth premise behind installation-independent membership and
-  server-side provenance.
+  server-side provenance; [ADR-002](../adr/ADR-002-sse-view-invalidation.md) —
+  how clients learn that server-owned views changed.
 - **FDRs:** [FDR-001](FDR-001-game-identity-resolution.md) — how track-time
   resolution chooses or creates the canonical Game.
