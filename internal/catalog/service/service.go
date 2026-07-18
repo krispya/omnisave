@@ -266,6 +266,13 @@ func (s *service) Get(ctx context.Context, id string) (*catalog.Game, error) {
 	return game, translateStorageError(err)
 }
 
+func (s *service) Delete(ctx context.Context, id string) error {
+	if strings.TrimSpace(id) == "" {
+		return catalog.ErrInvalid
+	}
+	return translateStorageError(s.repository.DeleteGame(ctx, id))
+}
+
 func (s *service) OpenMedia(ctx context.Context, gameID, mediaID string) (*catalog.GameMedia, io.ReadCloser, error) {
 	media, err := s.repository.GetGameMedia(ctx, gameID, mediaID)
 	if err != nil {

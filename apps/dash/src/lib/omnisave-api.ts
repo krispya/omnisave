@@ -212,6 +212,10 @@ export function deleteOmniSave(token: string, omniSaveID: string) {
   return request<void>(`/api/v1/omnisaves/${omniSaveID}`, token, { method: 'DELETE' });
 }
 
+export function deleteGame(token: string, gameID: string) {
+  return request<void>(`/api/v1/games/${encodeURIComponent(gameID)}`, token, { method: 'DELETE' });
+}
+
 export function updateOmniSaveDisplayName(token: string, omniSaveID: string, displayName: string) {
   return request<OmniSave>(`/api/v1/omnisaves/${omniSaveID}`, token, {
     method: 'PATCH',

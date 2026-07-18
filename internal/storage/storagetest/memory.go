@@ -253,6 +253,29 @@ func (r *MemoryRepository) SaveGame(_ context.Context, game catalog.Game, rom *c
 	return nil
 }
 
+func (r *MemoryRepository) DeleteGame(ctx context.Context, id string) error {
+	if _, ok := r.games[id]; !ok {
+		return storage.ErrNotFound
+	}
+	for saveID, save := range r.saves {
+		if save.GameID == id {
+			r.DeleteOmniSave(ctx, saveID)
+		}
+	}
+	delete(r.games, id)
+	for mediaID, media := range r.media {
+		if media.GameID == id {
+			delete(r.media, mediaID)
+		}
+	}
+	for romID, rom := range r.roms {
+		if rom.GameID == id {
+			delete(r.roms, romID)
+		}
+	}
+	return nil
+}
+
 func (r *MemoryRepository) SaveGameMedia(_ context.Context, media catalog.GameMedia) error {
 	for id, existing := range r.media {
 		if existing.GameID == media.GameID && existing.Kind == media.Kind && existing.Position == media.Position {
