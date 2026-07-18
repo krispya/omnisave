@@ -7,6 +7,7 @@ import {
   type GameMedia,
   type OmniSave,
 } from '../../lib/omnisave-api.js';
+import { createPromiseCache } from '../cache/promise-cache.js';
 import { DeleteOptions } from './delete-options.js';
 
 export type GameSummary = {
@@ -140,6 +141,12 @@ export function GameArtwork({
   );
 }
 
+// Media object URLs live for the whole session so a remounted poster renders
+// its image on the first paint instead of flashing the fallback artwork.
+const gameMediaCache = createPromiseCache<string, string>({
+  dispose: (objectURL) => URL.revokeObjectURL(objectURL),
+});
+
 export function GameMediaImage({
   token,
   media,
@@ -151,23 +158,29 @@ export function GameMediaImage({
   alt: string;
   className?: string;
 }) {
-  const [source, setSource] = useState('');
+  const [source, setSource] = useState(() => gameMediaCache.get(media.url) ?? '');
 
   useEffect(() => {
-    const controller = new AbortController();
-    let objectURL = '';
+    const cached = gameMediaCache.get(media.url);
+    if (cached) {
+      setSource(cached);
+      return;
+    }
+
+    let cancelled = false;
     setSource('');
-    void loadGameMedia(token, media.url, controller.signal)
-      .then((blob) => {
-        objectURL = URL.createObjectURL(blob);
-        setSource(objectURL);
+    gameMediaCache
+      .load(media.url, () =>
+        loadGameMedia(token, media.url).then((blob) => URL.createObjectURL(blob))
+      )
+      .then((objectURL) => {
+        if (!cancelled) setSource(objectURL);
       })
-      .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) setSource('');
+      .catch(() => {
+        if (!cancelled) setSource('');
       });
     return () => {
-      controller.abort();
-      if (objectURL) URL.revokeObjectURL(objectURL);
+      cancelled = true;
     };
   }, [media.url, token]);
 
