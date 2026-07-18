@@ -125,6 +125,84 @@ func (c *Client) send(ctx context.Context, method, path string, payload any) err
 	return nil
 }
 
+// CreateOmnisave asks the server to create a new logical save for a game.
+func (c *Client) CreateOmnisave(ctx context.Context, input omnisave.CreateOmnisave) (*omnisave.Omnisave, error) {
+	var created omnisave.Omnisave
+	if err := c.postJSON(ctx, "/api/v1/omnisaves", input, &created); err != nil {
+		return nil, err
+	}
+	return &created, nil
+}
+
+// CommitRevision commits file changes against the Omnisave's expected head.
+func (c *Client) CommitRevision(ctx context.Context, omnisaveID string, input omnisave.CreateRevision) (*omnisave.Revision, error) {
+	var revision omnisave.Revision
+	path := "/api/v1/omnisaves/" + url.PathEscape(omnisaveID) + "/revisions"
+	if err := c.postJSON(ctx, path, input, &revision); err != nil {
+		return nil, err
+	}
+	return &revision, nil
+}
+
+// DeleteOmnisave removes a save and its revision history.
+func (c *Client) DeleteOmnisave(ctx context.Context, id string) error {
+	return c.send(ctx, http.MethodDelete, "/api/v1/omnisaves/"+url.PathEscape(id), nil)
+}
+
+// UploadArtifact stores content-addressed bytes the server verifies by hash.
+func (c *Client) UploadArtifact(ctx context.Context, artifact omnisave.Artifact, content io.Reader) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut,
+		c.baseURL+"/api/v1/artifacts/"+url.PathEscape(artifact.SHA256), content)
+	if err != nil {
+		return err
+	}
+	// The server rejects uploads with an unknown length, and a plain reader
+	// advertises none — the artifact's measured size is the claim it checks.
+	request.ContentLength = artifact.Size
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	format := artifact.Format
+	if format == "" {
+		format = "application/octet-stream"
+	}
+	request.Header.Set("Content-Type", format)
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("contact Omnisave server: %w", err)
+	}
+	defer response.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return &ResponseError{StatusCode: response.StatusCode}
+	}
+	return nil
+}
+
+func (c *Client) postJSON(ctx context.Context, path string, payload, result any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("contact Omnisave server: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
+		return &ResponseError{StatusCode: response.StatusCode}
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBody)).Decode(result); err != nil {
+		return fmt.Errorf("decode Omnisave server response: %w", err)
+	}
+	return nil
+}
+
 // ListOmnisaves returns the server records available as binding destinations.
 func (c *Client) ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/omnisaves", nil)

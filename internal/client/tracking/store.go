@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
+	"github.com/krisbaumgartner/omnisave/internal/client/target"
 )
 
 // Game is the local identity retained when a discovered game is tracked.
@@ -248,6 +249,18 @@ func (s *State) Bind(local LocalSave, omnisaveID string) error {
 	return nil
 }
 
+// Unbind removes any mapping for a discovered local save.
+func (s *State) Unbind(local LocalSave) bool {
+	probe := Binding{Adapter: local.Adapter, TargetID: local.TargetID, LocalSaveID: local.ID}
+	for index := range s.Bindings {
+		if sameLocalSave(s.Bindings[index], probe) {
+			s.Bindings = slices.Delete(s.Bindings, index, index+1)
+			return true
+		}
+	}
+	return false
+}
+
 // BindingFor returns the active mapping for a discovered local save.
 func (s State) BindingFor(local LocalSave) (Binding, bool) {
 	probe := Binding{Adapter: local.Adapter, TargetID: local.TargetID, LocalSaveID: local.ID}
@@ -326,23 +339,27 @@ func SavesFromScans(scans []client.TargetScan) []LocalSave {
 	var saves []LocalSave
 	for _, scan := range scans {
 		for _, discovered := range scan.Games {
-			title := discovered.Game.Identity.DisplayTitle(discovered.Game.ID)
 			for _, save := range discovered.Saves {
-				local := LocalSave{
-					ID:        save.ID,
-					Adapter:   scan.Target.Adapter,
-					TargetID:  scan.Target.ID,
-					GameID:    discovered.Game.ID,
-					GameTitle: title,
-					Kind:      save.Kind,
-					FileCount: len(save.Files),
-				}
-				for _, file := range save.Files {
-					local.Size += file.Size
-				}
-				saves = append(saves, local)
+				saves = append(saves, LocalSaveFrom(scan, discovered, save))
 			}
 		}
 	}
 	return saves
+}
+
+// LocalSaveFrom describes one discovered native save as a bindable identity.
+func LocalSaveFrom(scan client.TargetScan, discovered client.GameScan, save target.Save) LocalSave {
+	local := LocalSave{
+		ID:        save.ID,
+		Adapter:   scan.Target.Adapter,
+		TargetID:  scan.Target.ID,
+		GameID:    discovered.Game.ID,
+		GameTitle: discovered.Game.Identity.DisplayTitle(discovered.Game.ID),
+		Kind:      save.Kind,
+		FileCount: len(save.Files),
+	}
+	for _, file := range save.Files {
+		local.Size += file.Size
+	}
+	return local
 }
