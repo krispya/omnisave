@@ -1,11 +1,11 @@
 import { useRef, useState, type KeyboardEvent } from 'react';
-import type { OmniSave } from '../../lib/omnisave-api.js';
+import type { Omnisave } from '../../lib/omnisave-api.js';
 import { displaySaveName } from './save-name.js';
 
 type SaveNameEditorProps = {
-  save: OmniSave;
+  save: Omnisave;
   fallbackName: string;
-  onSave: (save: OmniSave, displayName: string) => Promise<void>;
+  onSave: (save: Omnisave, displayName: string) => Promise<void>;
 };
 
 export function SaveNameEditor({ save, fallbackName, onSave }: SaveNameEditorProps) {

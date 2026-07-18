@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import type { GameIdentifier, OmniSave, Revision } from '../../lib/omnisave-api.js';
+import type { GameIdentifier, Omnisave, Revision } from '../../lib/omnisave-api.js';
 import { DeleteOptions } from './delete-options.js';
 import { GameArtwork, GameMediaImage, type GameSummary } from './game-library.js';
 import { RevisionPanel } from './revision-panel.js';
@@ -271,21 +271,21 @@ function SaveTree({
   selectedSave,
   onSelectSave,
 }: {
-  saves: OmniSave[];
-  selectedSave?: OmniSave;
-  onSelectSave: (save: OmniSave) => void;
+  saves: Omnisave[];
+  selectedSave?: Omnisave;
+  onSelectSave: (save: Omnisave) => void;
 }) {
   const ids = new Set(saves.map((save) => save.id));
-  const children = new Map<string, OmniSave[]>();
+  const children = new Map<string, Omnisave[]>();
   for (const save of saves) {
     const parentID = save.forked_from?.omnisave_id;
     if (!parentID || !ids.has(parentID)) continue;
     children.set(parentID, [...(children.get(parentID) ?? []), save]);
   }
   const roots = saves.filter((save) => !save.forked_from || !ids.has(save.forked_from.omnisave_id));
-  const rows: Array<{ save: OmniSave; depth: number }> = [];
+  const rows: Array<{ save: Omnisave; depth: number }> = [];
   const visited = new Set<string>();
-  function visit(save: OmniSave, depth: number) {
+  function visit(save: Omnisave, depth: number) {
     if (visited.has(save.id)) return;
     visited.add(save.id);
     rows.push({ save, depth });
@@ -338,13 +338,13 @@ function SaveTree({
 type GameDetailProps = {
   game: GameSummary;
   token: string;
-  selectedSave?: OmniSave;
+  selectedSave?: Omnisave;
   revisions: Revision[];
   loadingRevisions: boolean;
   revisionError: string;
-  onSelectSave: (save: OmniSave) => void;
-  onRequestDelete: (save: OmniSave, name: string) => void;
-  onRenameSave: (save: OmniSave, displayName: string) => Promise<void>;
+  onSelectSave: (save: Omnisave) => void;
+  onRequestDelete: (save: Omnisave, name: string) => void;
+  onRenameSave: (save: Omnisave, displayName: string) => Promise<void>;
 };
 
 export function GameDetail({

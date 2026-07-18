@@ -14,10 +14,10 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/storage/storagetest"
 )
 
-func TestOmniSaveRecordCanBeCreatedListedAndRenamed(t *testing.T) {
+func TestOmnisaveRecordCanBeCreatedListedAndRenamed(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
-	created, err := saves.Create(ctx, omnisave.CreateOmniSave{
+	created, err := saves.Create(ctx, omnisave.CreateOmnisave{
 		GameID:   "pokemon-emerald-usa",
 		Metadata: map[string]string{"label": "My Pokémon save"},
 	})
@@ -25,7 +25,7 @@ func TestOmniSaveRecordCanBeCreatedListedAndRenamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	displayName := "  Before the final boss  "
-	updated, err := saves.Update(ctx, created.ID, omnisave.UpdateOmniSave{DisplayName: &displayName})
+	updated, err := saves.Update(ctx, created.ID, omnisave.UpdateOmnisave{DisplayName: &displayName})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestOmniSaveRecordCanBeCreatedListedAndRenamed(t *testing.T) {
 func TestPartialUpdatesMaterializeCompleteSnapshots(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
-	save, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald-usa"})
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestPartialUpdatesMaterializeCompleteSnapshots(t *testing.T) {
 func TestStaleWriterCannotMoveTheSaveHead(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
-	save, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald-usa"})
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestStaleWriterCannotMoveTheSaveHead(t *testing.T) {
 func TestForkCreatesAnotherSelectableSaveWithItsOwnHistory(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
-	source, err := saves.Create(ctx, omnisave.CreateOmniSave{
+	source, err := saves.Create(ctx, omnisave.CreateOmnisave{
 		GameID: "pokemon-emerald-usa", Metadata: map[string]string{"platform": "gba"},
 	})
 	if err != nil {
@@ -141,15 +141,15 @@ func TestForkCreatesAnotherSelectableSaveWithItsOwnHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fork, err := saves.Fork(ctx, source.ID, omnisave.ForkOmniSave{
+	fork, err := saves.Fork(ctx, source.ID, omnisave.ForkOmnisave{
 		RevisionID: root.ID, DisplayName: "Alternate route",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fork.OmniSave.ForkedFrom == nil || fork.OmniSave.ForkedFrom.OmniSaveID != source.ID ||
-		fork.OmniSave.ForkedFrom.RevisionID != root.ID || fork.OmniSave.Metadata["platform"] != "gba" {
-		t.Fatalf("unexpected fork lineage: %v", fork.OmniSave)
+	if fork.Omnisave.ForkedFrom == nil || fork.Omnisave.ForkedFrom.OmnisaveID != source.ID ||
+		fork.Omnisave.ForkedFrom.RevisionID != root.ID || fork.Omnisave.Metadata["platform"] != "gba" {
+		t.Fatalf("unexpected fork lineage: %v", fork.Omnisave)
 	}
 	if fork.Revision.ParentID != nil || len(fork.Revision.Files) != 1 ||
 		fork.Revision.Files[0].Artifact.SHA256 != artifact.SHA256 {
@@ -157,8 +157,8 @@ func TestForkCreatesAnotherSelectableSaveWithItsOwnHistory(t *testing.T) {
 	}
 
 	forkUpdate := storeBlob(t, ctx, saves, "fork progress")
-	updatedFork, err := saves.CommitRevision(ctx, fork.OmniSave.ID, omnisave.CreateRevision{
-		ExpectedHeadID: fork.OmniSave.HeadRevisionID,
+	updatedFork, err := saves.CommitRevision(ctx, fork.Omnisave.ID, omnisave.CreateRevision{
+		ExpectedHeadID: fork.Omnisave.HeadRevisionID,
 		Upserts:        []omnisave.RevisionFile{{Path: "save.dat", Artifact: forkUpdate}},
 	})
 	if err != nil {
@@ -177,7 +177,7 @@ func TestForkCreatesAnotherSelectableSaveWithItsOwnHistory(t *testing.T) {
 func TestRejectInvalidChangesAndReportMissingArtifacts(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
-	save, err := saves.Create(ctx, omnisave.CreateOmniSave{GameID: "pokemon-emerald-usa"})
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
 	if err != nil {
 		t.Fatal(err)
 	}

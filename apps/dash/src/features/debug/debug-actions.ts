@@ -1,8 +1,8 @@
 import {
   commitRevision,
-  createOmniSave,
+  createOmnisave,
   fixGameMatch,
-  forkOmniSave,
+  forkOmnisave,
   resolveGame,
   searchGameMatches,
   uploadArtifact,
@@ -32,7 +32,7 @@ function debugMetadata(label: string, platform?: string) {
   };
 }
 
-export async function createRandomTestOmniSave(token: string, existingLabels: string[]) {
+export async function createRandomTestOmnisave(token: string, existingLabels: string[]) {
   const unusedGames = debugGames.filter((game) => !existingLabels.includes(game.label));
   const choices = unusedGames.length > 0 ? unusedGames : debugGames;
   const game = choices[Math.floor(Math.random() * choices.length)] ?? debugGames[0];
@@ -42,7 +42,7 @@ export async function createRandomTestOmniSave(token: string, existingLabels: st
     titleHint: game.label,
     platformHint: debugPlatform,
   });
-  const created = await createOmniSave(token, {
+  const created = await createOmnisave(token, {
     gameID: resolution.game.id,
     metadata: debugMetadata(game.label, debugPlatform),
   });
@@ -64,7 +64,7 @@ export function createTestSave(
   token: string,
   game: { id: string; label: string; platform?: string }
 ) {
-  return createOmniSave(token, {
+  return createOmnisave(token, {
     gameID: game.id,
     metadata: debugMetadata(game.label, game.platform),
   });
@@ -73,7 +73,7 @@ export function createTestSave(
 async function debugManifest(token: string, label: string) {
   const format = 'application/vnd.omnisave.raw-save.v1';
   const [progress, settings] = await Promise.all([
-    uploadArtifact(token, new Blob([`OmniSave ${label}\n`], { type: format })),
+    uploadArtifact(token, new Blob([`Omnisave ${label}\n`], { type: format })),
     uploadArtifact(token, new Blob(['{"debug":true,"version":1}\n'], { type: 'application/json' })),
   ]);
   return [
@@ -84,12 +84,12 @@ async function debugManifest(token: string, label: string) {
 
 export async function createTestRevision(
   token: string,
-  omniSaveID: string,
+  omnisaveID: string,
   expectedHeadID: string | null
 ) {
   const sequence = Date.now().toString(36);
   const manifest = await debugManifest(token, `revision ${sequence}`);
-  return commitRevision(token, omniSaveID, {
+  return commitRevision(token, omnisaveID, {
     expectedHeadID,
     upserts: expectedHeadID ? manifest.slice(0, 1) : manifest,
     metadata: {
@@ -101,12 +101,12 @@ export async function createTestRevision(
 
 export function forkTestSave(
   token: string,
-  omniSaveID: string,
+  omnisaveID: string,
   revisionID: string,
   sourceName: string
 ) {
   const sequence = Date.now().toString(36);
-  return forkOmniSave(token, omniSaveID, {
+  return forkOmnisave(token, omnisaveID, {
     revisionID,
     displayName: `${sourceName} fork`,
     metadata: {

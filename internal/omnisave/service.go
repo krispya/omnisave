@@ -30,14 +30,14 @@ type MissingArtifacts struct {
 func (e *MissingArtifacts) Error() string { return ErrArtifactMissing.Error() }
 func (e *MissingArtifacts) Unwrap() error { return ErrArtifactMissing }
 
-// Service is the application boundary for working with OmniSave records.
+// Service is the application boundary for working with Omnisave records.
 type Service interface {
-	Create(ctx context.Context, input CreateOmniSave) (*OmniSave, error)
-	List(ctx context.Context) ([]OmniSave, error)
-	Get(ctx context.Context, id string) (*OmniSave, error)
-	Update(ctx context.Context, id string, input UpdateOmniSave) (*OmniSave, error)
+	Create(ctx context.Context, input CreateOmnisave) (*Omnisave, error)
+	List(ctx context.Context) ([]Omnisave, error)
+	Get(ctx context.Context, id string) (*Omnisave, error)
+	Update(ctx context.Context, id string, input UpdateOmnisave) (*Omnisave, error)
 	Delete(ctx context.Context, id string) error
-	Fork(ctx context.Context, omnisaveID string, input ForkOmniSave) (*ForkResult, error)
+	Fork(ctx context.Context, omnisaveID string, input ForkOmnisave) (*ForkResult, error)
 
 	CommitRevision(ctx context.Context, omnisaveID string, input CreateRevision) (*Revision, error)
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*Revision, error)

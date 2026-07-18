@@ -1,0 +1,117 @@
+# FDR-002: Game Lifecycle
+
+**Status:** Experimental
+**Last reviewed:** 2026-07-18
+
+## Overview
+
+How a game enters the Library, what the server remembers about where it came
+from, and what it takes for a game to leave. The lifecycle runs detect → track
+→ bind: a Device's adapters discover installed games, the user tracks the ones
+Omnisave should know about, and binding connects native saves to Omnisaves.
+The detect/track/bind flow and game deletion are in the codebase today;
+Devices and Provenance are design-approved and not yet implemented.
+
+## Behavior
+
+- Scanning a Device discovers installed games without changing anything.
+  Detection alone never adds a game to the Library.
+- Tracking a game is the act of library entry — "make Omnisave aware of this
+  game". The game is resolved from the Catalog into the Library at track time,
+  before any save is bound (resolution behavior: [FDR-001](FDR-001-game-identity-resolution.md)).
+- Binding attaches a Device's Local Save to an Omnisave of a game that is
+  already in the Library.
+- Each client installation identifies itself as a Device: a stable ID minted
+  on first run plus a human-readable name, registered with the server.
+- The server keeps Provenance for each game: which Devices have tracked it,
+  when each first tracked it, when each was last seen, whether the install is
+  still present there, and whether it has since been untracked.
+- Untracking marks the provenance record inactive; it removes neither the
+  record nor the game.
+- Uninstalling a game from a device flips that device's installed flag at the
+  next scan or sync. Saves and provenance are unaffected.
+- Deleting all of a game's Omnisaves leaves the game and its provenance in
+  the Library.
+- Deleting the game removes everything — its saves, revision history,
+  unshared artifacts, and provenance. This is the lifecycle's only act of
+  forgetting.
+- Game reads include provenance, so the Dash can show it (details view first;
+  install-status chips later).
+- Device liveness (last seen) updates on explicit acts — registration,
+  tracking, sync — not on every request.
+
+## Design Decisions
+
+### 1. Tracking, not detection, is library entry
+
+**Decision:** Games enter the Library only when a user tracks them.
+**Why:** Detection is cheap and indiscriminate — one RetroArch playlist can
+surface hundreds of games the user never intends to back up. Tracking is the
+deliberate opt-in that makes membership mean something.
+**Tradeoff:** Nothing is protected automatically; a game the user forgot to
+track has no saves on the server.
+
+### 2. Library membership never depends on current installation
+
+**Decision:** Installation is per-device data, not a membership criterion.
+**Why:** The server is the durable side of the system; uninstalling to free
+space is precisely when the server copy matters most. Requiring an install
+would orphan saves the moment they became valuable.
+**Tradeoff:** Libraries accumulate games installed nowhere; cleanup is a
+deliberate delete, never automatic.
+
+### 3. Provenance is append-only and dies only with the game
+
+**Decision:** Untracking and uninstalling annotate provenance; nothing removes
+it except deleting the game itself.
+**Why:** The history of where a game lived is the value that justifies keeping
+a game with no saves. An empty game record with provenance still answers
+"what happened here".
+**Tradeoff:** Records accumulate without pruning; acceptable at self-hosted
+scale.
+
+### 4. Devices self-identify
+
+**Decision:** A Device mints its own ID on first run and reports its own name.
+Identity belongs to the client installation, not the hardware.
+**Why:** The server has a single shared API token and no accounts; there is no
+authority that could assign device identities. Self-reporting matches the
+self-hosted trust model.
+**Tradeoff:** Identity is spoofable and resets if local client state is wiped.
+
+### 5. Explicit liveness, not per-request heartbeat
+
+**Decision:** Last-seen updates only on registration, tracking, and sync.
+**Why:** No middleware, no write amplification, no implicit registration.
+Sync cadence is fresh enough for "last seen 3 days ago".
+**Tradeoff:** Liveness granularity is one sync interval.
+
+### 6. Provenance is embedded in game reads
+
+**Decision:** Reading a game returns its provenance alongside media and
+identifiers rather than through a separate fetch.
+**Why:** The Dash shows provenance with the game; one request keeps the UI
+simple, and response weight is irrelevant at self-hosted scale.
+**Tradeoff:** List responses carry data most views ignore.
+
+### 7. "Device" is a new term; "Target" is not reused
+
+**Decision:** The self-identified machine is a Device. Target keeps its
+existing meaning — one application installation on a device.
+**Why:** A device hosts several targets, and provenance plausibly wants both
+("tracked on steam-deck via RetroArch"). Overloading target would recreate
+the catalog/library ambiguity.
+**Tradeoff:** One more glossary noun to learn.
+
+### 8. Resolution stays free of device context
+
+**Decision:** Track intent is reported separately from identity resolution.
+**Why:** The Dash debug flow and future manual adds resolve games with no
+device involved; keeping resolution pure preserves FDR-001's single
+responsibility.
+**Tradeoff:** Track time makes two calls where one might do.
+
+## Related
+
+- **FDRs:** [FDR-001](FDR-001-game-identity-resolution.md) — how track-time
+  resolution chooses or creates the canonical Game.

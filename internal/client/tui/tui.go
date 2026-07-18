@@ -89,8 +89,8 @@ var (
 	ErrNoGames = errors.New("no games discovered")
 	// ErrNoSaves indicates that tracked games have no discovered saves to bind.
 	ErrNoSaves = errors.New("no local saves discovered")
-	// ErrNoOmniSaves indicates that the server has no binding destinations.
-	ErrNoOmniSaves = errors.New("no OmniSaves available")
+	// ErrNoOmnisaves indicates that the server has no binding destinations.
+	ErrNoOmnisaves = errors.New("no Omnisaves available")
 )
 
 // Run scans configured adapters and renders their progress and results.
@@ -279,10 +279,10 @@ func trackingChoiceGroups(scans []client.TargetScan, tracked map[string]bool) []
 	return groups
 }
 
-// BindingSelection maps one discovered native save to one server OmniSave.
+// BindingSelection maps one discovered native save to one server Omnisave.
 type BindingSelection struct {
 	Local    tracking.LocalSave
-	OmniSave omnisave.OmniSave
+	Omnisave omnisave.Omnisave
 }
 
 type bindingChoice struct {
@@ -291,18 +291,18 @@ type bindingChoice struct {
 }
 
 // SelectBinding prompts for one exact local-to-server save mapping.
-func SelectBinding(local []tracking.LocalSave, remote []omnisave.OmniSave, bindings []tracking.Binding) (BindingSelection, error) {
+func SelectBinding(local []tracking.LocalSave, remote []omnisave.Omnisave, bindings []tracking.Binding) (BindingSelection, error) {
 	if len(local) == 0 {
 		return BindingSelection{}, ErrNoSaves
 	}
 	if len(remote) == 0 {
-		return BindingSelection{}, ErrNoOmniSaves
+		return BindingSelection{}, ErrNoOmnisaves
 	}
 	localChoices, remoteChoices := bindingChoices(local, remote, bindings)
 	localIndex, remoteIndex := 0, 0
 	form := huh.NewForm(huh.NewGroup(
 		bindingSelect("Local save", localChoices, &localIndex),
-		bindingSelect("OmniSave", remoteChoices, &remoteIndex),
+		bindingSelect("Omnisave", remoteChoices, &remoteIndex),
 	).Title("Choose what this machine syncs"))
 	form.WithTheme(trackingTheme())
 	if err := form.Run(); err != nil {
@@ -311,7 +311,7 @@ func SelectBinding(local []tracking.LocalSave, remote []omnisave.OmniSave, bindi
 		}
 		return BindingSelection{}, err
 	}
-	return BindingSelection{Local: local[localIndex], OmniSave: remote[remoteIndex]}, nil
+	return BindingSelection{Local: local[localIndex], Omnisave: remote[remoteIndex]}, nil
 }
 
 func bindingSelect(title string, choices []bindingChoice, value *int) *huh.Select[int] {
@@ -331,7 +331,7 @@ func bindingSelect(title string, choices []bindingChoice, value *int) *huh.Selec
 		Value(value)
 }
 
-func bindingChoices(local []tracking.LocalSave, remote []omnisave.OmniSave, bindings []tracking.Binding) ([]bindingChoice, []bindingChoice) {
+func bindingChoices(local []tracking.LocalSave, remote []omnisave.Omnisave, bindings []tracking.Binding) ([]bindingChoice, []bindingChoice) {
 	remoteNames := make(map[string]string, len(remote))
 	for _, save := range remote {
 		remoteNames[save.ID] = save.DisplayName
@@ -341,9 +341,9 @@ func bindingChoices(local []tracking.LocalSave, remote []omnisave.OmniSave, bind
 		parts := []string{displayName(save.Adapter), save.GameTitle, save.Kind, count(save.FileCount, "file"), formatBytes(save.Size)}
 		for _, binding := range bindings {
 			if binding.Adapter == save.Adapter && binding.TargetID == save.TargetID && binding.LocalSaveID == save.ID {
-				name := remoteNames[binding.OmniSaveID]
+				name := remoteNames[binding.OmnisaveID]
 				if name == "" {
-					name = shortID(binding.OmniSaveID)
+					name = shortID(binding.OmnisaveID)
 				}
 				parts = append(parts, "currently "+name)
 				break
@@ -388,7 +388,7 @@ func trackingTheme() *huh.Theme {
 
 func (m model) View() string {
 	var view strings.Builder
-	view.WriteString(titleStyle.Render("OmniSave") + "\n")
+	view.WriteString(titleStyle.Render("Omnisave") + "\n")
 	if m.done {
 		view.WriteString(mutedStyle.Render("Scan complete") + "\n\n")
 	} else {

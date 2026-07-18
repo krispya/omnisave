@@ -71,7 +71,7 @@ func (p *Provider) Resolve(ctx context.Context, evidence catalog.ResolveGame) (*
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "OmniSave/1")
+	request.Header.Set("User-Agent", "Omnisave/1")
 
 	response, err := p.client.Do(request)
 	if err != nil {
@@ -232,7 +232,7 @@ func (p *Provider) callMCP(ctx context.Context, tool string, arguments any, dest
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json, text/event-stream")
-	request.Header.Set("User-Agent", "OmniSave/1")
+	request.Header.Set("User-Agent", "Omnisave/1")
 	response, err := p.client.Do(request)
 	if err != nil {
 		return catalog.ErrUnavailable
@@ -270,7 +270,7 @@ func (p *Provider) OpenMedia(ctx context.Context, reference catalog.MediaReferen
 		return "", nil, err
 	}
 	request.Header.Set("Accept", "image/*")
-	request.Header.Set("User-Agent", "OmniSave/1")
+	request.Header.Set("User-Agent", "Omnisave/1")
 	response, err := p.client.Do(request)
 	if err != nil {
 		return "", nil, catalog.ErrUnavailable

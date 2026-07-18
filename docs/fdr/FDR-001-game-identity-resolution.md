@@ -8,7 +8,7 @@
 Game Identity Resolution gives clients and catalog providers a shared way to
 refer to the same game without requiring one universal external identifier.
 The server resolves available identity evidence into a server-owned Game,
-which OmniSaves can then reference consistently across platforms, stores, and
+which Omnisaves can then reference consistently across platforms, stores, and
 emulators.
 
 ## Behavior
@@ -28,7 +28,7 @@ emulators.
   evidence.
 - A user-selected catalog match enriches the chosen Game while preserving its
   existing identity evidence.
-- Resolution does not choose an OmniSave or start synchronization. It only
+- Resolution does not choose an Omnisave or start synchronization. It only
   establishes which Game the discovered installation represents.
 
 ## Design Decisions
@@ -42,7 +42,7 @@ are evidence attached to the Game rather than its primary identity.
 regional release. A local identity remains stable when providers are missing,
 changed, or supplemented later.
 
-**Tradeoff:** Two independent OmniSave servers can assign different UUIDs to
+**Tradeoff:** Two independent Omnisave servers can assign different UUIDs to
 the same game and need evidence, rather than UUID equality, to reconcile
 catalogs in the future.
 
