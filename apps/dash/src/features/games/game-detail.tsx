@@ -1,5 +1,5 @@
-import { useLayoutEffect, useRef, useState } from 'react';
-import type { OmniSave, Revision } from '../../lib/omnisave-api.js';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import type { GameIdentifier, OmniSave, Revision } from '../../lib/omnisave-api.js';
 import { DeleteOptions } from './delete-options.js';
 import { GameArtwork, GameMediaImage, type GameSummary } from './game-library.js';
 import { RevisionPanel } from './revision-panel.js';
@@ -10,6 +10,204 @@ function formatDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Unknown date';
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
+}
+
+function formatBytes(size: number) {
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = size;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${index === 0 ? value : value.toFixed(1)} ${units[index]}`;
+}
+
+// Known identifier namespaces and metadata sources, mapped to the external
+// app they reference. Unknown namespaces fall back to their raw name.
+const externalApps: Record<string, { label: string; url?: (value: string) => string }> = {
+  'igdb.game': { label: 'IGDB' },
+  'hasheous.game': { label: 'Hasheous' },
+  'steam.app': { label: 'Steam', url: (value) => `https://store.steampowered.com/app/${value}` },
+  igdb: { label: 'IGDB' },
+  hasheous: { label: 'Hasheous' },
+  steam: { label: 'Steam' },
+};
+
+function appLabel(name: string) {
+  return externalApps[name]?.label ?? name;
+}
+
+function gameReleaseYear(game: GameSummary) {
+  const value = game.metadata?.['release_year'];
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : undefined;
+}
+
+function gameGenres(game: GameSummary) {
+  const value = game.metadata?.['genres'];
+  if (Array.isArray(value)) {
+    return value.filter((genre): genre is string => typeof genre === 'string');
+  }
+  return typeof value === 'string' ? [value] : [];
+}
+
+function IdentifierBadge({ identifier }: { identifier: GameIdentifier }) {
+  const app = externalApps[identifier.namespace];
+  const url = app?.url?.(identifier.value);
+  const content = (
+    <>
+      <span className="text-slate-500">{app?.label ?? identifier.namespace}</span>
+      <span className="font-mono text-xs text-neutral-200">{identifier.value}</span>
+    </>
+  );
+
+  return url ? (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1.5 rounded bg-white/5 px-2 py-1 transition hover:bg-white/10"
+    >
+      {content}
+      <span className="text-[10px] text-slate-500" aria-hidden="true">
+        ↗
+      </span>
+    </a>
+  ) : (
+    <span className="inline-flex items-center gap-1.5 rounded bg-white/5 px-2 py-1">{content}</span>
+  );
+}
+
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <>
+      <dt className="text-slate-500">{label}</dt>
+      <dd className="min-w-0 text-neutral-300">{children}</dd>
+    </>
+  );
+}
+
+// A debug-style dump of everything the dash knows about the game.
+function GameDetailsDialog({ game, onClose }: { game: GameSummary; onClose: () => void }) {
+  const titleID = useId();
+  const metadataEntries = Object.entries(game.metadata ?? {}).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+
+  useEffect(() => {
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+    }
+
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/80 px-5" role="presentation">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleID}
+        className="max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-lg border border-white/10 bg-[#202020] p-6 shadow-2xl"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h2 id={titleID} className="truncate text-lg font-medium text-white">
+              {game.label}
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-500">Details</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            autoFocus
+            aria-label="Close details"
+            className="-mt-1 -mr-1 rounded-md p-2 text-neutral-400 transition hover:bg-white/5 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+        <dl className="mt-5 grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-[8rem_minmax(0,1fr)]">
+          <DetailRow label="Game ID">
+            <span className="font-mono text-xs break-all">{game.id}</span>
+          </DetailRow>
+          <DetailRow label="Sort title">{game.sortKey}</DetailRow>
+          {game.platform ? <DetailRow label="Platform">{game.platform}</DetailRow> : null}
+          {game.platformCompany ? (
+            <DetailRow label="Company">{game.platformCompany}</DetailRow>
+          ) : null}
+          {game.publisher ? <DetailRow label="Publisher">{game.publisher}</DetailRow> : null}
+          {game.metadataSource ? (
+            <DetailRow label="Source">{appLabel(game.metadataSource)}</DetailRow>
+          ) : null}
+          {game.refreshedAt ? (
+            <DetailRow label="Refreshed">{formatDate(game.refreshedAt)}</DetailRow>
+          ) : null}
+          {game.identifiers.length > 0 ? (
+            <DetailRow label="Identifiers">
+              <span className="flex flex-wrap gap-2">
+                {game.identifiers.map((identifier) => (
+                  <IdentifierBadge
+                    key={`${identifier.namespace}:${identifier.value}`}
+                    identifier={identifier}
+                  />
+                ))}
+              </span>
+            </DetailRow>
+          ) : null}
+          {game.fingerprints.length > 0 ? (
+            <DetailRow label="Fingerprints">
+              <span className="grid gap-1.5">
+                {game.fingerprints.map((fingerprint) => (
+                  <span
+                    key={`${fingerprint.platform}:${fingerprint.algorithm}:${fingerprint.value}`}
+                    className="flex flex-wrap gap-x-2 text-xs"
+                  >
+                    <span className="shrink-0 text-slate-500">
+                      {fingerprint.platform} · {fingerprint.algorithm}
+                    </span>
+                    <span className="min-w-0 font-mono break-all text-neutral-200">
+                      {fingerprint.value}
+                    </span>
+                  </span>
+                ))}
+              </span>
+            </DetailRow>
+          ) : null}
+          {game.media.length > 0 ? (
+            <DetailRow label="Media">
+              <span className="grid gap-1.5">
+                {game.media.map((media) => (
+                  <span key={media.id} className="flex flex-wrap gap-x-2 text-xs">
+                    <span className="text-neutral-200">{media.kind}</span>
+                    <span className="text-slate-500">
+                      {media.format} · {formatBytes(media.size)} · #{media.position}
+                      {media.attribution ? ` · ${media.attribution}` : ''}
+                    </span>
+                  </span>
+                ))}
+              </span>
+            </DetailRow>
+          ) : null}
+          {metadataEntries.length > 0 ? (
+            <DetailRow label="Metadata">
+              <span className="grid gap-1.5">
+                {metadataEntries.map(([key, value]) => (
+                  <span key={key} className="flex flex-wrap gap-x-2 text-xs">
+                    <span className="shrink-0 text-slate-500">{key}</span>
+                    <span className="min-w-0 font-mono break-all text-neutral-200">
+                      {typeof value === 'string' ? value : JSON.stringify(value)}
+                    </span>
+                  </span>
+                ))}
+              </span>
+            </DetailRow>
+          ) : null}
+        </dl>
+      </section>
+    </div>
+  );
 }
 
 function ForkIcon() {
@@ -162,33 +360,62 @@ export function GameDetail({
   onRenameSave,
 }: GameDetailProps) {
   const [saveView, setSaveView] = useState<'cards' | 'tree'>('cards');
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const selectedSaveIndex = selectedSave
     ? game.saves.findIndex((save) => save.id === selectedSave.id)
     : -1;
   const selectedSaveName = selectedSave
     ? displaySaveName(selectedSave, defaultSaveName(Math.max(selectedSaveIndex, 0)))
     : '';
+  const releaseYear = gameReleaseYear(game);
+  const genres = gameGenres(game);
+  const facts = [
+    releaseYear,
+    game.publisher,
+    genres.length > 0 ? genres.join(', ') : undefined,
+    game.saves.length === 0
+      ? 'No saves yet'
+      : `${game.saves.length} ${game.saves.length === 1 ? 'save' : 'saves'}`,
+  ].filter((fact): fact is string => Boolean(fact));
 
   return (
     <div className="mt-8">
-      <section className="flex items-end gap-5 border-b border-white/5 pb-6">
+      <section className="flex items-end gap-6 border-b border-white/5 pb-6">
         <GameArtwork
           game={game}
           token={token}
-          className="aspect-[3/4] w-20 shrink-0 shadow-lg sm:w-28"
+          className="aspect-[3/4] w-28 shrink-0 shadow-lg sm:w-36"
         />
         <div className="min-w-0 pb-1">
           {game.platform ? (
-            <p className="text-xs font-medium text-[#e5a00d]">{game.platform}</p>
+            <p className="text-xs font-semibold tracking-[0.16em] text-[#e5a00d] uppercase">
+              {game.platform}
+            </p>
           ) : null}
-          <h2 className="mt-1.5 text-2xl font-medium tracking-tight text-white">{game.label}</h2>
-          {game.publisher ? <p className="mt-1 text-sm text-slate-400">{game.publisher}</p> : null}
-          <p className="mt-2 truncate font-mono text-xs text-slate-500">{game.id}</p>
-          <p className="mt-3 text-sm text-slate-400">
-            {game.saves.length === 0
-              ? 'No saves yet'
-              : `${game.saves.length} ${game.saves.length === 1 ? 'save' : 'saves'}`}
+          <h2 className="mt-2 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+            {game.label}
+          </h2>
+          <p className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-sm text-slate-400">
+            {facts.map((fact, index) => (
+              <span key={fact} className="flex items-center gap-x-2.5">
+                {index > 0 ? (
+                  <span className="text-slate-600" aria-hidden="true">
+                    ·
+                  </span>
+                ) : null}
+                {fact}
+              </span>
+            ))}
           </p>
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={() => setDetailsOpen(true)}
+              className="rounded-md bg-white/5 px-3.5 py-2 text-xs font-medium text-neutral-300 transition hover:bg-white/10 hover:text-white"
+            >
+              Details
+            </button>
+          </div>
         </div>
       </section>
 
@@ -355,6 +582,8 @@ export function GameDetail({
           />
         ) : null}
       </div>
+
+      {detailsOpen ? <GameDetailsDialog game={game} onClose={() => setDetailsOpen(false)} /> : null}
     </div>
   );
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/storage"
 )
 
-const selectGame = `SELECT id, title, sort_title, platform, publisher, description,
+const selectGame = `SELECT id, title, sort_title, platform, platform_company, publisher, description,
 	provider, metadata, refreshed_at FROM games`
 
 func (r *Repository) FindGameByIdentifier(ctx context.Context, identifier catalog.GameIdentifier) (*catalog.Game, error) {
@@ -163,14 +163,15 @@ func saveGameMetadata(ctx context.Context, executor contextExecutor, game catalo
 		return err
 	}
 	_, err = executor.ExecContext(ctx, `INSERT INTO games(
-		id, title, sort_title, platform, publisher, description, provider, provider_id, metadata, refreshed_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?)
+		id, title, sort_title, platform, platform_company, publisher, description, provider, provider_id, metadata, refreshed_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		title = excluded.title, sort_title = excluded.sort_title, platform = excluded.platform,
-		publisher = excluded.publisher, description = excluded.description, provider = excluded.provider,
+		platform_company = excluded.platform_company, publisher = excluded.publisher,
+		description = excluded.description, provider = excluded.provider,
 		provider_id = '', metadata = excluded.metadata, refreshed_at = excluded.refreshed_at`,
-		game.ID, game.Title, game.SortTitle, game.Platform, game.Publisher, game.Description,
-		game.MetadataSource, string(metadata), game.RefreshedAt.Format(time.RFC3339Nano),
+		game.ID, game.Title, game.SortTitle, game.Platform, game.PlatformCompany, game.Publisher,
+		game.Description, game.MetadataSource, string(metadata), game.RefreshedAt.Format(time.RFC3339Nano),
 	)
 	return err
 }
@@ -273,8 +274,8 @@ func scanGame(row scanner) (*catalog.Game, error) {
 	var game catalog.Game
 	var metadata, refreshedAt string
 	if err := row.Scan(
-		&game.ID, &game.Title, &game.SortTitle, &game.Platform, &game.Publisher,
-		&game.Description, &game.MetadataSource, &metadata, &refreshedAt,
+		&game.ID, &game.Title, &game.SortTitle, &game.Platform, &game.PlatformCompany,
+		&game.Publisher, &game.Description, &game.MetadataSource, &metadata, &refreshedAt,
 	); err != nil {
 		return nil, err
 	}
