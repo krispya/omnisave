@@ -6,3 +6,11 @@ web_dir: ./apps/dash/dist
 hasheous:
   base_url: https://hasheous.org
   timeout: 15s
+igdb:
+  # Optional. Environment variables OMNISAVE_IGDB_CLIENT_ID and
+  # OMNISAVE_IGDB_CLIENT_SECRET override these values.
+  client_id: ""
+  client_secret: ""
+  timeout: 15s
+  requests_per_second: 4
+  search_cache_ttl: 5m

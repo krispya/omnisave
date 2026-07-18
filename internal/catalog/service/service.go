@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"maps"
@@ -24,14 +26,59 @@ import (
 const maxMediaSize = 10 << 20
 
 type service struct {
-	repository storage.CatalogRepository
-	artifacts  storage.ArtifactStore
-	provider   catalog.Provider
+	repository          storage.CatalogRepository
+	artifacts           storage.ArtifactStore
+	resolutionProviders []catalog.Provider
+	searchProviders     []catalog.Provider
+	providers           map[string]catalog.Provider
 }
 
-// New creates a catalog backed by local storage and an external provider.
-func New(repository storage.CatalogRepository, artifacts storage.ArtifactStore, provider catalog.Provider) catalog.Service {
-	return &service{repository: repository, artifacts: artifacts, provider: provider}
+// New creates a catalog using the same ordered providers for resolution and search.
+func New(repository storage.CatalogRepository, artifacts storage.ArtifactStore, providers ...catalog.Provider) catalog.Service {
+	return NewWithProviders(repository, artifacts, providers, providers)
+}
+
+// NewWithProviders creates a catalog with independent resolution and search order.
+func NewWithProviders(
+	repository storage.CatalogRepository,
+	artifacts storage.ArtifactStore,
+	resolutionProviders []catalog.Provider,
+	searchProviders []catalog.Provider,
+) catalog.Service {
+	service := &service{
+		repository: repository,
+		artifacts:  artifacts,
+		providers:  make(map[string]catalog.Provider),
+	}
+	for _, provider := range resolutionProviders {
+		service.addProvider(provider, true, false)
+	}
+	for _, provider := range searchProviders {
+		service.addProvider(provider, false, true)
+	}
+	return service
+}
+
+func (s *service) addProvider(provider catalog.Provider, resolve, search bool) {
+	if provider == nil || strings.TrimSpace(provider.Name()) == "" {
+		return
+	}
+	s.providers[provider.Name()] = provider
+	if resolve && !containsProvider(s.resolutionProviders, provider.Name()) {
+		s.resolutionProviders = append(s.resolutionProviders, provider)
+	}
+	if search && !containsProvider(s.searchProviders, provider.Name()) {
+		s.searchProviders = append(s.searchProviders, provider)
+	}
+}
+
+func containsProvider(providers []catalog.Provider, name string) bool {
+	for _, provider := range providers {
+		if provider.Name() == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *service) Resolve(ctx context.Context, input catalog.ResolveGame) (*catalog.GameResolution, error) {
@@ -53,14 +100,14 @@ func (s *service) Resolve(ctx context.Context, input catalog.ResolveGame) (*cata
 		return &catalog.GameResolution{Game: *stored, Status: catalog.ResolutionExisting}, nil
 	}
 
-	match, err := s.resolveProvider(ctx, evidence)
+	match, err := s.resolveProviders(ctx, evidence, "")
 	if err != nil {
 		return nil, err
 	}
 	combined := evidence
 	if match != nil {
 		providerEvidence, valid := evidenceFromMatch(match)
-		if !valid || !providerSupportsEvidence(providerEvidence, evidence) {
+		if !valid {
 			return nil, catalog.ErrUnavailable
 		}
 		combined.Identifiers = append(combined.Identifiers, providerEvidence.Identifiers...)
@@ -110,7 +157,7 @@ func (s *service) Resolve(ctx context.Context, input catalog.ResolveGame) (*cata
 	}
 	if match != nil {
 		for _, reference := range match.Media {
-			_ = s.cacheMedia(ctx, gameID, match.Source, reference)
+			_ = s.cacheMedia(ctx, gameID, reference)
 		}
 	}
 	stored, err := s.repository.GetGame(ctx, gameID)
@@ -123,29 +170,55 @@ func (s *service) Resolve(ctx context.Context, input catalog.ResolveGame) (*cata
 func (s *service) Search(ctx context.Context, input catalog.SearchGames) ([]catalog.GameCandidate, error) {
 	input.Title = strings.TrimSpace(input.Title)
 	input.Platform = strings.TrimSpace(input.Platform)
-	if input.Title == "" || s.provider == nil || input.Limit < 0 || input.Limit > 25 {
+	if input.Title == "" || len(s.searchProviders) == 0 || input.Limit < 0 || input.Limit > 25 {
 		return nil, catalog.ErrInvalid
 	}
 	if input.Limit == 0 {
 		input.Limit = 10
 	}
-	candidates, err := s.provider.Search(ctx, input)
-	if err != nil {
-		return nil, err
+	for _, provider := range s.searchProviders {
+		candidates, err := provider.Search(ctx, input)
+		if errors.Is(err, catalog.ErrNotFound) || errors.Is(err, catalog.ErrUnavailable) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(candidates) == 0 {
+			continue
+		}
+		for index := range candidates {
+			candidates[index].Provider = provider.Name()
+			candidates[index].SelectionToken, err = encodeSelection(provider.Name(), candidates[index].SelectionToken)
+			if err != nil {
+				return nil, catalog.ErrUnavailable
+			}
+		}
+		return candidates, nil
 	}
-	if candidates == nil {
-		candidates = []catalog.GameCandidate{}
-	}
-	return candidates, nil
+	return []catalog.GameCandidate{}, nil
 }
 
 func (s *service) Match(ctx context.Context, gameID string, input catalog.MatchGame) (*catalog.Game, error) {
 	gameID = strings.TrimSpace(gameID)
 	input.SelectionToken = strings.TrimSpace(input.SelectionToken)
-	if gameID == "" || input.SelectionToken == "" || s.provider == nil {
+	if gameID == "" || input.SelectionToken == "" {
 		return nil, catalog.ErrInvalid
 	}
-	match, err := s.provider.Match(ctx, input.SelectionToken)
+	providerName, providerToken, err := decodeSelection(input.SelectionToken)
+	if err != nil {
+		return nil, catalog.ErrInvalid
+	}
+	provider := s.providers[providerName]
+	if provider == nil {
+		return nil, catalog.ErrInvalid
+	}
+	match, err := provider.Match(ctx, providerToken)
+	if err != nil {
+		return nil, err
+	}
+	stampMediaProvider(match, provider.Name())
+	match, err = s.enrichMatch(ctx, match, provider.Name())
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +250,7 @@ func (s *service) Match(ctx context.Context, gameID string, input catalog.MatchG
 		return nil, err
 	}
 	for _, reference := range match.Media {
-		_ = s.cacheMedia(ctx, gameID, match.Source, reference)
+		_ = s.cacheMedia(ctx, gameID, reference)
 	}
 	stored, err := s.repository.GetGame(ctx, gameID)
 	return stored, translateStorageError(err)
@@ -205,11 +278,12 @@ func (s *service) OpenMedia(ctx context.Context, gameID, mediaID string) (*catal
 	return media, payload, nil
 }
 
-func (s *service) cacheMedia(ctx context.Context, gameID, provider string, reference catalog.MediaReference) error {
-	if reference.ProviderID == "" || (reference.Kind != "cover" && reference.Kind != "screenshot") {
+func (s *service) cacheMedia(ctx context.Context, gameID string, reference catalog.MediaReference) error {
+	provider := s.providers[reference.Provider]
+	if provider == nil || reference.ProviderID == "" || (reference.Kind != "cover" && reference.Kind != "screenshot") {
 		return catalog.ErrInvalid
 	}
-	format, payload, err := s.provider.OpenMedia(ctx, reference)
+	format, payload, err := provider.OpenMedia(ctx, reference)
 	if err != nil {
 		return err
 	}
@@ -241,21 +315,136 @@ func (s *service) cacheMedia(ctx context.Context, gameID, provider string, refer
 		Format:      format,
 		SHA256:      hash,
 		Size:        int64(len(data)),
-		Provider:    provider,
+		Provider:    provider.Name(),
 		ProviderID:  reference.ProviderID,
 		Attribution: reference.Attribution,
 	})
 }
 
-func (s *service) resolveProvider(ctx context.Context, evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
-	if s.provider == nil {
-		return nil, nil
+func (s *service) resolveProviders(ctx context.Context, evidence catalog.ResolveGame, skip string) (*catalog.ProviderMatch, error) {
+	current := evidence
+	var combined *catalog.ProviderMatch
+	for _, provider := range s.resolutionProviders {
+		if provider.Name() == skip {
+			continue
+		}
+		match, err := provider.Resolve(ctx, current)
+		if errors.Is(err, catalog.ErrNotFound) || errors.Is(err, catalog.ErrUnavailable) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		provided, valid := evidenceFromMatch(match)
+		if !valid || !providerSupportsEvidence(provided, current) {
+			return nil, catalog.ErrUnavailable
+		}
+		stampMediaProvider(match, provider.Name())
+		current.Identifiers = append(current.Identifiers, provided.Identifiers...)
+		current.Fingerprints = append(current.Fingerprints, provided.Fingerprints...)
+		current.TitleHint = match.Title
+		current.PlatformHint = match.Platform
+		current, valid = normalizeEvidence(current)
+		if !valid {
+			return nil, catalog.ErrUnavailable
+		}
+		combined = mergeProviderMatches(combined, match)
 	}
-	match, err := s.provider.Resolve(ctx, evidence)
-	if errors.Is(err, catalog.ErrNotFound) || errors.Is(err, catalog.ErrUnavailable) {
-		return nil, nil
+	return combined, nil
+}
+
+func (s *service) enrichMatch(ctx context.Context, match *catalog.ProviderMatch, selectedProvider string) (*catalog.ProviderMatch, error) {
+	evidence, valid := evidenceFromMatch(match)
+	if !valid {
+		return nil, catalog.ErrUnavailable
 	}
-	return match, err
+	enrichment, err := s.resolveProviders(ctx, evidence, selectedProvider)
+	if err != nil {
+		return nil, err
+	}
+	return mergeProviderMatches(match, enrichment), nil
+}
+
+func mergeProviderMatches(base, next *catalog.ProviderMatch) *catalog.ProviderMatch {
+	if base == nil {
+		return next
+	}
+	if next == nil {
+		return base
+	}
+	base.Identifiers = append(base.Identifiers, next.Identifiers...)
+	base.Fingerprints = append(base.Fingerprints, next.Fingerprints...)
+	base.Media = append(base.Media, next.Media...)
+	if next.Source != "" {
+		base.Source = next.Source
+	}
+	if next.Title != "" {
+		base.Title = next.Title
+	}
+	if next.SortTitle != "" {
+		base.SortTitle = next.SortTitle
+	}
+	if next.Platform != "" {
+		base.Platform = next.Platform
+	}
+	if next.Publisher != "" {
+		base.Publisher = next.Publisher
+	}
+	if next.Description != "" {
+		base.Description = next.Description
+	}
+	if base.Metadata == nil {
+		base.Metadata = make(map[string]any)
+	}
+	for key, value := range next.Metadata {
+		base.Metadata[key] = value
+	}
+	if base.ROM.Source == "" && next.ROM.Source != "" {
+		base.ROM = next.ROM
+	}
+	return base
+}
+
+func stampMediaProvider(match *catalog.ProviderMatch, provider string) {
+	if match == nil {
+		return
+	}
+	for index := range match.Media {
+		match.Media[index].Provider = provider
+	}
+}
+
+type providerSelection struct {
+	Provider string `json:"provider"`
+	Token    string `json:"token"`
+}
+
+func encodeSelection(provider, token string) (string, error) {
+	payload, err := json.Marshal(providerSelection{Provider: provider, Token: token})
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func decodeSelection(encoded string) (string, string, error) {
+	if len(encoded) > 8192 {
+		return "", "", catalog.ErrInvalid
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", "", err
+	}
+	var selection providerSelection
+	if err := json.Unmarshal(payload, &selection); err != nil {
+		return "", "", err
+	}
+	selection.Provider = strings.TrimSpace(selection.Provider)
+	selection.Token = strings.TrimSpace(selection.Token)
+	if selection.Provider == "" || len(selection.Provider) > 64 || selection.Token == "" || len(selection.Token) > 4096 {
+		return "", "", catalog.ErrInvalid
+	}
+	return selection.Provider, selection.Token, nil
 }
 
 func (s *service) findExisting(ctx context.Context, evidence catalog.ResolveGame) (*catalog.Game, error) {

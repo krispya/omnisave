@@ -165,6 +165,7 @@ type ROMMatch struct {
 
 // MediaReference locates provider media before it is stored locally.
 type MediaReference struct {
+	Provider    string
 	Kind        string
 	Position    int
 	ProviderID  string
@@ -173,6 +174,7 @@ type MediaReference struct {
 
 // Provider resolves evidence, supports manual search, and opens catalog media.
 type Provider interface {
+	Name() string
 	Resolve(ctx context.Context, evidence ResolveGame) (*ProviderMatch, error)
 	Search(ctx context.Context, input SearchGames) ([]GameCandidate, error)
 	Match(ctx context.Context, selectionToken string) (*ProviderMatch, error)
