@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
@@ -174,6 +175,84 @@ func saveGameMetadata(ctx context.Context, executor contextExecutor, game catalo
 		game.Description, game.MetadataSource, string(metadata), game.RefreshedAt.Format(time.RFC3339Nano),
 	)
 	return err
+}
+
+// DeleteGame removes a game, its saves with their revision history, and any
+// artifacts left unreferenced. Media and identity rows cascade via foreign keys.
+func (r *Repository) DeleteGame(ctx context.Context, id string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT sha256 FROM game_media WHERE game_id = ?
+		UNION
+		SELECT artifact_sha256 FROM revision_files WHERE revision_id IN (
+			SELECT id FROM revisions WHERE omnisave_id IN (
+				SELECT id FROM omnisaves WHERE game_id = ?
+			)
+		)`, id, id,
+	)
+	if err != nil {
+		return err
+	}
+	var hashes []string
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			rows.Close()
+			return err
+		}
+		hashes = append(hashes, hash)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM omnisaves WHERE game_id = ?`, id); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM games WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return storage.ErrNotFound
+	}
+
+	var unreferenced []string
+	for _, hash := range hashes {
+		var used bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT
+				EXISTS(SELECT 1 FROM revision_files WHERE artifact_sha256 = ?) OR
+				EXISTS(SELECT 1 FROM game_media WHERE sha256 = ?)`, hash, hash,
+		).Scan(&used); err != nil {
+			return err
+		}
+		if !used {
+			unreferenced = append(unreferenced, hash)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	for _, hash := range unreferenced {
+		if err := os.Remove(r.artifactPath(hash)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *Repository) SaveGameMedia(ctx context.Context, media catalog.GameMedia) error {

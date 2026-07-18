@@ -6,6 +6,7 @@ type DeleteOptionsProps = {
   onFixMatch?: () => void;
   deleteLabel?: string;
   onDelete?: () => void;
+  onDeleteGame?: () => void;
 };
 
 export function DeleteOptions({
@@ -14,14 +15,20 @@ export function DeleteOptions({
   onFixMatch,
   deleteLabel = 'Delete',
   onDelete,
+  onDeleteGame,
 }: DeleteOptionsProps) {
   const menu = useDismissibleDetails();
 
-  if (!onFixMatch && !onDelete) return null;
+  if (!onFixMatch && !onDelete && !onDeleteGame) return null;
 
   function requestDelete() {
     menu.current?.removeAttribute('open');
     onDelete?.();
+  }
+
+  function requestDeleteGame() {
+    menu.current?.removeAttribute('open');
+    onDeleteGame?.();
   }
 
   function requestFixMatch() {
@@ -56,6 +63,15 @@ export function DeleteOptions({
             className="w-full rounded px-3 py-2 text-left text-sm text-red-300 hover:bg-white/5"
           >
             {deleteLabel}
+          </button>
+        ) : null}
+        {onDeleteGame ? (
+          <button
+            type="button"
+            onClick={requestDeleteGame}
+            className="w-full rounded px-3 py-2 text-left text-sm text-red-300 hover:bg-white/5"
+          >
+            Delete Game…
           </button>
         ) : null}
       </div>
