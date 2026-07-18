@@ -1,3 +1,5 @@
+This repo is pre-release with not users. We can make breaking changes and should when refactoring.
+
 ## Comments
 
 Comments should be concise and explain the concept and use. Tests can explain the overall story.
