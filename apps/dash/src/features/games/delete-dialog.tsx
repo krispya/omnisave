@@ -74,16 +74,16 @@ function DeleteDialog({
 
 type DeleteStateProps = Pick<DeleteDialogProps, 'deleting' | 'error' | 'onCancel' | 'onConfirm'>;
 
-export function DeleteGameDialog({ game, ...state }: DeleteStateProps & { game: GameSummary }) {
+export function DeleteGameSavesDialog({ game, ...state }: DeleteStateProps & { game: GameSummary }) {
   return (
     <DeleteDialog
       {...state}
-      title={`Delete ${game.label}?`}
+      title={`Delete all saves for ${game.label}?`}
       description={
         <>
           This permanently deletes {game.saves.length}{' '}
           {game.saves.length === 1 ? 'OmniSave' : 'OmniSaves'}, their revision history, and any
-          unshared artifacts. This cannot be undone.
+          unshared artifacts. {game.label} stays in the game catalog. This cannot be undone.
         </>
       }
     />

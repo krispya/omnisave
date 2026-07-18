@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import {
   loadGameMedia,
   type CatalogGame,
@@ -6,18 +6,60 @@ import {
   type OmniSave,
 } from '../../lib/omnisave-api.js';
 import { DeleteOptions } from './delete-options.js';
-import { useCatalogGame } from './game-catalog-cache.js';
 
 export type GameSummary = {
   id: string;
   label: string;
+  sortKey: string;
   platform?: string;
   publisher?: string;
   description?: string;
   media: GameMedia[];
   saves: OmniSave[];
-  updatedAt: string;
+  inCatalog: boolean;
 };
+
+const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+
+// The catalog is the source of truth: every Game appears in the library whether
+// or not it has saves. Saves whose game the catalog does not know (catalog
+// disabled on the server, or out of sync) still render, described by their own
+// metadata.
+export function buildLibrary(catalog: CatalogGame[] | null, saves: OmniSave[]): GameSummary[] {
+  const savesByGame = new Map<string, OmniSave[]>();
+  for (const save of saves) {
+    savesByGame.set(save.game_id, [...(savesByGame.get(save.game_id) ?? []), save]);
+  }
+
+  const library: GameSummary[] = (catalog ?? []).map((game) => ({
+    id: game.id,
+    label: game.title,
+    sortKey: game.sort_title?.trim() || game.title,
+    platform: game.platform,
+    publisher: game.publisher,
+    description: game.description,
+    media: game.media,
+    saves: savesByGame.get(game.id) ?? [],
+    inCatalog: true,
+  }));
+
+  const known = new Set(library.map((game) => game.id));
+  for (const [gameID, gameSaves] of savesByGame) {
+    if (known.has(gameID)) continue;
+    const label = gameSaves[0]?.metadata?.label ?? gameID;
+    library.push({
+      id: gameID,
+      label,
+      sortKey: label,
+      platform: gameSaves[0]?.metadata?.platform,
+      media: [],
+      saves: gameSaves,
+      inCatalog: false,
+    });
+  }
+
+  return library.sort((left, right) => collator.compare(left.sortKey, right.sortKey));
+}
 
 const artworkStyles = [
   'from-emerald-950 via-emerald-800 to-teal-400',
@@ -43,54 +85,6 @@ function initials(label: string) {
     .map((word) => word[0])
     .join('')
     .toUpperCase();
-}
-
-export function groupOmniSavesByGame(saves: OmniSave[]) {
-  const games = new Map<string, GameSummary>();
-
-  for (const save of saves) {
-    const existing = games.get(save.game_id);
-    if (existing) {
-      existing.saves.push(save);
-      if (save.created_at > existing.updatedAt) existing.updatedAt = save.created_at;
-      continue;
-    }
-
-    games.set(save.game_id, {
-      id: save.game_id,
-      label: save.metadata?.label ?? save.game_id,
-      platform: save.metadata?.platform,
-      media: [],
-      saves: [save],
-      updatedAt: save.created_at,
-    });
-  }
-
-  return [...games.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-}
-
-function withCatalog(game: GameSummary, catalog: CatalogGame | null): GameSummary {
-  if (!catalog) return game;
-  return {
-    ...game,
-    label: catalog.title,
-    platform: catalog.platform ?? game.platform,
-    publisher: catalog.publisher,
-    description: catalog.description,
-    media: catalog.media,
-  };
-}
-
-export function ResolvedGame({
-  game,
-  token,
-  children,
-}: {
-  game: GameSummary;
-  token: string;
-  children: (game: GameSummary) => ReactNode;
-}) {
-  return children(withCatalog(game, useCatalogGame(token, game.id)));
 }
 
 export function GameArtwork({
@@ -170,20 +164,21 @@ export function GameLibrary({
   token,
   onOpenGame,
   onRequestFixMatch,
-  onRequestDelete,
+  onRequestDeleteSaves,
 }: {
   games: GameSummary[];
   token: string;
   onOpenGame: (game: GameSummary) => void;
   onRequestFixMatch: (game: GameSummary) => void;
-  onRequestDelete: (game: GameSummary) => void;
+  onRequestDeleteSaves: (game: GameSummary) => void;
 }) {
   if (games.length === 0) {
     return (
       <div className="py-24 text-center">
-        <h2 className="font-medium text-white">No games yet</h2>
+        <h2 className="font-medium text-white">No games in the library</h2>
         <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-400">
-          Open the Debug menu and create an OmniSave to add a random game.
+          Games appear here once they are resolved into the catalog — with or without saves. Open the
+          Debug menu to create one.
         </p>
       </div>
     );
@@ -192,19 +187,14 @@ export function GameLibrary({
   return (
     <div className="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
       {games.map((game) => (
-        <Suspense key={game.id} fallback={<GameCardSkeleton />}>
-          <ResolvedGame game={game} token={token}>
-            {(resolved) => (
-              <GameCard
-                game={resolved}
-                token={token}
-                onOpenGame={onOpenGame}
-                onRequestFixMatch={onRequestFixMatch}
-                onRequestDelete={onRequestDelete}
-              />
-            )}
-          </ResolvedGame>
-        </Suspense>
+        <GameCard
+          key={game.id}
+          game={game}
+          token={token}
+          onOpenGame={onOpenGame}
+          onRequestFixMatch={onRequestFixMatch}
+          onRequestDeleteSaves={onRequestDeleteSaves}
+        />
       ))}
     </div>
   );
@@ -215,14 +205,16 @@ function GameCard({
   token,
   onOpenGame,
   onRequestFixMatch,
-  onRequestDelete,
+  onRequestDeleteSaves,
 }: {
   game: GameSummary;
   token: string;
   onOpenGame: (game: GameSummary) => void;
   onRequestFixMatch: (game: GameSummary) => void;
-  onRequestDelete: (game: GameSummary) => void;
+  onRequestDeleteSaves: (game: GameSummary) => void;
 }) {
+  const saveCount = game.saves.length;
+
   return (
     <article className="group min-w-0">
       <div className="relative">
@@ -230,50 +222,36 @@ function GameCard({
           <GameArtwork
             game={game}
             token={token}
-            className="aspect-[3/4] w-full shadow-md shadow-black/30 ring-1 ring-white/10 transition duration-150 group-hover:scale-[1.02] group-hover:shadow-xl group-hover:shadow-black/50 group-hover:ring-[#e5a00d]"
+            className={`aspect-[3/4] w-full shadow-md shadow-black/30 ring-1 ring-white/10 transition duration-150 group-hover:scale-[1.02] group-hover:shadow-xl group-hover:shadow-black/50 group-hover:ring-[#e5a00d] ${
+              saveCount === 0 ? 'opacity-60 saturate-[0.65]' : ''
+            }`}
           />
         </button>
+        {saveCount > 0 ? (
+          <span
+            className="absolute -top-1.5 -right-1.5 z-10 grid h-6 min-w-6 place-items-center rounded-md bg-[#e5a00d] px-1.5 text-xs font-bold text-black shadow-lg shadow-black/40"
+            aria-label={`${saveCount} ${saveCount === 1 ? 'save' : 'saves'}`}
+          >
+            {saveCount}
+          </span>
+        ) : null}
         <DeleteOptions
           label={game.label}
           className="absolute right-2 bottom-2 z-10 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
-          onFixMatch={() => onRequestFixMatch(game)}
-          onDelete={() => onRequestDelete(game)}
+          onFixMatch={game.inCatalog ? () => onRequestFixMatch(game) : undefined}
+          deleteLabel="Delete Saves…"
+          onDelete={saveCount > 0 ? () => onRequestDeleteSaves(game) : undefined}
         />
       </div>
       <button type="button" onClick={() => onOpenGame(game)} className="block w-full text-left">
         <h2 className="mt-2.5 truncate text-[13px] font-medium text-neutral-200 group-hover:text-white">
           {game.label}
         </h2>
-        <p className="mt-1 text-xs text-slate-500">
-          {game.saves.length} {game.saves.length === 1 ? 'save' : 'saves'}
+        <p className={`mt-1 text-xs ${saveCount === 0 ? 'text-slate-600' : 'text-slate-500'}`}>
+          {saveCount === 0 ? 'No saves yet' : `${saveCount} ${saveCount === 1 ? 'save' : 'saves'}`}
         </p>
       </button>
     </article>
-  );
-}
-
-function GameCardSkeleton() {
-  return (
-    <article className="min-w-0" aria-label="Loading game metadata">
-      <div className="catalog-shimmer aspect-[3/4] rounded-md" />
-      <div className="catalog-shimmer mt-3 h-3 w-3/4 rounded-full" />
-      <div className="catalog-shimmer mt-2 h-2.5 w-1/3 rounded-full" />
-    </article>
-  );
-}
-
-export function GameDetailSkeleton() {
-  return (
-    <div className="mt-8">
-      <div className="flex items-end gap-5 border-b border-white/5 pb-6">
-        <div className="catalog-shimmer aspect-[3/4] w-20 rounded-md sm:w-28" />
-        <div className="w-full max-w-sm pb-2">
-          <div className="catalog-shimmer h-3 w-24 rounded-full" />
-          <div className="catalog-shimmer mt-4 h-7 w-3/4 rounded" />
-          <div className="catalog-shimmer mt-3 h-3 w-1/2 rounded-full" />
-        </div>
-      </div>
-    </div>
   );
 }
 

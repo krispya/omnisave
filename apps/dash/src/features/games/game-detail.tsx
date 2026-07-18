@@ -185,7 +185,9 @@ export function GameDetail({
           {game.publisher ? <p className="mt-1 text-sm text-slate-400">{game.publisher}</p> : null}
           <p className="mt-2 truncate font-mono text-xs text-slate-500">{game.id}</p>
           <p className="mt-3 text-sm text-slate-400">
-            {game.saves.length} {game.saves.length === 1 ? 'save' : 'saves'}
+            {game.saves.length === 0
+              ? 'No saves yet'
+              : `${game.saves.length} ${game.saves.length === 1 ? 'save' : 'saves'}`}
           </p>
         </div>
       </section>
@@ -220,23 +222,33 @@ export function GameDetail({
         <section aria-label={`Saves for ${game.label}`}>
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-white">Saves</h3>
-            <div className="flex rounded-md bg-white/5 p-0.5 text-xs">
-              {(['cards', 'tree'] as const).map((view) => (
-                <button
-                  key={view}
-                  type="button"
-                  aria-pressed={saveView === view}
-                  onClick={() => setSaveView(view)}
-                  className={`rounded px-2.5 py-1.5 capitalize transition ${
-                    saveView === view ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white'
-                  }`}
-                >
-                  {view}
-                </button>
-              ))}
-            </div>
+            {game.saves.length > 0 ? (
+              <div className="flex rounded-md bg-white/5 p-0.5 text-xs">
+                {(['cards', 'tree'] as const).map((view) => (
+                  <button
+                    key={view}
+                    type="button"
+                    aria-pressed={saveView === view}
+                    onClick={() => setSaveView(view)}
+                    className={`rounded px-2.5 py-1.5 capitalize transition ${
+                      saveView === view ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white'
+                    }`}
+                  >
+                    {view}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
-          {saveView === 'tree' ? (
+          {game.saves.length === 0 ? (
+            <div className="rounded-md border border-dashed border-white/10 bg-white/[0.02] px-6 py-14 text-center">
+              <p className="text-sm font-medium text-white">This game has no saves</p>
+              <p className="mx-auto mt-2 max-w-xs text-xs leading-5 text-slate-500">
+                It stays in the catalog either way. Add one with Debug → New save, or bind a local
+                save from a client.
+              </p>
+            </div>
+          ) : saveView === 'tree' ? (
             <SaveTree saves={game.saves} selectedSave={selectedSave} onSelectSave={onSelectSave} />
           ) : (
             <div className="space-y-3">

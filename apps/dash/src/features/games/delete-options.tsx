@@ -4,15 +4,24 @@ type DeleteOptionsProps = {
   label: string;
   className: string;
   onFixMatch?: () => void;
-  onDelete: () => void;
+  deleteLabel?: string;
+  onDelete?: () => void;
 };
 
-export function DeleteOptions({ label, className, onFixMatch, onDelete }: DeleteOptionsProps) {
+export function DeleteOptions({
+  label,
+  className,
+  onFixMatch,
+  deleteLabel = 'Delete',
+  onDelete,
+}: DeleteOptionsProps) {
   const menu = useDismissibleDetails();
+
+  if (!onFixMatch && !onDelete) return null;
 
   function requestDelete() {
     menu.current?.removeAttribute('open');
-    onDelete();
+    onDelete?.();
   }
 
   function requestFixMatch() {
@@ -40,13 +49,15 @@ export function DeleteOptions({ label, className, onFixMatch, onDelete }: Delete
             Fix Match…
           </button>
         ) : null}
-        <button
-          type="button"
-          onClick={requestDelete}
-          className="w-full rounded px-3 py-2 text-left text-sm text-red-300 hover:bg-white/5"
-        >
-          Delete
-        </button>
+        {onDelete ? (
+          <button
+            type="button"
+            onClick={requestDelete}
+            className="w-full rounded px-3 py-2 text-left text-sm text-red-300 hover:bg-white/5"
+          >
+            {deleteLabel}
+          </button>
+        ) : null}
       </div>
     </details>
   );
