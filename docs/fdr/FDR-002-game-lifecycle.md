@@ -54,9 +54,10 @@ track has no saves on the server.
 ### 2. Library membership never depends on current installation
 
 **Decision:** Installation is per-device data, not a membership criterion.
-**Why:** The server is the durable side of the system; uninstalling to free
-space is precisely when the server copy matters most. Requiring an install
-would orphan saves the moment they became valuable.
+**Why:** The server is the durable side of the system
+([ADR-001](../adr/ADR-001-server-authority.md)); uninstalling to
+free space is precisely when the server copy matters most. Requiring an
+install would orphan saves the moment they became valuable.
 **Tradeoff:** Libraries accumulate games installed nowhere; cleanup is a
 deliberate delete, never automatic.
 
@@ -113,5 +114,8 @@ responsibility.
 
 ## Related
 
+- **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — the
+  source-of-truth premise behind installation-independent membership and
+  server-side provenance.
 - **FDRs:** [FDR-001](FDR-001-game-identity-resolution.md) — how track-time
   resolution chooses or creates the canonical Game.

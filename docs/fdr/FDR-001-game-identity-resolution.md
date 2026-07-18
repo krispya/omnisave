@@ -1,7 +1,7 @@
 # FDR-001: Game Identity Resolution
 
 **Status:** Active
-**Last reviewed:** 2026-07-17
+**Last reviewed:** 2026-07-18
 
 ## Overview
 
@@ -40,7 +40,9 @@ are evidence attached to the Game rather than its primary identity.
 
 **Why:** No external catalog covers every commercial game, ROM, emulator, and
 regional release. A local identity remains stable when providers are missing,
-changed, or supplemented later.
+changed, or supplemented later. Downstream of
+[ADR-001](../adr/ADR-001-server-authority.md): the server is the
+authority Omnisaves reference, so it must own the identity they reference by.
 
 **Tradeoff:** Two independent Omnisave servers can assign different UUIDs to
 the same game and need evidence, rather than UUID equality, to reconcile
@@ -117,4 +119,11 @@ to resolve the ambiguity.
 
 **Tradeoff:** Incorrect historical matches can block resolution until catalog
 identity-management tools exist.
+
+## Related
+
+- **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — the
+  server-as-authority premise behind server-owned canonical identity.
+- **FDRs:** [FDR-002](FDR-002-game-lifecycle.md) — when resolution happens in
+  a game's lifecycle (at track time).
 
