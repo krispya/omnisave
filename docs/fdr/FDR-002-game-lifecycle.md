@@ -1,6 +1,6 @@
 # FDR-002: Game Lifecycle
 
-**Status:** Experimental
+**Status:** Active
 **Last reviewed:** 2026-07-18
 
 ## Overview
@@ -9,8 +9,8 @@ How a game enters the Library, what the server remembers about where it came
 from, and what it takes for a game to leave. The lifecycle runs detect → track
 → bind: a Device's adapters discover installed games, the user tracks the ones
 Omnisave should know about, and binding connects native saves to Omnisaves.
-The detect/track/bind flow and game deletion are in the codebase today;
-Devices and Provenance are design-approved and not yet implemented.
+Save synchronization is not built yet; until it exists, liveness updates come
+from registration and tracking alone.
 
 ## Behavior
 
