@@ -14,7 +14,7 @@ Names for visible surfaces. When a name here disagrees with a file or component 
 
 **Dash** — The web app (`apps/dash`) for managing the server: connection, the Library, and debug features. Where Omnisaves are created and browsed.
 
-**Client CLI** — The terminal surface of the client binary: the `scan`, `track`, and `bind` commands and the prompts they render (`internal/client/tui`).
+**Client CLI** — The terminal surface of the client binary: the `connect`, `scan`, `track`, and `bind` commands and the prompts they render (`internal/client/tui`). `connect` verifies and persists the server connection so the other commands need no token or URL.
 
 ## Product
 

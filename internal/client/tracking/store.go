@@ -31,6 +31,12 @@ type Device struct {
 	Name string `json:"name"`
 }
 
+// Server is the persisted connection created by `omnisave-client connect`.
+type Server struct {
+	URL   string `json:"url,omitempty"`
+	Token string `json:"token,omitempty"`
+}
+
 // LocalSave identifies one adapter-native save discovered on this machine.
 type LocalSave struct {
 	ID        string
@@ -56,6 +62,7 @@ type Binding struct {
 // State contains this machine's tracked games and save bindings.
 type State struct {
 	Device   Device          `json:"device"`
+	Server   Server          `json:"server"`
 	Games    map[string]Game `json:"games"`
 	Bindings []Binding       `json:"bindings"`
 }

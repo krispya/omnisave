@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [react(), babel({ presets: [reactCompilerPreset()] }), tailwindcss()],
   server: {
     proxy: {
-      '/api': 'http://localhost:8080',
+      '/api': process.env.OMNISAVE_DEV_API ?? 'http://localhost:8080',
     },
   },
 });

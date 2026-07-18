@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently --kill-others --names api,dash --prefix-colors blue,green \"pnpm run dev:server\" \"pnpm run dev:dash\"",
+    "dev": "node scripts/dev.mjs",
     "dev:server": "go run ./cmd/server ./server.yaml",
     "dev:dash": "pnpm --filter @omnisave/dash run dev",
     "build": "pnpm --filter './packages/*' run build && pnpm --filter './apps/*' run build",
