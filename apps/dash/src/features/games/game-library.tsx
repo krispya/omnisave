@@ -21,10 +21,9 @@ export type GameSummary = {
 
 const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
 
-// The catalog is the source of truth: every Game appears in the library whether
-// or not it has saves. Saves whose game the catalog does not know (catalog
-// disabled on the server, or out of sync) still render, described by their own
-// metadata.
+// The server's Library is the source of truth: every Game appears whether or
+// not it has saves. Saves whose game the server does not list (games endpoints
+// disabled, or out of sync) still render, described by their own metadata.
 export function buildLibrary(catalog: CatalogGame[] | null, saves: OmniSave[]): GameSummary[] {
   const savesByGame = new Map<string, OmniSave[]>();
   for (const save of saves) {
@@ -177,8 +176,7 @@ export function GameLibrary({
       <div className="py-24 text-center">
         <h2 className="font-medium text-white">No games in the library</h2>
         <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-400">
-          Games appear here once they are resolved into the catalog — with or without saves. Open the
-          Debug menu to create one.
+          Your library shows every game the server knows.
         </p>
       </div>
     );

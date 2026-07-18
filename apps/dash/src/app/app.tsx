@@ -74,7 +74,7 @@ export function App() {
     setLoading(true);
     setError('');
     try {
-      // The catalog endpoints are optional server-side; without them the
+      // The games endpoints are optional server-side; without them the
       // library falls back to games described by their saves.
       const [nextSaves, nextCatalog] = await Promise.all([
         listOmniSaves(activeToken, signal),
@@ -329,7 +329,7 @@ export function App() {
   }
 
   const librarySummary = catalog
-    ? `${games.length} ${games.length === 1 ? 'game' : 'games'} in the catalog · ${saves.length} ${
+    ? `${games.length} ${games.length === 1 ? 'game' : 'games'} in your library · ${saves.length} ${
         saves.length === 1 ? 'save' : 'saves'
       }.`
     : `${games.length} ${games.length === 1 ? 'game' : 'games'} with saved progress.`;
