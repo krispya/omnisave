@@ -309,6 +309,8 @@ func TestManualCatalogMatchStory(t *testing.T) {
 
 type catalogProviderStub struct{}
 
+func (catalogProviderStub) Name() string { return "stub" }
+
 const testCoverImage = "\x89PNG\r\n\x1a\ncover image"
 
 func (catalogProviderStub) Resolve(_ context.Context, evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {

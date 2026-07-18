@@ -103,10 +103,46 @@ func TestManualMatchCreatesCatalogGameWithoutLocalFingerprint(t *testing.T) {
 	}
 }
 
+func TestResolutionProvidersBuildOnEarlierIdentityClaims(t *testing.T) {
+	ctx := context.Background()
+	repository := storagetest.NewMemoryRepository()
+	hashes := &stagedProvider{name: "hashes", resolve: func(evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
+		return &catalog.ProviderMatch{
+			Source: "hashes", Title: "Local title", Platform: "SNES",
+			Identifiers:  []catalog.GameIdentifier{{Namespace: "igdb.game", Value: "1070"}},
+			Fingerprints: evidence.Fingerprints,
+			ROM:          catalog.ROMMatch{Source: "no-intro", ProviderID: "rom-1"},
+		}, nil
+	}}
+	metadata := &stagedProvider{name: "metadata", resolve: func(evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
+		if len(evidence.Identifiers) != 1 || evidence.Identifiers[0].Namespace != "igdb.game" {
+			return nil, catalog.ErrNotFound
+		}
+		return &catalog.ProviderMatch{
+			Source: "metadata", Title: "Super Mario World", Publisher: "Nintendo",
+			Identifiers: []catalog.GameIdentifier{{Namespace: "igdb.game", Value: "1070"}},
+		}, nil
+	}}
+	games := catalogservice.NewWithProviders(repository, repository,
+		[]catalog.Provider{hashes, metadata}, []catalog.Provider{metadata, hashes})
+
+	resolved, err := games.Resolve(ctx, catalog.ResolveGame{Fingerprints: []catalog.GameFingerprint{{
+		Platform: "snes", Algorithm: "sha1", Value: "0123456789abcdef0123456789abcdef01234567",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Game.Title != "Super Mario World" || resolved.Game.Publisher != "Nintendo" || resolved.Game.MetadataSource != "metadata" {
+		t.Fatalf("later metadata did not enrich the resolved game: %+v", resolved.Game)
+	}
+}
+
 type fakeProvider struct {
 	resolutions   int
 	mediaRequests int
 }
+
+func (p *fakeProvider) Name() string { return "fake" }
 
 func (p *fakeProvider) Resolve(_ context.Context, evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
 	p.resolutions++
@@ -150,3 +186,26 @@ func (p *fakeProvider) OpenMedia(context.Context, catalog.MediaReference) (strin
 }
 
 var _ catalog.Provider = (*fakeProvider)(nil)
+
+type stagedProvider struct {
+	name    string
+	resolve func(catalog.ResolveGame) (*catalog.ProviderMatch, error)
+}
+
+func (p *stagedProvider) Name() string { return p.name }
+
+func (p *stagedProvider) Resolve(_ context.Context, evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
+	return p.resolve(evidence)
+}
+
+func (p *stagedProvider) Search(context.Context, catalog.SearchGames) ([]catalog.GameCandidate, error) {
+	return nil, catalog.ErrNotFound
+}
+
+func (p *stagedProvider) Match(context.Context, string) (*catalog.ProviderMatch, error) {
+	return nil, catalog.ErrNotFound
+}
+
+func (p *stagedProvider) OpenMedia(context.Context, catalog.MediaReference) (string, io.ReadCloser, error) {
+	return "", nil, catalog.ErrNotFound
+}
