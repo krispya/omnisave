@@ -51,7 +51,7 @@ export function DebugMenu({
           <>
             <DebugItem
               label={action === 'save' ? 'Adding save…' : 'New save'}
-              description={`Add another save to ${game.label}`}
+              description={`Add a save to ${game.label}`}
               disabled={action !== null}
               onClick={() => run(onAddSave)}
             />
@@ -70,8 +70,8 @@ export function DebugMenu({
           </>
         ) : (
           <DebugItem
-            label={action === 'game' ? 'Creating OmniSave…' : 'New OmniSave'}
-            description="Create a random game with its first save"
+            label={action === 'game' ? 'Creating game…' : 'New game'}
+            description="Resolve a random game into the catalog with a first save"
             disabled={action !== null}
             onClick={() => run(onAddRandomGame)}
           />

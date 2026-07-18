@@ -57,7 +57,7 @@ export async function createRandomTestOmniSave(token: string, existingLabels: st
     return fixGameMatch(token, created.game_id, candidate.selection_token);
   });
 
-  return { save: created, catalog };
+  return { save: created, game: resolution.game, catalog };
 }
 
 export function createTestSave(
