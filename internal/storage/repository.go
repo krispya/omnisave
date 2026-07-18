@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
@@ -48,6 +49,10 @@ type CatalogRepository interface {
 	ListGames(ctx context.Context) ([]catalog.Game, error)
 	SaveGame(ctx context.Context, game catalog.Game, rom *catalog.GameROM) error
 	DeleteGame(ctx context.Context, id string) error
+	UpsertDevice(ctx context.Context, device catalog.Device) error
+	TrackGame(ctx context.Context, gameID string, record catalog.GameTracking) error
+	UntrackGame(ctx context.Context, gameID, deviceID string, at time.Time) error
+	ListGameProvenance(ctx context.Context, gameID string) ([]catalog.GameTracking, error)
 	SaveGameMedia(ctx context.Context, media catalog.GameMedia) error
 	ClearGameMedia(ctx context.Context, gameID string) error
 	GetGameMedia(ctx context.Context, gameID, mediaID string) (*catalog.GameMedia, error)

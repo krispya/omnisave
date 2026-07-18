@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
@@ -23,6 +25,8 @@ type MemoryRepository struct {
 	games     map[string]catalog.Game
 	roms      map[string]catalog.GameROM
 	media     map[string]catalog.GameMedia
+	devices   map[string]catalog.Device
+	tracking  map[string]map[string]catalog.GameTracking
 }
 
 func NewMemoryRepository() *MemoryRepository {
@@ -33,6 +37,8 @@ func NewMemoryRepository() *MemoryRepository {
 		games:     make(map[string]catalog.Game),
 		roms:      make(map[string]catalog.GameROM),
 		media:     make(map[string]catalog.GameMedia),
+		devices:   make(map[string]catalog.Device),
+		tracking:  make(map[string]map[string]catalog.GameTracking),
 	}
 }
 
@@ -263,6 +269,7 @@ func (r *MemoryRepository) DeleteGame(ctx context.Context, id string) error {
 		}
 	}
 	delete(r.games, id)
+	delete(r.tracking, id)
 	for mediaID, media := range r.media {
 		if media.GameID == id {
 			delete(r.media, mediaID)
@@ -274,6 +281,65 @@ func (r *MemoryRepository) DeleteGame(ctx context.Context, id string) error {
 		}
 	}
 	return nil
+}
+
+func (r *MemoryRepository) UpsertDevice(_ context.Context, device catalog.Device) error {
+	if existing, ok := r.devices[device.ID]; ok {
+		device.CreatedAt = existing.CreatedAt
+	}
+	r.devices[device.ID] = device
+	return nil
+}
+
+func (r *MemoryRepository) TrackGame(_ context.Context, gameID string, record catalog.GameTracking) error {
+	if _, ok := r.games[gameID]; !ok {
+		return storage.ErrNotFound
+	}
+	if _, ok := r.devices[record.DeviceID]; !ok {
+		return storage.ErrNotFound
+	}
+	records := r.tracking[gameID]
+	if records == nil {
+		records = make(map[string]catalog.GameTracking)
+		r.tracking[gameID] = records
+	}
+	if existing, ok := records[record.DeviceID]; ok {
+		record.FirstTrackedAt = existing.FirstTrackedAt
+	}
+	record.UntrackedAt = nil
+	records[record.DeviceID] = record
+	device := r.devices[record.DeviceID]
+	device.LastSeenAt = record.LastSeenAt
+	r.devices[record.DeviceID] = device
+	return nil
+}
+
+func (r *MemoryRepository) UntrackGame(_ context.Context, gameID, deviceID string, at time.Time) error {
+	record, ok := r.tracking[gameID][deviceID]
+	if !ok {
+		return storage.ErrNotFound
+	}
+	record.UntrackedAt = &at
+	r.tracking[gameID][deviceID] = record
+	return nil
+}
+
+func (r *MemoryRepository) ListGameProvenance(_ context.Context, gameID string) ([]catalog.GameTracking, error) {
+	records := make([]catalog.GameTracking, 0, len(r.tracking[gameID]))
+	for _, record := range r.tracking[gameID] {
+		record.DeviceName = r.devices[record.DeviceID].Name
+		records = append(records, record)
+	}
+	slices.SortFunc(records, func(left, right catalog.GameTracking) int {
+		if !left.FirstTrackedAt.Equal(right.FirstTrackedAt) {
+			if left.FirstTrackedAt.Before(right.FirstTrackedAt) {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(left.DeviceID, right.DeviceID)
+	})
+	return records, nil
 }
 
 func (r *MemoryRepository) SaveGameMedia(_ context.Context, media catalog.GameMedia) error {
@@ -325,6 +391,7 @@ func (r *MemoryRepository) game(id string) (*catalog.Game, error) {
 		}
 		return left.Position - right.Position
 	})
+	game.Provenance, _ = r.ListGameProvenance(context.Background(), id)
 	return &game, nil
 }
 
