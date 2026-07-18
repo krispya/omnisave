@@ -124,3 +124,33 @@ func TestTrackingRemovalDropsVisibleBindingsAndPreservesUnavailableOnes(t *testi
 		t.Fatal("expected an unavailable tracked game to retain its save binding")
 	}
 }
+
+func TestUnbindRemovesTheMappingSoTheSaveCanBindFresh(t *testing.T) {
+	state := tracking.NewState()
+	local := tracking.LocalSave{
+		ID:       "steam:game:cloud:account",
+		Adapter:  "steam",
+		TargetID: "steam:installer",
+		GameID:   "steam:game",
+	}
+	if err := state.Bind(local, "save-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	if !state.Unbind(local) {
+		t.Fatal("expected the bound save to unbind")
+	}
+	if _, bound := state.BindingFor(local); bound {
+		t.Fatal("expected no binding to remain")
+	}
+	if state.Unbind(local) {
+		t.Fatal("expected unbinding an unbound save to report false")
+	}
+	if err := state.Bind(local, "save-b"); err != nil {
+		t.Fatal(err)
+	}
+	binding, ok := state.BindingFor(local)
+	if !ok || binding.OmnisaveID != "save-b" {
+		t.Fatalf("expected a fresh binding after unbind, got %+v", state.Bindings)
+	}
+}

@@ -15,12 +15,14 @@ type TrackOutcome struct {
 	Linked    int
 	Untracked int
 	Pending   int
+	Seeded    int
+	Unbound   int
 	Failed    int
 	Synced    bool
 }
 
 func (o TrackOutcome) changes() int {
-	return o.Added + o.Linked + o.Untracked + o.Pending + o.Failed
+	return o.Added + o.Linked + o.Untracked + o.Pending + o.Seeded + o.Unbound + o.Failed
 }
 
 // TrackAdded reports a game newly created in the Library.
@@ -47,6 +49,18 @@ func TrackRemoved(title string) {
 func TrackFailed(title string, err error) {
 	fmt.Println("  " + errorStyle.Render("✗") + " " + plainTitle(title) + "  " +
 		mutedStyle.Render(strings.TrimSpace(err.Error())))
+}
+
+// BindSeeded reports a local save seeded into a new server Omnisave.
+func BindSeeded(title, kind string) {
+	fmt.Println("  " + successStyle.Render("↑") + " " + plainTitle(title) + "  " +
+		mutedStyle.Render(kind+" seeded to a new Omnisave"))
+}
+
+// BindSkipped reports a local save left unbound because the server already
+// has saves for its game.
+func BindSkipped(title string) {
+	fmt.Println("  " + mutedStyle.Render("○ "+title+" — server already has saves; run omnisave-client bind"))
 }
 
 // TrackSyncFailed reports that the server was unreachable for the whole run.
@@ -78,6 +92,12 @@ func TrackSummary(outcome TrackOutcome) {
 	}
 	if outcome.Pending > 0 {
 		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d pending", outcome.Pending)))
+	}
+	if outcome.Seeded > 0 {
+		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d seeded", outcome.Seeded)))
+	}
+	if outcome.Unbound > 0 {
+		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d unbound", outcome.Unbound)))
 	}
 	if outcome.Failed > 0 {
 		segments = append(segments, errorStyle.Render(fmt.Sprintf("%d failed", outcome.Failed)))
