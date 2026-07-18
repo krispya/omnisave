@@ -1,5 +1,4 @@
 import { useEffect, useId, type ReactNode } from 'react';
-import type { GameSummary } from './game-library.js';
 
 type DeleteDialogProps = {
   title: string;
@@ -10,7 +9,12 @@ type DeleteDialogProps = {
   onConfirm: () => void;
 };
 
-function DeleteDialog({
+export type DeleteStateProps = Pick<
+  DeleteDialogProps,
+  'deleting' | 'error' | 'onCancel' | 'onConfirm'
+>;
+
+export function DeleteDialog({
   title,
   description,
   deleting,
@@ -69,58 +73,5 @@ function DeleteDialog({
         </div>
       </section>
     </div>
-  );
-}
-
-type DeleteStateProps = Pick<DeleteDialogProps, 'deleting' | 'error' | 'onCancel' | 'onConfirm'>;
-
-export function DeleteGameDialog({ game, ...state }: DeleteStateProps & { game: GameSummary }) {
-  return (
-    <DeleteDialog
-      {...state}
-      title={`Delete ${game.label}?`}
-      description={
-        game.saves.length > 0 ? (
-          <>
-            This permanently removes {game.label} from your library and deletes{' '}
-            {game.saves.length === 1 ? 'its save' : `all ${game.saves.length} of its saves`}, their
-            revision history, and any unshared artifacts. This cannot be undone.
-          </>
-        ) : (
-          <>This permanently removes {game.label} from your library. This cannot be undone.</>
-        )
-      }
-    />
-  );
-}
-
-export function DeleteGameSavesDialog({ game, ...state }: DeleteStateProps & { game: GameSummary }) {
-  return (
-    <DeleteDialog
-      {...state}
-      title={`Delete all saves for ${game.label}?`}
-      description={
-        <>
-          This permanently deletes {game.saves.length}{' '}
-          {game.saves.length === 1 ? 'Omnisave' : 'Omnisaves'}, their revision history, and any
-          unshared artifacts. {game.label} stays in your library. This cannot be undone.
-        </>
-      }
-    />
-  );
-}
-
-export function DeleteSaveDialog({ name, ...state }: DeleteStateProps & { name: string }) {
-  return (
-    <DeleteDialog
-      {...state}
-      title={`Delete ${name}?`}
-      description={
-        <>
-          This permanently deletes this save, its revision history, and any unshared artifacts. This
-          cannot be undone.
-        </>
-      }
-    />
   );
 }

@@ -5,7 +5,7 @@ import {
   type CatalogGame,
   type GameMatchCandidate,
 } from '../../lib/omnisave-api.js';
-import type { GameSummary } from './game-library.js';
+import type { GameSummary } from '../game/game-summary.js';
 
 type FixMatchDialogProps = {
   game: GameSummary;

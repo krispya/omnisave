@@ -32,18 +32,18 @@ import { DebugMenu } from '../features/debug/debug-menu.js';
 import {
   DeleteGameDialog,
   DeleteGameSavesDialog,
-  DeleteSaveDialog,
-} from '../features/games/delete-dialog.js';
-import { FixMatchDialog } from '../features/games/fix-match-dialog.js';
-import { GameDetail } from '../features/games/game-detail.js';
+} from '../features/game/delete-game-dialog.js';
+import { preloadGameArtwork } from '../features/game/game-artwork.js';
+import { GameDetail } from '../features/game/game-detail.js';
+import type { GameSummary } from '../features/game/game-summary.js';
+import { buildLibrary } from '../features/library/build-library.js';
+import { FixMatchDialog } from '../features/library/fix-match-dialog.js';
+import { DeleteSaveDialog } from '../features/omnisave/delete-save-dialog.js';
+import { GameLibrary, GameLibraryLoading } from '../features/library/game-library.js';
 import {
-  GameLibrary,
-  GameLibraryLoading,
-  buildLibrary,
-  preloadGameArtwork,
-  type GameSummary,
-} from '../features/games/game-library.js';
-import { useLibraryEvents, type LibraryEventStatus } from '../features/games/use-library-events.js';
+  useLibraryEvents,
+  type LibraryEventStatus,
+} from '../features/library/use-library-events.js';
 
 const tokenStorageKey = 'omnisave.api-token';
 

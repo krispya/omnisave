@@ -1,7 +1,7 @@
 import type { Omnisave } from '../../lib/omnisave-api.js';
 import { useDismissibleDetails } from '../../lib/use-dismissible-details.js';
-import type { GameSummary } from '../games/game-library.js';
-import { defaultSaveName, displaySaveName } from '../games/save-name.js';
+import type { GameSummary } from '../game/game-summary.js';
+import { defaultSaveName, displaySaveName } from '../omnisave/save-name.js';
 
 type DebugAction = 'game' | 'save' | 'revision' | 'fork' | null;
 
