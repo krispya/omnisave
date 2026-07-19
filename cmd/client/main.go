@@ -358,7 +358,13 @@ func runTrack(ctx context.Context, scanner *client.Scanner, arguments []string) 
 			})
 			return choice, err
 		}
-		bindingErr = bindUnboundSavesWithChooser(taskCtx, server, &state, scans, confirmed, &outcome, report, choose)
+		chooseAmbiguous := func(gameTitle string, options []tui.AmbiguousBindingOption) (choice tui.AmbiguousBindingChoice, err error) {
+			session.Interact(func() {
+				choice, err = tui.PromptAmbiguousBinding(gameTitle, options)
+			})
+			return choice, err
+		}
+		bindingErr = bindUnboundSavesWithChooser(taskCtx, server, &state, scans, confirmed, &outcome, report, choose, chooseAmbiguous)
 	})
 	if waitErr != nil && !errors.Is(waitErr, tui.ErrAborted) {
 		return waitErr
@@ -530,7 +536,8 @@ func bindUnboundSaves(
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 ) error {
-	return bindUnboundSavesWithChooser(ctx, server, state, scans, confirmed, outcome, report, tui.PromptStaleBinding)
+	return bindUnboundSavesWithChooser(ctx, server, state, scans, confirmed, outcome, report,
+		tui.PromptStaleBinding, tui.PromptAmbiguousBinding)
 }
 
 func bindUnboundSavesWithChooser(
@@ -542,6 +549,7 @@ func bindUnboundSavesWithChooser(
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 	choose func(gameTitle, omnisaveName string) (tui.StaleBindingChoice, error),
+	chooseAmbiguous func(gameTitle string, options []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error),
 ) error {
 	type candidate struct {
 		local        tracking.LocalSave
@@ -639,24 +647,7 @@ func bindUnboundSavesWithChooser(
 
 		gameSaves := savesByGame[candidate.serverGameID]
 		if len(gameSaves) == 0 {
-			created, revision, err := binding.Seed(ctx, server, candidate.serverGameID, candidate.save)
-			if err != nil {
-				outcome.Failed++
-				report.SaveFailed(candidate.local.GameTitle, err)
-				continue
-			}
-			if err := state.Bind(candidate.local, created.ID); err != nil {
-				outcome.Failed++
-				report.SaveFailed(candidate.local.GameTitle, err)
-				continue
-			}
-			if err := state.RecordSynced(candidate.local, created.ID, revision.ID); err != nil {
-				outcome.Failed++
-				report.SaveFailed(candidate.local.GameTitle, err)
-				continue
-			}
-			outcome.Seeded++
-			report.Seeded(candidate.local.GameTitle, created.DisplayName)
+			seedCandidateSave(ctx, server, state, candidate.local, candidate.save, candidate.serverGameID, outcome, report)
 			continue
 		}
 
@@ -764,10 +755,88 @@ func bindUnboundSavesWithChooser(
 				return fmt.Errorf("unknown stale binding choice %q", choice)
 			}
 		}
-		outcome.Unbound++
-		report.Unbound(candidate.local.GameTitle)
+		// Zero or several matches: the pass never guesses (FDR-003) — the
+		// user picks the lineage, seeds fresh, or defers to manual bind.
+		matchedRevisions := make(map[string]string, len(matches))
+		for _, match := range matches {
+			matchedRevisions[match.Omnisave.ID] = match.Revisions[len(match.Revisions)-1].ID
+		}
+		options := make([]tui.AmbiguousBindingOption, 0, len(gameSaves))
+		for _, remoteSave := range gameSaves {
+			options = append(options, tui.AmbiguousBindingOption{
+				OmnisaveID:        remoteSave.ID,
+				Name:              omnisaveDisplayName(remoteSave),
+				MatchedRevisionID: matchedRevisions[remoteSave.ID],
+			})
+		}
+		choice, err := chooseAmbiguous(candidate.local.GameTitle, options)
+		if err != nil {
+			return err
+		}
+		switch {
+		case choice.Seed:
+			seedCandidateSave(ctx, server, state, candidate.local, candidate.save, candidate.serverGameID, outcome, report)
+		case choice.OmnisaveID != "":
+			if err := state.Bind(candidate.local, choice.OmnisaveID); err != nil {
+				outcome.Failed++
+				report.SaveFailed(candidate.local.GameTitle, err)
+				continue
+			}
+			matchedRevisionID := matchedRevisions[choice.OmnisaveID]
+			if matchedRevisionID != "" {
+				if err := state.RecordSynced(candidate.local, choice.OmnisaveID, matchedRevisionID); err != nil {
+					outcome.Failed++
+					report.SaveFailed(candidate.local.GameTitle, err)
+					continue
+				}
+			}
+			name := choice.OmnisaveID
+			for _, option := range options {
+				if option.OmnisaveID == choice.OmnisaveID {
+					name = option.Name
+					break
+				}
+			}
+			outcome.Bound++
+			report.Bound(candidate.local.GameTitle, name, matchedRevisionID != "")
+		default:
+			outcome.Unbound++
+			report.Unbound(candidate.local.GameTitle)
+		}
 	}
 	return nil
+}
+
+// seedCandidateSave creates a new Omnisave from one local save and records
+// the seed revision as the binding's sync baseline.
+func seedCandidateSave(
+	ctx context.Context,
+	server *remote.Client,
+	state *tracking.State,
+	local tracking.LocalSave,
+	save target.Save,
+	serverGameID string,
+	outcome *tui.TrackOutcome,
+	report *tui.TrackReport,
+) {
+	created, revision, err := binding.Seed(ctx, server, serverGameID, save)
+	if err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return
+	}
+	if err := state.Bind(local, created.ID); err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return
+	}
+	if err := state.RecordSynced(local, created.ID, revision.ID); err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return
+	}
+	outcome.Seeded++
+	report.Seeded(local.GameTitle, created.DisplayName)
 }
 
 func revisionByID(history []omnisave.Revision, id *string) (omnisave.Revision, bool) {
