@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 	"slices"
+	"strings"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client"
@@ -19,6 +20,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client/target/steam"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
+	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
 // errReported marks failures already rendered by the TUI: exit non-zero
@@ -35,12 +37,10 @@ func main() {
 }
 
 func run(ctx context.Context, arguments []string) error {
-	if len(arguments) == 0 {
-		printUsage()
-		return nil
-	}
-
 	scanner := client.NewScanner(nil, retroarch.NewDefault(), steam.NewDefault())
+	if len(arguments) == 0 {
+		return runTrack(ctx, scanner, nil)
+	}
 	switch arguments[0] {
 	case "connect":
 		return runConnect(ctx, arguments[1:])
@@ -54,7 +54,11 @@ func run(ctx context.Context, arguments []string) error {
 		printUsage()
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q; use connect, scan, track, or bind", arguments[0])
+		// Bare flags belong to track, the default command.
+		if strings.HasPrefix(arguments[0], "-") {
+			return runTrack(ctx, scanner, arguments)
+		}
+		return fmt.Errorf("unknown command %q; use track (the default), connect, scan, or bind", arguments[0])
 	}
 }
 
@@ -109,27 +113,52 @@ func runConnect(ctx context.Context, arguments []string) error {
 		}
 	}
 
+	_, err = establishServer(ctx, store, &state, serverURL, apiToken)
+	return err
+}
+
+// establishServer verifies a connection, registers this device, and persists
+// the server so later commands need no token or URL. Nothing is saved unless
+// the token is accepted, so a failed attempt leaves any previous connection
+// intact.
+func establishServer(ctx context.Context, store *tracking.Store, state *tracking.State, serverURL, apiToken string) (*remote.Client, error) {
 	server, err := remote.New(serverURL, apiToken, nil)
 	if err != nil {
 		tui.ConnectFailed(err)
-		return errReported
+		return nil, errReported
 	}
 	if err := verifyConnection(ctx, server); err != nil {
 		tui.ConnectFailed(err)
-		return errReported
+		return nil, errReported
 	}
 	device := state.EnsureDevice(deviceName())
 	if err := server.RegisterDevice(ctx, device.ID, catalog.RegisterDevice{Name: device.Name, Platform: runtime.GOOS}); err != nil {
 		tui.ConnectFailed(err)
-		return errReported
+		return nil, errReported
 	}
 
 	state.Server = tracking.Server{URL: serverURL, Token: apiToken}
-	if err := store.Save(state); err != nil {
-		return err
+	if err := store.Save(*state); err != nil {
+		return nil, err
 	}
 	tui.ConnectSuccess(serverURL, device.Name)
-	return nil
+	return server, nil
+}
+
+// ensureServer returns a client for the established server connection,
+// running the connect flow first when this device has none: every command
+// that records against a server knows which server that is, even when it is
+// unreachable for the run itself.
+func ensureServer(ctx context.Context, store *tracking.Store, state *tracking.State, flagURL, flagToken string) (*remote.Client, error) {
+	url, token := serverConnection(*state, flagURL, flagToken)
+	if token != "" {
+		return remote.New(url, token, nil)
+	}
+	promptURL, promptToken, err := tui.PromptConnect(url)
+	if err != nil {
+		return nil, err
+	}
+	return establishServer(ctx, store, state, promptURL, promptToken)
 }
 
 func verifyConnection(ctx context.Context, server *remote.Client) error {
@@ -175,11 +204,10 @@ func runBind(ctx context.Context, scanner *client.Scanner, arguments []string) e
 	if err != nil {
 		return err
 	}
-	url, apiToken := serverConnection(state, *serverURL, *token)
-	if apiToken == "" {
-		return errors.New("no server connection; run omnisave-client connect first")
+	server, err := ensureServer(ctx, store, &state, *serverURL, *token)
+	if errors.Is(err, tui.ErrAborted) {
+		return nil
 	}
-	server, err := remote.New(url, apiToken, nil)
 	if err != nil {
 		return err
 	}
@@ -270,19 +298,28 @@ func runTrack(ctx context.Context, scanner *client.Scanner, arguments []string) 
 		return err
 	}
 
-	scans, err := tui.ScanForSelection(ctx, scanner)
+	store, err := trackingStore(*statePath)
+	if err != nil {
+		return err
+	}
+	state, err := store.Load()
+	if err != nil {
+		return err
+	}
+	server, err := ensureServer(ctx, store, &state, *serverURL, *token)
 	if errors.Is(err, tui.ErrAborted) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	report := &tui.TrackReport{}
+	reconciled := reconcileDeletedGames(ctx, server, &state, report)
 
-	store, err := trackingStore(*statePath)
-	if err != nil {
-		return err
+	scans, err := tui.ScanForSelection(ctx, scanner)
+	if errors.Is(err, tui.ErrAborted) {
+		return nil
 	}
-	state, err := store.Load()
 	if err != nil {
 		return err
 	}
@@ -305,24 +342,64 @@ func runTrack(ctx context.Context, scanner *client.Scanner, arguments []string) 
 		return err
 	}
 
-	url, apiToken := serverConnection(state, *serverURL, *token)
-	if apiToken == "" {
-		tui.TrackSummary(tui.TrackOutcome{Tracked: len(state.Games)})
-		if len(state.Games) > 0 || len(removed) > 0 {
-			tui.TrackHint("run omnisave-client connect to link this device to your server")
+	var outcome tui.TrackOutcome
+	var bindingErr error
+	waitErr := tui.Wait(ctx, "", func(taskCtx context.Context, session *tui.WaitSession) {
+		var confirmed map[string]bool
+		outcome, confirmed = syncTracking(taskCtx, server, &state, scans, removed, report)
+		if !outcome.Synced {
+			return
 		}
-		return nil
+		// Stale-match questions borrow the terminal from the activity line
+		// and hand it back, so one spinner spans the whole server phase.
+		choose := func(gameTitle, omnisaveName string) (choice tui.StaleBindingChoice, err error) {
+			session.Interact(func() {
+				choice, err = tui.PromptStaleBinding(gameTitle, omnisaveName)
+			})
+			return choice, err
+		}
+		bindingErr = bindUnboundSavesWithChooser(taskCtx, server, &state, scans, confirmed, &outcome, report, choose)
+	})
+	if waitErr != nil && !errors.Is(waitErr, tui.ErrAborted) {
+		return waitErr
 	}
-	server, err := remote.New(url, apiToken, nil)
-	if err != nil {
+	outcome.Untracked += reconciled
+	report.Print()
+	tui.TrackSummary(outcome)
+	if err := store.Save(state); err != nil {
 		return err
 	}
-	outcome, confirmed := syncTracking(ctx, server, &state, scans, removed)
-	if outcome.Synced {
-		seedUnboundSaves(ctx, server, &state, scans, confirmed, &outcome)
+	if errors.Is(waitErr, tui.ErrAborted) || errors.Is(bindingErr, tui.ErrAborted) {
+		return nil
 	}
-	tui.TrackSummary(outcome)
-	return store.Save(state)
+	return bindingErr
+}
+
+// reconcileDeletedGames untracks games whose Library records were deleted on
+// the server, so the selection prompt reflects the deletion before it opens
+// (FDR-002, decision 10). An unreachable server is not a deletion; when the
+// list cannot be fetched, reconciliation waits for a run that can ask.
+func reconcileDeletedGames(ctx context.Context, server *remote.Client, state *tracking.State, report *tui.TrackReport) int {
+	serverGameIDs, err := server.ListGameIDs(ctx)
+	if err != nil {
+		return 0
+	}
+	exists := make(map[string]bool, len(serverGameIDs))
+	for _, id := range serverGameIDs {
+		exists[id] = true
+	}
+	untracked := 0
+	for _, id := range sortedGameIDs(state.Games) {
+		game := state.Games[id]
+		if game.ServerGameID == "" || exists[game.ServerGameID] {
+			continue
+		}
+		state.Untrack(id)
+		report.DeletedOnServer(game.Title)
+		report.Removed(game.Title)
+		untracked++
+	}
+	return untracked
 }
 
 // syncTracking makes the server aware of this device's tracked games: it
@@ -336,13 +413,14 @@ func syncTracking(
 	state *tracking.State,
 	scans []client.TargetScan,
 	removed []tracking.Game,
+	report *tui.TrackReport,
 ) (tui.TrackOutcome, map[string]bool) {
 	device := state.EnsureDevice(deviceName())
 	outcome := tui.TrackOutcome{Tracked: len(state.Games)}
 	confirmed := make(map[string]bool)
 	err := server.RegisterDevice(ctx, device.ID, catalog.RegisterDevice{Name: device.Name, Platform: runtime.GOOS})
 	if err != nil {
-		tui.TrackSyncFailed(err)
+		report.SyncFailed(err)
 		return outcome, confirmed
 	}
 	outcome.Synced = true
@@ -353,11 +431,11 @@ func syncTracking(
 		identity, visible := identities[id]
 		if game.ServerGameID == "" && !visible {
 			outcome.Pending++
-			tui.TrackPending(game.Title)
+			report.Pending(game.Title)
 			continue
 		}
 		if game.ServerGameID == "" {
-			if !resolveIntoLibrary(ctx, server, state, &outcome, id, identity) {
+			if !resolveIntoLibrary(ctx, server, state, &outcome, id, identity, report) {
 				continue
 			}
 			game = state.Games[id]
@@ -367,28 +445,20 @@ func syncTracking(
 			Installed: visible,
 		})
 		if isNotFound(trackErr) {
-			// The stored Library identity no longer exists on this server —
-			// its data was reset or the game was deleted there. The server is
-			// the authority: discard the stale resolution, and with scan
-			// evidence in hand resolve and track again.
-			state.SetServerGameID(id, "")
-			if !visible {
-				outcome.Pending++
-				tui.TrackPending(game.Title)
-				continue
-			}
-			if !resolveIntoLibrary(ctx, server, state, &outcome, id, identity) {
-				continue
-			}
-			game = state.Games[id]
-			trackErr = server.TrackGame(ctx, game.ServerGameID, device.ID, catalog.TrackGame{
-				Adapter:   game.Adapter,
-				Installed: visible,
-			})
+			// The stored Library identity no longer exists: the game was
+			// deleted on the server, and the server is the authority, so the
+			// deletion syncs back and this device stops tracking the game.
+			// Re-tracking it in a later run resolves it fresh.
+			state.Untrack(id)
+			outcome.Untracked++
+			outcome.Tracked--
+			report.DeletedOnServer(game.Title)
+			report.Removed(game.Title)
+			continue
 		}
 		if trackErr != nil {
 			outcome.Failed++
-			tui.TrackFailed(game.Title, trackErr)
+			report.Failed(game.Title, trackErr)
 			continue
 		}
 		confirmed[id] = true
@@ -397,13 +467,14 @@ func syncTracking(
 		if game.ServerGameID == "" {
 			continue
 		}
-		if err := server.UntrackGame(ctx, game.ServerGameID, device.ID); err != nil {
+		// A game already deleted on the server has nothing left to untrack.
+		if err := server.UntrackGame(ctx, game.ServerGameID, device.ID); err != nil && !isNotFound(err) {
 			outcome.Failed++
-			tui.TrackFailed(game.Title, err)
+			report.Failed(game.Title, err)
 			continue
 		}
 		outcome.Untracked++
-		tui.TrackRemoved(game.Title)
+		report.Removed(game.Title)
 	}
 	return outcome, confirmed
 }
@@ -417,6 +488,7 @@ func resolveIntoLibrary(
 	outcome *tui.TrackOutcome,
 	id string,
 	identity target.GameIdentity,
+	report *tui.TrackReport,
 ) bool {
 	game := state.Games[id]
 	resolution, err := server.ResolveGame(ctx, catalog.ResolveGame{
@@ -427,16 +499,16 @@ func resolveIntoLibrary(
 	})
 	if err != nil {
 		outcome.Failed++
-		tui.TrackFailed(game.Title, err)
+		report.Failed(game.Title, err)
 		return false
 	}
 	state.SetServerGameID(id, resolution.Game.ID)
 	if resolution.Status == catalog.ResolutionCreated {
 		outcome.Added++
-		tui.TrackAdded(game.Title, resolution.Game.Title)
+		report.Added(game.Title, resolution.Game.Title)
 	} else {
 		outcome.Linked++
-		tui.TrackLinked(game.Title, resolution.Game.Title)
+		report.Linked(game.Title, resolution.Game.Title)
 	}
 	return true
 }
@@ -446,36 +518,62 @@ func isNotFound(err error) bool {
 	return errors.As(err, &response) && response.StatusCode == http.StatusNotFound
 }
 
-// seedUnboundSaves runs FDR-003's binding pass for the conflict-free case:
-// a tracked game the server has no saves for gets a new Omnisave seeded from
-// this device's local save, and the binding starts at that revision. Only
-// games whose server records were confirmed this run participate. Games
-// whose saves the server already knows stay unbound here — matching them is
-// a later step; manual bind covers them until then.
-func seedUnboundSaves(
+// bindUnboundSaves runs FDR-003's binding pass: conflict-free seeds and head
+// matches are automatic, while a unique older match asks whether to advance
+// or fork. Ambiguous and unmatched saves remain unbound.
+func bindUnboundSaves(
 	ctx context.Context,
 	server *remote.Client,
 	state *tracking.State,
 	scans []client.TargetScan,
 	confirmed map[string]bool,
 	outcome *tui.TrackOutcome,
-) {
+	report *tui.TrackReport,
+) error {
+	return bindUnboundSavesWithChooser(ctx, server, state, scans, confirmed, outcome, report, tui.PromptStaleBinding)
+}
+
+func bindUnboundSavesWithChooser(
+	ctx context.Context,
+	server *remote.Client,
+	state *tracking.State,
+	scans []client.TargetScan,
+	confirmed map[string]bool,
+	outcome *tui.TrackOutcome,
+	report *tui.TrackReport,
+	choose func(gameTitle, omnisaveName string) (tui.StaleBindingChoice, error),
+) error {
 	type candidate struct {
 		local        tracking.LocalSave
 		save         target.Save
 		serverGameID string
 	}
 	var candidates []candidate
+	type scannedGame struct {
+		id    string
+		title string
+	}
+	var scannedGames []scannedGame
+	seenGames := make(map[string]bool)
+	hasSave := make(map[string]bool)
 	for _, scan := range scans {
 		for _, discovered := range scan.Games {
 			game := state.Games[discovered.Game.ID]
 			if !confirmed[discovered.Game.ID] || game.ServerGameID == "" {
 				continue
 			}
+			if !seenGames[discovered.Game.ID] {
+				seenGames[discovered.Game.ID] = true
+				scannedGames = append(scannedGames, scannedGame{
+					id:    discovered.Game.ID,
+					title: game.Title,
+				})
+			}
 			for _, save := range discovered.Saves {
 				if len(save.Files) == 0 {
 					continue
 				}
+				hasSave[discovered.Game.ID] = true
 				candidates = append(candidates, candidate{
 					local:        tracking.LocalSaveFrom(scan, discovered, save),
 					save:         save,
@@ -484,56 +582,228 @@ func seedUnboundSaves(
 			}
 		}
 	}
+	for _, game := range scannedGames {
+		if !hasSave[game.id] {
+			report.NoSave(game.title)
+		}
+	}
 	if len(candidates) == 0 {
-		return
+		return nil
 	}
 
 	remoteSaves, err := server.ListOmnisaves(ctx)
 	if err != nil {
 		outcome.Failed++
-		tui.TrackFailed("save binding", err)
-		return
+		report.BindingFailed(err)
+		return nil
 	}
 	saveExists := make(map[string]bool, len(remoteSaves))
-	hasSaves := make(map[string]bool, len(remoteSaves))
+	savesByGame := make(map[string][]omnisave.Omnisave)
 	for _, save := range remoteSaves {
 		saveExists[save.ID] = true
-		hasSaves[save.GameID] = true
+		savesByGame[save.GameID] = append(savesByGame[save.GameID], save)
 	}
+	histories := make(map[string][]omnisave.Revision)
+	historyLoaded := make(map[string]bool)
 
-	for _, seed := range candidates {
-		if bound, isBound := state.BindingFor(seed.local); isBound {
+	for _, candidate := range candidates {
+		if _, tracked := state.Games[candidate.local.GameID]; !tracked {
+			// An earlier candidate's server-side deletion untracked this
+			// game mid-pass; its remaining saves have nothing to bind to.
+			continue
+		}
+		if bound, isBound := state.BindingFor(candidate.local); isBound {
 			if saveExists[bound.OmnisaveID] {
 				continue
 			}
-			// The bound Omnisave is gone from the authoritative server, so
-			// the mapping is dead. Drop it and let this save bind fresh.
-			state.Unbind(seed.local)
+			if len(savesByGame[candidate.serverGameID]) == 0 {
+				// The Omnisave this device protected was deleted on the
+				// authoritative server and no other lineage remains, so the
+				// deletion syncs back as untracking — reseeding here would
+				// resurrect the deleted content. Re-tracking starts fresh.
+				state.Untrack(candidate.local.GameID)
+				if err := server.UntrackGame(ctx, candidate.serverGameID, state.Device.ID); err != nil && !isNotFound(err) {
+					outcome.Failed++
+					report.SaveFailed(candidate.local.GameTitle, err)
+				}
+				outcome.Untracked++
+				outcome.Tracked--
+				report.SaveDeleted(candidate.local.GameTitle)
+				report.Removed(candidate.local.GameTitle)
+				continue
+			}
+			// Another lineage survives, so only this mapping is dead. Drop
+			// it and let the save match or wait for manual binding.
+			state.Unbind(candidate.local)
 		}
-		if hasSaves[seed.serverGameID] {
-			outcome.Unbound++
-			tui.BindSkipped(seed.local.GameTitle)
+
+		gameSaves := savesByGame[candidate.serverGameID]
+		if len(gameSaves) == 0 {
+			created, revision, err := binding.Seed(ctx, server, candidate.serverGameID, candidate.save)
+			if err != nil {
+				outcome.Failed++
+				report.SaveFailed(candidate.local.GameTitle, err)
+				continue
+			}
+			if err := state.Bind(candidate.local, created.ID); err != nil {
+				outcome.Failed++
+				report.SaveFailed(candidate.local.GameTitle, err)
+				continue
+			}
+			if err := state.RecordSynced(candidate.local, created.ID, revision.ID); err != nil {
+				outcome.Failed++
+				report.SaveFailed(candidate.local.GameTitle, err)
+				continue
+			}
+			outcome.Seeded++
+			report.Seeded(candidate.local.GameTitle, created.DisplayName)
 			continue
 		}
-		created, revision, err := binding.Seed(ctx, server, seed.serverGameID, seed.save)
+
+		lineages := make([]binding.Lineage, 0, len(gameSaves))
+		loadFailed := false
+		for _, remoteSave := range gameSaves {
+			if !historyLoaded[remoteSave.ID] {
+				history, err := server.ListRevisions(ctx, remoteSave.ID)
+				if err != nil {
+					outcome.Failed++
+					report.SaveFailed(candidate.local.GameTitle, err)
+					loadFailed = true
+					break
+				}
+				histories[remoteSave.ID] = history
+				historyLoaded[remoteSave.ID] = true
+			}
+			lineages = append(lineages, binding.Lineage{
+				Omnisave:  remoteSave,
+				Revisions: histories[remoteSave.ID],
+			})
+		}
+		if loadFailed {
+			continue
+		}
+		matches, err := binding.FindContentMatches(candidate.save, lineages)
 		if err != nil {
 			outcome.Failed++
-			tui.TrackFailed(seed.local.GameTitle, err)
+			report.SaveFailed(candidate.local.GameTitle, err)
 			continue
 		}
-		if err := state.Bind(seed.local, created.ID); err != nil {
-			outcome.Failed++
-			tui.TrackFailed(seed.local.GameTitle, err)
+		if len(matches) == 1 && matches[0].MatchesHead() {
+			matched := matches[0].Omnisave
+			if err := state.Bind(candidate.local, matched.ID); err != nil {
+				outcome.Failed++
+				report.SaveFailed(candidate.local.GameTitle, err)
+				continue
+			}
+			if err := state.RecordSynced(candidate.local, matched.ID, *matched.HeadRevisionID); err != nil {
+				outcome.Failed++
+				report.SaveFailed(candidate.local.GameTitle, err)
+				continue
+			}
+			outcome.Rebound++
+			report.Rebound(candidate.local.GameTitle, omnisaveDisplayName(matched))
 			continue
 		}
-		if err := state.RecordSynced(seed.local, created.ID, revision.ID); err != nil {
-			outcome.Failed++
-			tui.TrackFailed(seed.local.GameTitle, err)
-			continue
+		if len(matches) == 1 {
+			matched := matches[0]
+			head, headFound := revisionByID(histories[matched.Omnisave.ID], matched.Omnisave.HeadRevisionID)
+			if !headFound {
+				outcome.Failed++
+				report.SaveFailed(candidate.local.GameTitle, errors.New("matching Omnisave has no readable head"))
+				continue
+			}
+			matchedRevision := matched.Revisions[len(matched.Revisions)-1]
+			choice, err := choose(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave))
+			if err != nil {
+				return err
+			}
+			switch choice {
+			case tui.StaleBindingFastForward:
+				if err := binding.FastForward(ctx, server, candidate.save, matchedRevision, head); err != nil {
+					outcome.Failed++
+					report.SaveFailed(candidate.local.GameTitle, err)
+					continue
+				}
+				if err := state.Bind(candidate.local, matched.Omnisave.ID); err != nil {
+					outcome.Failed++
+					report.SaveFailed(candidate.local.GameTitle, err)
+					continue
+				}
+				if err := state.RecordSynced(candidate.local, matched.Omnisave.ID, head.ID); err != nil {
+					outcome.Failed++
+					report.SaveFailed(candidate.local.GameTitle, err)
+					continue
+				}
+				outcome.Advanced++
+				report.FastForwarded(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave))
+				continue
+			case tui.StaleBindingFork:
+				fork, err := server.ForkOmnisave(ctx, matched.Omnisave.ID, omnisave.ForkOmnisave{
+					RevisionID:  matchedRevision.ID,
+					DisplayName: forkDisplayName(matched.Omnisave),
+				})
+				if err != nil {
+					outcome.Failed++
+					report.SaveFailed(candidate.local.GameTitle, err)
+					continue
+				}
+				if err := state.Bind(candidate.local, fork.Omnisave.ID); err != nil {
+					outcome.Failed++
+					report.SaveFailed(candidate.local.GameTitle, err)
+					continue
+				}
+				if err := state.RecordSynced(candidate.local, fork.Omnisave.ID, fork.Revision.ID); err != nil {
+					outcome.Failed++
+					report.SaveFailed(candidate.local.GameTitle, err)
+					continue
+				}
+				outcome.Forked++
+				report.Forked(candidate.local.GameTitle, omnisaveDisplayName(fork.Omnisave))
+				continue
+			default:
+				return fmt.Errorf("unknown stale binding choice %q", choice)
+			}
 		}
-		outcome.Seeded++
-		tui.BindSeeded(seed.local.GameTitle, seed.local.Kind)
+		outcome.Unbound++
+		report.Unbound(candidate.local.GameTitle)
 	}
+	return nil
+}
+
+func revisionByID(history []omnisave.Revision, id *string) (omnisave.Revision, bool) {
+	if id == nil {
+		return omnisave.Revision{}, false
+	}
+	for _, revision := range history {
+		if revision.ID == *id {
+			return revision, true
+		}
+	}
+	return omnisave.Revision{}, false
+}
+
+func omnisaveDisplayName(save omnisave.Omnisave) string {
+	if name := strings.TrimSpace(save.DisplayName); name != "" {
+		return name
+	}
+	id := save.ID
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	return "Omnisave " + id
+}
+
+func forkDisplayName(source omnisave.Omnisave) string {
+	name := strings.TrimSpace(source.DisplayName)
+	if name == "" {
+		return "Fork"
+	}
+	suffix := " (fork)"
+	runes := []rune(name)
+	if len(runes)+len([]rune(suffix)) > 100 {
+		runes = runes[:100-len([]rune(suffix))]
+	}
+	return string(runes) + suffix
 }
 
 func deviceName() string {
@@ -566,16 +836,18 @@ func printUsage() {
 	fmt.Println(`Omnisave client
 
 Usage:
+  omnisave-client [track] [--state path]
   omnisave-client connect [URL] [--state path]
   omnisave-client scan [--verbose]
-  omnisave-client track [--state path]
   omnisave-client bind [--state path]
 
 Commands:
+  track    Choose which discovered games should be synchronized; tracked games
+           are added to your server library and record this device's provenance.
+           Running omnisave-client with no command runs track; the first run
+           asks for your server connection.
   connect  Link this device to your Omnisave server and remember the connection
   scan     Discover installed targets, games, and saves without changing state
-  track    Choose which discovered games should be synchronized; tracked games
-           are added to your server library and record this device's provenance
   bind     Choose which Omnisave a discovered local save should synchronize with
 
 The saved connection can be overridden per command with --server and --token,

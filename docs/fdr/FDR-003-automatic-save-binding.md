@@ -1,6 +1,6 @@
 # FDR-003: Automatic Save Binding
 
-**Status:** Planned
+**Status:** Experimental
 **Last reviewed:** 2026-07-18
 
 ## Overview
@@ -17,15 +17,18 @@ establishes the baseline that sync will later diff against.
 
 - After tracking completes, every tracked game that has a local save but no
   binding on this Device goes through the binding pass. Games without a
-  local save are skipped untouched.
+  local save are skipped untouched, and the result says that no save is
+  available to sync.
 - If the server has no Omnisaves for the game, one is created and seeded:
   the local save's content becomes its initial revision, and the binding
-  records that revision as the sync baseline. The save appears in the Dash
-  with no further action.
+  records that revision as the sync baseline. The server names the new
+  Omnisave ("Save N"), the result says "Save seeded as Save N," and it
+  appears in the Dash under that name with no further action.
 - If the server already has Omnisaves for the game, the local save is
   compared by content against their full revision histories.
 - Matching the head of exactly one Omnisave rebinds automatically with the
-  head as the baseline — this Device is simply up to date.
+  head as the baseline — this Device is simply up to date, and the result
+  says "Save matches the head of Save N and is resyncing."
 - Matching an older revision of exactly one Omnisave means the save went
   stale: it was tracked at some point and play continued on another
   Device. The user chooses between fast-forwarding — the head's content
@@ -46,7 +49,11 @@ establishes the baseline that sync will later diff against.
 - The pass only binds against games whose server records were confirmed in
   the same run; a game whose tracking failed is never seeded.
 - A binding whose Omnisave no longer exists on the server is discarded
-  during the pass; its local save is then seedable or matchable again.
+  during the pass. If other Omnisaves for the game survive, the local save
+  falls back to content matching; if none remain, the deletion syncs back —
+  the game is untracked on this Device rather than reseeded, so a deletion
+  in the Dash is never resurrected
+  ([FDR-002](FDR-002-game-lifecycle.md), decision 10).
 - Manual `omnisave-client bind` remains available and behaves as before.
 
 ## Design Decisions
@@ -119,9 +126,11 @@ guarantee a head conflict at the first commit. Asking at bind time, when
 inevitable conflict into an informed choice. Forking keeps the lineage:
 the new Omnisave records its origin, so the Dash shows where the
 playthrough split.
-**Tradeoff:** Fast-forward writes server content over local files at bind
-time, pulling the download-and-apply machinery (and its overwrite-safety
-rules) into this feature ahead of synchronization proper.
+**Tradeoff:** Fast-forward pulls download-and-apply machinery into this
+feature ahead of synchronization proper. The client must download and verify
+the complete head before moving any local file, then restore the matched local
+snapshot if applying the head fails. The replaced content also remains
+recoverable as the older server revision that triggered the choice.
 
 ### 6. Ambiguity prompts; the pass never guesses
 
@@ -136,7 +145,7 @@ the same save matches both lineages.
 ### 7. No local save, no Omnisave
 
 **Decision:** Tracked games without a local save are skipped — no empty
-Omnisave, no binding.
+Omnisave, no binding — and reported as having no save available to sync.
 **Why:** There is nothing to protect yet, and an Omnisave with no revisions
 is indistinguishable from lost data. A later pass picks the game up once
 it has been played.
@@ -144,7 +153,24 @@ it has been played.
 pass after its first save exists — the same exposure window
 [FDR-002](FDR-002-game-lifecycle.md) accepts for untracked games.
 
-### 8. Mismatched choices defer to synchronization
+### 8. Every Omnisave carries a persisted display name
+
+**Decision:** The server guarantees a display name at creation: an unnamed
+create gets "Save N", numbered past the game's highest surviving "Save N";
+an unnamed fork inherits its source's name with a " (fork)" suffix; renaming
+to an empty name is rejected. Records that predate the rule were backfilled
+in creation order.
+**Why:** Names are how saves are told apart everywhere they surface — the
+Dash poster wall, the track report's "seeded as" line, the bind prompt.
+Client-side fallbacks invented a name per surface and could disagree;
+assigning it once, at the source of truth
+([ADR-001](../adr/ADR-001-server-authority.md)), makes every surface show
+the same identity.
+**Tradeoff:** Default names are generic — "Save 2" says nothing about the
+playthrough — and a deleted save's number can be reissued later, so a name
+is not a stable identifier; the ID remains the only permanent handle.
+
+### 9. Mismatched choices defer to synchronization
 
 **Decision:** Binding to a non-matching existing Omnisave records the
 mapping with an empty baseline and moves no content in either direction.
@@ -175,7 +201,3 @@ exists and runs.
   save is synchronization territory.
 - If concurrent seeding produces duplicate Omnisaves in practice, a
   server-side create-if-empty operation would close the race.
-- Fast-forward overwrites local files with the head's content. The
-  backup-before-overwrite policy it needs is shared with synchronization's
-  pull path and should be decided once, in the sync FDR, before either
-  ships.
