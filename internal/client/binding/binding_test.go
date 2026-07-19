@@ -73,6 +73,93 @@ func writeFile(t *testing.T, directory, name, content string) target.File {
 	return target.File{Path: path, LocationID: "battery", RelativePath: name, Size: int64(len(content))}
 }
 
+func revisionFile(path, content, format string) omnisave.RevisionFile {
+	digest := sha256.Sum256([]byte(content))
+	return omnisave.RevisionFile{
+		Path: path,
+		Artifact: omnisave.Artifact{
+			Format: format,
+			SHA256: hex.EncodeToString(digest[:]),
+			Size:   int64(len(content)),
+		},
+	}
+}
+
+func TestFindContentMatchesRecognizesTheUniqueMatchingHead(t *testing.T) {
+	directory := t.TempDir()
+	local := target.Save{Files: []target.File{
+		writeFile(t, directory, "Zelda.srm", "battery-content"),
+		writeFile(t, directory, "Zelda.rtc", "clock-content"),
+	}}
+	headID := "revision-a2"
+	lineages := []binding.Lineage{
+		{
+			Omnisave: omnisave.Omnisave{ID: "save-a", HeadRevisionID: &headID},
+			Revisions: []omnisave.Revision{
+				{ID: "revision-a1", Files: []omnisave.RevisionFile{revisionFile("battery/Zelda.srm", "old", "application/octet-stream")}},
+				{ID: headID, Files: []omnisave.RevisionFile{
+					revisionFile("battery/Zelda.rtc", "clock-content", "application/x-clock"),
+					revisionFile("battery/Zelda.srm", "battery-content", "application/x-save"),
+				}},
+			},
+		},
+		{
+			Omnisave: omnisave.Omnisave{ID: "save-b"},
+			Revisions: []omnisave.Revision{{
+				ID:    "revision-b1",
+				Files: []omnisave.RevisionFile{revisionFile("battery/Zelda.srm", "different", "application/octet-stream")},
+			}},
+		},
+	}
+
+	matches, err := binding.FindContentMatches(local, lineages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Omnisave.ID != "save-a" || !matches[0].MatchesHead() {
+		t.Fatalf("expected only save-a's head to match, got %+v", matches)
+	}
+}
+
+func TestFindContentMatchesRecognizesAnOlderRevisionWithoutCallingItTheHead(t *testing.T) {
+	directory := t.TempDir()
+	local := target.Save{Files: []target.File{writeFile(t, directory, "Metroid.srm", "checkpoint")}}
+	headID := "revision-2"
+	lineage := binding.Lineage{
+		Omnisave: omnisave.Omnisave{ID: "save-a", HeadRevisionID: &headID},
+		Revisions: []omnisave.Revision{
+			{ID: "revision-1", Files: []omnisave.RevisionFile{revisionFile("battery/Metroid.srm", "checkpoint", "application/octet-stream")}},
+			{ID: headID, Files: []omnisave.RevisionFile{revisionFile("battery/Metroid.srm", "continued", "application/octet-stream")}},
+		},
+	}
+
+	matches, err := binding.FindContentMatches(local, []binding.Lineage{lineage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].MatchesHead() || len(matches[0].Revisions) != 1 || matches[0].Revisions[0].ID != "revision-1" {
+		t.Fatalf("expected an older-only match in save-a, got %+v", matches)
+	}
+}
+
+func TestFindContentMatchesKeepsIdenticalForksAmbiguous(t *testing.T) {
+	directory := t.TempDir()
+	local := target.Save{Files: []target.File{writeFile(t, directory, "Chrono.srm", "shared-checkpoint")}}
+	file := revisionFile("battery/Chrono.srm", "shared-checkpoint", "application/octet-stream")
+	headA, headB := "revision-a", "revision-b"
+
+	matches, err := binding.FindContentMatches(local, []binding.Lineage{
+		{Omnisave: omnisave.Omnisave{ID: "save-a", HeadRevisionID: &headA}, Revisions: []omnisave.Revision{{ID: headA, Files: []omnisave.RevisionFile{file}}}},
+		{Omnisave: omnisave.Omnisave{ID: "save-b", HeadRevisionID: &headB}, Revisions: []omnisave.Revision{{ID: headB, Files: []omnisave.RevisionFile{file}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("expected both identical lineages to remain visible, got %+v", matches)
+	}
+}
+
 func TestSeedUploadsContentAndCommitsInitialRevision(t *testing.T) {
 	directory := t.TempDir()
 	save := target.Save{

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -40,6 +41,13 @@ func (s *service) Create(ctx context.Context, input omnisave.CreateOmnisave) (*o
 	if !valid {
 		return nil, omnisave.ErrInvalid
 	}
+	if displayName == "" {
+		var err error
+		displayName, err = s.nextDefaultDisplayName(ctx, input.GameID)
+		if err != nil {
+			return nil, translateError(err)
+		}
+	}
 	save := omnisave.Omnisave{
 		ID:          uuid.NewString(),
 		GameID:      input.GameID,
@@ -68,7 +76,7 @@ func (s *service) Update(ctx context.Context, id string, input omnisave.UpdateOm
 		return nil, omnisave.ErrInvalid
 	}
 	displayName, valid := normalizeDisplayName(*input.DisplayName)
-	if !valid {
+	if !valid || displayName == "" {
 		return nil, omnisave.ErrInvalid
 	}
 	if err := s.repository.UpdateOmnisaveDisplayName(ctx, id, displayName); err != nil {
@@ -96,6 +104,9 @@ func (s *service) Fork(ctx context.Context, saveID string, input omnisave.ForkOm
 	displayName, valid := normalizeDisplayName(input.DisplayName)
 	if !valid {
 		return nil, omnisave.ErrInvalid
+	}
+	if displayName == "" {
+		displayName = truncateDisplayName(source.DisplayName + " (fork)")
 	}
 	now := time.Now().UTC()
 	revisionID := uuid.NewString()
@@ -329,6 +340,35 @@ func validRevisionPath(value string) bool {
 func normalizeDisplayName(name string) (string, bool) {
 	name = strings.TrimSpace(name)
 	return name, utf8.RuneCountInString(name) <= maxDisplayNameLength
+}
+
+// nextDefaultDisplayName names an Omnisave created without one. Numbering
+// continues past the game's highest surviving "Save N" so the default can
+// never collide with a name an existing save still carries.
+func (s *service) nextDefaultDisplayName(ctx context.Context, gameID string) (string, error) {
+	saves, err := s.repository.ListOmnisaves(ctx)
+	if err != nil {
+		return "", err
+	}
+	highest := 0
+	for _, save := range saves {
+		if save.GameID != gameID {
+			continue
+		}
+		var number int
+		if _, err := fmt.Sscanf(save.DisplayName, "Save %d", &number); err == nil && number > highest {
+			highest = number
+		}
+	}
+	return fmt.Sprintf("Save %d", highest+1), nil
+}
+
+func truncateDisplayName(name string) string {
+	runes := []rune(name)
+	if len(runes) <= maxDisplayNameLength {
+		return name
+	}
+	return string(runes[:maxDisplayNameLength])
 }
 
 var _ omnisave.Service = (*service)(nil)

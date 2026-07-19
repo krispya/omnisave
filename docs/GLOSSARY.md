@@ -24,7 +24,7 @@ User-facing concepts. If a user might say the word, it goes here.
 
 **Game** — One server-owned canonical record in the Library, with its own UUID. Identifiers and fingerprints accumulate on a Game over time as clients and providers contribute evidence (see _Evidence_, Backend).
 
-**Omnisave** — One independently versioned game save on the server; the unit users create, name, fork, and bind to. Several Omnisaves can exist for the same Game — separate playthroughs or forked lineages.
+**Omnisave** — One independently versioned game save on the server; the unit users create, name, fork, and bind to. Always carries a display name: the server assigns one when creation omits it ("Save N"; forks inherit the source name plus " (fork)"), and a name can be changed but never cleared (see [FDR-003](fdr/FDR-003-automatic-save-binding.md)). Several Omnisaves can exist for the same Game — separate playthroughs or forked lineages.
 
 **Revision** — An immutable state in an Omnisave's linear history, committed as file upserts/deletes against an expected head. The newest revision is the **head**; a commit naming a stale head is rejected (see _Head Conflict_, Backend).
 
@@ -36,11 +36,11 @@ User-facing concepts. If a user might say the word, it goes here.
 
 **Scan** — A read-only discovery pass across adapters, reporting each target, its installed games, and their current saves without modifying anything. Run with `omnisave-client scan`.
 
-**Tracking** — A Device's selection of which discovered games to synchronize, chosen in the `track` prompt and persisted in local tracking state (`client.json` in the user config directory). Tracking is what makes Omnisave aware of a game: at track time the game is resolved from the Catalog into the Library, before any save is bound. Games that disappear from a scan stay tracked until explicitly unselected.
+**Tracking** — A Device's selection of which discovered games to synchronize, chosen in the `track` prompt and persisted in local tracking state (`client.json` in the user config directory). Tracking is what makes Omnisave aware of a game: at track time the game is resolved from the Catalog into the Library, before any save is bound. Games that disappear from a scan stay tracked until explicitly unselected, or until a track run learns the game was deleted on the server (see [FDR-002](fdr/FDR-002-game-lifecycle.md)).
 
 **Local Save** — One adapter-native save set discovered on this machine; may contain multiple files.
 
-**Binding** — A machine-local mapping from one Local Save to one Omnisave, created with `omnisave-client bind`. A binding records the last successfully synced revision — the **sync baseline** — which stays empty until a synchronization completes.
+**Binding** — A machine-local mapping from one Local Save to one Omnisave. Tracking creates bindings automatically when it seeds a new Omnisave or finds one lineage with matching head content; `omnisave-client bind` remains available for corrections. A binding records the revision whose content the Local Save is known to equal — the **sync baseline**. A manual binding to non-matching content has no baseline until synchronization reconciles it.
 
 ## Authorization
 

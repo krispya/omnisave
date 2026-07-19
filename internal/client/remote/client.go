@@ -149,6 +149,16 @@ func (c *Client) DeleteOmnisave(ctx context.Context, id string) error {
 	return c.send(ctx, http.MethodDelete, "/api/v1/omnisaves/"+url.PathEscape(id), nil)
 }
 
+// ForkOmnisave creates a new lineage from one revision of an existing save.
+func (c *Client) ForkOmnisave(ctx context.Context, id string, input omnisave.ForkOmnisave) (*omnisave.ForkResult, error) {
+	var fork omnisave.ForkResult
+	path := "/api/v1/omnisaves/" + url.PathEscape(id) + "/forks"
+	if err := c.postJSON(ctx, path, input, &fork); err != nil {
+		return nil, err
+	}
+	return &fork, nil
+}
+
 // UploadArtifact stores content-addressed bytes the server verifies by hash.
 func (c *Client) UploadArtifact(ctx context.Context, artifact omnisave.Artifact, content io.Reader) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPut,
@@ -177,6 +187,27 @@ func (c *Client) UploadArtifact(ctx context.Context, artifact omnisave.Artifact,
 	return nil
 }
 
+// OpenArtifact streams content-addressed bytes from the server. The caller
+// must close the returned reader.
+func (c *Client) OpenArtifact(ctx context.Context, sha256 string) (io.ReadCloser, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.baseURL+"/api/v1/artifacts/"+url.PathEscape(sha256), nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("contact Omnisave server: %w", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		defer response.Body.Close()
+		io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
+		return nil, &ResponseError{StatusCode: response.StatusCode}
+	}
+	return response.Body, nil
+}
+
 func (c *Client) postJSON(ctx context.Context, path string, payload, result any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -203,26 +234,57 @@ func (c *Client) postJSON(ctx context.Context, path string, payload, result any)
 	return nil
 }
 
-// ListOmnisaves returns the server records available as binding destinations.
-func (c *Client) ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/omnisaves", nil)
+func (c *Client) getJSON(ctx context.Context, path string, result any) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	request.Header.Set("Authorization", "Bearer "+c.token)
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("contact Omnisave server: %w", err)
+		return fmt.Errorf("contact Omnisave server: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
-		return nil, &ResponseError{StatusCode: response.StatusCode}
+		return &ResponseError{StatusCode: response.StatusCode}
 	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBody)).Decode(result); err != nil {
+		return fmt.Errorf("decode Omnisave server response: %w", err)
+	}
+	return nil
+}
+
+// ListOmnisaves returns the server records available as binding destinations.
+// ListGameIDs returns the identity of every game in the server's Library.
+func (c *Client) ListGameIDs(ctx context.Context) ([]string, error) {
+	var games []struct {
+		ID string `json:"id"`
+	}
+	if err := c.getJSON(ctx, "/api/v1/games", &games); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(games))
+	for _, game := range games {
+		ids = append(ids, game.ID)
+	}
+	return ids, nil
+}
+
+func (c *Client) ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, error) {
 	var saves []omnisave.Omnisave
-	decoder := json.NewDecoder(io.LimitReader(response.Body, maxResponseBody))
-	if err := decoder.Decode(&saves); err != nil {
-		return nil, fmt.Errorf("decode Omnisave list: %w", err)
+	if err := c.getJSON(ctx, "/api/v1/omnisaves", &saves); err != nil {
+		return nil, err
 	}
 	return saves, nil
+}
+
+// ListRevisions returns one Omnisave's complete history for content matching.
+func (c *Client) ListRevisions(ctx context.Context, omnisaveID string) ([]omnisave.Revision, error) {
+	var revisions []omnisave.Revision
+	path := "/api/v1/omnisaves/" + url.PathEscape(omnisaveID) + "/revisions"
+	if err := c.getJSON(ctx, path, &revisions); err != nil {
+		return nil, err
+	}
+	return revisions, nil
 }
