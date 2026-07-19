@@ -8,3 +8,4 @@ feature-specific decisions behind it.
 | [FDR-001](FDR-001-game-identity-resolution.md) | Game Identity Resolution | Active | 2026-07-18 |
 | [FDR-002](FDR-002-game-lifecycle.md) | Game Lifecycle | Active | 2026-07-18 |
 | [FDR-003](FDR-003-automatic-save-binding.md) | Automatic Save Binding | Experimental | 2026-07-18 |
+| [FDR-004](FDR-004-sync-to-device.md) | Syncing Saves to a Device | Planned | 2026-07-19 |
