@@ -18,7 +18,9 @@ establishes the baseline that sync will later diff against.
 - After tracking completes, every tracked game that has a local save but no
   binding on this Device goes through the binding pass. Games without a
   local save are skipped untouched, and the result says that no save is
-  available to sync.
+  available to sync — unless the server has Omnisaves for them, in which
+  case syncing one down is offered
+  ([FDR-004](FDR-004-sync-to-device.md)).
 - If the server has no Omnisaves for the game, one is created and seeded:
   the local save's content becomes its initial revision, and the binding
   records that revision as the sync baseline. The server names the new
@@ -189,4 +191,5 @@ exists and runs.
   resolution that puts the game in the Library before any binding;
   [FDR-002](FDR-002-game-lifecycle.md) — the detect → track → bind
   lifecycle this automates, Device self-identification, and Omnisave
-  survival across untracking.
+  survival across untracking; [FDR-004](FDR-004-sync-to-device.md) — the
+  read counterpart: offering server saves to a Device that has none.
