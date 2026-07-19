@@ -115,6 +115,17 @@ func (r *TrackReport) Forked(title, omnisaveName string) {
 	r.event(title, "save forked as "+omnisaveName)
 }
 
+// Bound records a save mapped to the Omnisave chosen in the ambiguity
+// prompt: with a matching revision the sync baseline is set there; without
+// one the mapping waits for synchronization to reconcile the content.
+func (r *TrackReport) Bound(title, omnisaveName string, matched bool) {
+	if matched {
+		r.event(title, "save bound to "+omnisaveName+" at a matching revision")
+		return
+	}
+	r.event(title, "save bound to "+omnisaveName+" with nothing synced yet")
+}
+
 // Unbound records a save left for manual binding.
 func (r *TrackReport) Unbound(title string) {
 	r.event(title, "save needs omnisave-client bind")
@@ -175,13 +186,14 @@ type TrackOutcome struct {
 	Rebound   int
 	Advanced  int
 	Forked    int
+	Bound     int
 	Unbound   int
 	Failed    int
 	Synced    bool
 }
 
 func (o TrackOutcome) changes() int {
-	return o.Added + o.Linked + o.Untracked + o.Pending + o.Seeded + o.Rebound + o.Advanced + o.Forked + o.Unbound + o.Failed
+	return o.Added + o.Linked + o.Untracked + o.Pending + o.Seeded + o.Rebound + o.Advanced + o.Forked + o.Bound + o.Unbound + o.Failed
 }
 
 // TrackSummary prints the closing dim tally, blank-line separated from any
@@ -214,6 +226,9 @@ func TrackSummary(outcome TrackOutcome) {
 	}
 	if outcome.Forked > 0 {
 		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d forked", outcome.Forked)))
+	}
+	if outcome.Bound > 0 {
+		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d bound", outcome.Bound)))
 	}
 	if outcome.Unbound > 0 {
 		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d unbound", outcome.Unbound)))

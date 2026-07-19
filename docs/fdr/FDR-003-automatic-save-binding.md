@@ -36,8 +36,9 @@ establishes the baseline that sync will later diff against.
   at the matched revision, keeping the lineage and continuing this
   playthrough independently.
 - If the local save matches nothing, or matches more than one Omnisave, the
-  user chooses: bind to one of the existing Omnisaves (matches are marked)
-  or create a new one seeded from the local save.
+  user chooses: bind to one of the existing Omnisaves (matches are marked),
+  create a new one seeded from the local save, or decide later — the save
+  stays unbound and the result points at `omnisave-client bind`.
 - Choosing an existing Omnisave that does not match the local save records
   the binding with no baseline; nothing is uploaded or overwritten.
   Reconciling that divergence is synchronization's job.
@@ -54,7 +55,6 @@ establishes the baseline that sync will later diff against.
   the game is untracked on this Device rather than reseeded, so a deletion
   in the Dash is never resurrected
   ([FDR-002](FDR-002-game-lifecycle.md), decision 10).
-- Manual `omnisave-client bind` remains available and behaves as before.
 
 ## Design Decisions
 
@@ -190,14 +190,3 @@ exists and runs.
   [FDR-002](FDR-002-game-lifecycle.md) — the detect → track → bind
   lifecycle this automates, Device self-identification, and Omnisave
   survival across untracking.
-
-## Open Questions
-
-- Should synchronization re-run this binding pass so a game first played
-  after tracking gets bound at the next sync rather than the next track?
-  Likely yes; the sync FDR should decide.
-- A new Device tracking a game that has Omnisaves but no local files gets
-  nothing from this pass; pulling server content down to create the local
-  save is synchronization territory.
-- If concurrent seeding produces duplicate Omnisaves in practice, a
-  server-side create-if-empty operation would close the race.
