@@ -19,10 +19,11 @@ from registration and tracking alone.
 - Tracking a game is the act of library entry — "make Omnisave aware of this
   game". The game is resolved from the Catalog into the Library at track time,
   before any save is bound (resolution behavior: [FDR-001](FDR-001-game-identity-resolution.md)).
-- A stored Library identity the server no longer recognizes — its data was
-  reset, or the game was deleted there — is discarded, and the game
-  re-resolves from the current scan's evidence in the same run. Server truth
-  outranks client memory ([ADR-001](../adr/ADR-001-server-authority.md)).
+- A stored Library identity the server no longer recognizes means the game
+  was deleted there, and the deletion syncs back: the Device untracks the
+  game, drops its save bindings, and reports why. Server truth outranks
+  client memory ([ADR-001](../adr/ADR-001-server-authority.md));
+  re-tracking later is a fresh, deliberate library entry.
 - Binding attaches a Device's Local Save to an Omnisave of a game that is
   already in the Library.
 - Each client installation identifies itself as a Device: a stable ID minted
@@ -130,6 +131,22 @@ state model for games, saves, revisions, or provenance.
 **Tradeoff:** Reconnection and burst coalescing add client complexity, and a
 reconnect may perform a redundant read to guarantee convergence.
 
+### 10. Server deletions sync back as untracking
+
+**Decision:** When the server no longer has a tracked game — or no longer
+has any Omnisave for a game whose save this Device had bound — the client
+untracks the game on that device instead of re-resolving or reseeding it.
+**Why:** Deleting in the Dash is the user's explicit "forget this", and the
+server is the authority ([ADR-001](../adr/ADR-001-server-authority.md)).
+The earlier behavior — silently re-creating a deleted game from scan
+evidence, or reseeding a deleted save from local content — meant a deletion
+could never win while any device still remembered the game. Untracking
+honors the deletion and keeps re-protection explicit: re-tracking is one
+prompt away and starts fresh.
+**Tradeoff:** A full server data reset untracks every game on every device
+instead of self-healing invisibly, so users re-track after a reset. A save
+deleted with the intent of reseeding it also requires that re-track first.
+
 ## Related
 
 - **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — the
@@ -137,4 +154,6 @@ reconnect may perform a redundant read to guarantee convergence.
   server-side provenance; [ADR-002](../adr/ADR-002-sse-view-invalidation.md) —
   how clients learn that server-owned views changed.
 - **FDRs:** [FDR-001](FDR-001-game-identity-resolution.md) — how track-time
-  resolution chooses or creates the canonical Game.
+  resolution chooses or creates the canonical Game;
+  [FDR-003](FDR-003-automatic-save-binding.md) — the binding pass that
+  applies deletion-wins to bound saves.

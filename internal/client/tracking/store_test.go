@@ -125,6 +125,39 @@ func TestTrackingRemovalDropsVisibleBindingsAndPreservesUnavailableOnes(t *testi
 	}
 }
 
+func TestUntrackRemovesTheGameAndOnlyItsBindings(t *testing.T) {
+	state := tracking.NewState()
+	gameA := tracking.Game{ID: "game-a", Adapter: "steam", TargetID: "steam", Title: "Game A"}
+	gameB := tracking.Game{ID: "game-b", Adapter: "steam", TargetID: "steam", Title: "Game B"}
+	if _, err := state.ApplyVisible([]tracking.Game{gameA, gameB}, []string{gameA.ID, gameB.ID}); err != nil {
+		t.Fatal(err)
+	}
+	localA := tracking.LocalSave{ID: "save-a", Adapter: "steam", TargetID: "steam", GameID: gameA.ID}
+	localB := tracking.LocalSave{ID: "save-b", Adapter: "steam", TargetID: "steam", GameID: gameB.ID}
+	if err := state.Bind(localA, "remote-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Bind(localB, "remote-b"); err != nil {
+		t.Fatal(err)
+	}
+
+	if !state.Untrack(gameA.ID) {
+		t.Fatal("expected untracking a tracked game to report true")
+	}
+	if _, tracked := state.Games[gameA.ID]; tracked {
+		t.Fatal("expected the untracked game to leave the selections")
+	}
+	if _, exists := state.BindingFor(localA); exists {
+		t.Fatal("expected the untracked game's binding to be dropped")
+	}
+	if _, exists := state.BindingFor(localB); !exists {
+		t.Fatal("expected other games' bindings to survive")
+	}
+	if state.Untrack(gameA.ID) {
+		t.Fatal("expected untracking an untracked game to report false")
+	}
+}
+
 func TestUnbindRemovesTheMappingSoTheSaveCanBindFresh(t *testing.T) {
 	state := tracking.NewState()
 	local := tracking.LocalSave{

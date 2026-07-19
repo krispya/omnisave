@@ -125,6 +125,76 @@ func TestStaleWriterCannotMoveTheSaveHead(t *testing.T) {
 	}
 }
 
+func TestUnnamedSavesAlwaysReceiveNumberedDefaultNames(t *testing.T) {
+	ctx := context.Background()
+	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	first, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherGame, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "chrono-trigger-usa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.DisplayName != "Save 1" || second.DisplayName != "Save 2" || otherGame.DisplayName != "Save 1" {
+		t.Fatalf("expected per-game numbered defaults, got %q, %q, %q",
+			first.DisplayName, second.DisplayName, otherGame.DisplayName)
+	}
+
+	if err := saves.Delete(ctx, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	next, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.DisplayName != "Save 2" {
+		t.Fatalf("expected numbering to continue from the highest surviving name, got %q", next.DisplayName)
+	}
+}
+
+func TestASaveNameCanNeverBeCleared(t *testing.T) {
+	ctx := context.Background()
+	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	created, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty := "   "
+	if _, err := saves.Update(ctx, created.ID, omnisave.UpdateOmnisave{DisplayName: &empty}); !errors.Is(err, omnisave.ErrInvalid) {
+		t.Fatalf("expected clearing a display name to be invalid, got %v", err)
+	}
+}
+
+func TestUnnamedForksInheritTheSourceNameWithAForkSuffix(t *testing.T) {
+	ctx := context.Background()
+	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	source, err := saves.Create(ctx, omnisave.CreateOmnisave{
+		GameID: "pokemon-emerald-usa", DisplayName: "New Game+",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := storeBlob(t, ctx, saves, "snapshot")
+	root, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fork, err := saves.Fork(ctx, source.ID, omnisave.ForkOmnisave{RevisionID: root.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fork.Omnisave.DisplayName != "New Game+ (fork)" {
+		t.Fatalf("expected the fork to be named after its source, got %q", fork.Omnisave.DisplayName)
+	}
+}
+
 func TestForkCreatesAnotherSelectableSaveWithItsOwnHistory(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())

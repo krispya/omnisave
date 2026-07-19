@@ -227,6 +227,23 @@ func (s *State) ApplyVisible(visible []Game, selectedIDs []string) ([]Game, erro
 	return removed, nil
 }
 
+// Untrack removes a game from this device's selections along with the
+// bindings of its local saves. It reports whether the game was tracked.
+func (s *State) Untrack(gameID string) bool {
+	if _, tracked := s.Games[gameID]; !tracked {
+		return false
+	}
+	delete(s.Games, gameID)
+	bindings := s.Bindings[:0]
+	for _, binding := range s.Bindings {
+		if binding.LocalGameID != gameID {
+			bindings = append(bindings, binding)
+		}
+	}
+	s.Bindings = bindings
+	return true
+}
+
 // Bind maps a discovered local save to an Omnisave and clears any old sync baseline.
 func (s *State) Bind(local LocalSave, omnisaveID string) error {
 	if local.ID == "" || local.Adapter == "" || local.TargetID == "" || local.GameID == "" || omnisaveID == "" {

@@ -34,8 +34,20 @@ func PromptConnect(defaultURL string) (url, token string, err error) {
 
 // ConnectSuccess confirms the persisted connection and the device it created.
 func ConnectSuccess(url, deviceName string) {
-	fmt.Println(successStyle.Render("✓") + " connected to " + plainTitle(url))
-	fmt.Println("  " + mutedStyle.Render("this device: "+deviceName))
+	for _, line := range connectSuccessLines(url, deviceName) {
+		fmt.Println(line)
+	}
+}
+
+func connectSuccessLines(url, deviceName string) []string {
+	return []string{
+		accentStyle.Render("▲") + " " + titleStyle.Render("Omnisave"),
+		mutedStyle.Render("- Server:") + "  " + plainTitle(url),
+		mutedStyle.Render("- Device:") + "  " + plainTitle(deviceName),
+		"",
+		successStyle.Render("✓") + " Connected",
+		"",
+	}
 }
 
 // ConnectFailed reports a connection attempt that changed nothing.

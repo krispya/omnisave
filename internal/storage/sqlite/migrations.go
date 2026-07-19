@@ -227,6 +227,17 @@ var migrations = []string{
 	);
 
 	CREATE INDEX game_tracking_by_device ON game_tracking(device_id);`,
+
+	// Omnisaves must always carry a display name; number existing unnamed
+	// saves by their position in the game's creation order, counting only
+	// columns this statement never modifies so the numbering is stable.
+	`UPDATE omnisaves SET display_name = 'Save ' || (
+		SELECT COUNT(*) FROM omnisaves AS earlier
+		WHERE earlier.game_id = omnisaves.game_id
+		  AND (earlier.created_at < omnisaves.created_at
+		       OR (earlier.created_at = omnisaves.created_at AND earlier.id <= omnisaves.id))
+	)
+	WHERE display_name = '';`,
 }
 
 func migrate(db *sql.DB) error {
