@@ -167,7 +167,7 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 type plainWatchSink struct{}
 
 func (plainWatchSink) Watching(files int) {
-	fmt.Printf("Watching %d save files\n", files)
+	fmt.Printf("Watching %d save paths\n", files)
 }
 
 func (plainWatchSink) PassStarted()            {}
