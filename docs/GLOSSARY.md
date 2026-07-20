@@ -14,7 +14,7 @@ Names for visible surfaces. When a name here disagrees with a file or component 
 
 **Dash** — The web app (`apps/dash`) for managing the server: connection, the Library, and debug features. Where omnisaves are created and browsed.
 
-**Client CLI** — The terminal surface of the client binary: the `connect`, `scan`, `track`, and `bind` commands and the prompts they render (`internal/client/tui`). `connect` verifies and persists the server connection so the other commands need no token or URL.
+**Client CLI** — The terminal surface of the client binary: the `connect`, `scan`, `track`, `sync`, `watch`, and `bind` commands and the prompts they render (`internal/client/tui`). `connect` verifies and persists the server connection so the other commands need no token or URL; `sync` and `watch` are headless and never prompt.
 
 ## Product
 
@@ -40,7 +40,9 @@ User-facing concepts. If a user might say the word, it goes here.
 
 **Local Save** — One adapter-native save set discovered on this machine; may contain multiple files.
 
-**Binding** — A machine-local mapping from one Local Save to one omnisave. Tracking creates bindings automatically when it seeds a new omnisave or finds one lineage with matching head content; `omnisave-client bind` remains available for corrections. A binding records the revision whose content the Local Save is known to equal — the **sync baseline**. A manual binding to non-matching content has no baseline until synchronization reconciles it.
+**Binding** — A machine-local mapping from one Local Save to one omnisave. Tracking creates bindings automatically when it seeds a new omnisave or finds one lineage with matching head content; `omnisave-client bind` remains available for corrections. A binding records the revision whose content the Local Save is known to equal — the **sync baseline**. A manual binding to non-matching content has no baseline and starts life diverged (see _Sync_).
+
+**Sync** — The pass keeping a bound save and its omnisave equal: local progress commits up as revisions, server progress applies down to disk, and the sync baseline arbitrates which direction is safe. New progress on both sides is **divergence**, which sync never resolves on its own — an interactive track run asks, and both answers keep everything. Runs once via `omnisave-client sync` and continuously via `omnisave-client watch`. See [FDR-005](fdr/FDR-005-save-sync.md).
 
 ## Authorization
 

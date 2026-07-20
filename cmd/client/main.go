@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client"
@@ -48,6 +49,10 @@ func run(ctx context.Context, arguments []string) error {
 		return runScan(ctx, scanner, arguments[1:])
 	case "track":
 		return runTrack(ctx, scanner, arguments[1:])
+	case "sync":
+		return runSync(ctx, scanner, arguments[1:])
+	case "watch":
+		return runWatch(ctx, scanner, arguments[1:])
 	case "bind":
 		return runBind(ctx, scanner, arguments[1:])
 	case "help", "-h", "--help":
@@ -58,7 +63,7 @@ func run(ctx context.Context, arguments []string) error {
 		if strings.HasPrefix(arguments[0], "-") {
 			return runTrack(ctx, scanner, arguments)
 		}
-		return fmt.Errorf("unknown command %q; use track (the default), connect, scan, or bind", arguments[0])
+		return fmt.Errorf("unknown command %q; use track (the default), sync, watch, connect, scan, or bind", arguments[0])
 	}
 }
 
@@ -350,21 +355,29 @@ func runTrack(ctx context.Context, scanner *client.Scanner, arguments []string) 
 		if !outcome.Synced {
 			return
 		}
-		// Stale-match questions borrow the terminal from the activity line
-		// and hand it back, so one spinner spans the whole server phase.
-		choose := func(gameTitle, omnisaveName string) (choice tui.StaleBindingChoice, err error) {
-			session.Interact(func() {
-				choice, err = tui.PromptStaleBinding(gameTitle, omnisaveName)
-			})
-			return choice, err
+		// Prompts borrow the terminal from the activity line and hand it
+		// back, so one spinner spans the whole server phase.
+		prompts := &reconcilePrompts{
+			stale: func(gameTitle, omnisaveName string) (choice tui.StaleBindingChoice, err error) {
+				session.Interact(func() {
+					choice, err = tui.PromptStaleBinding(gameTitle, omnisaveName)
+				})
+				return choice, err
+			},
+			ambiguous: func(gameTitle string, options []tui.AmbiguousBindingOption) (choice tui.AmbiguousBindingChoice, err error) {
+				session.Interact(func() {
+					choice, err = tui.PromptAmbiguousBinding(gameTitle, options)
+				})
+				return choice, err
+			},
+			diverged: func(gameTitle, omnisaveName string) (choice tui.DivergedBindingChoice, err error) {
+				session.Interact(func() {
+					choice, err = tui.PromptDivergedBinding(gameTitle, omnisaveName)
+				})
+				return choice, err
+			},
 		}
-		chooseAmbiguous := func(gameTitle string, options []tui.AmbiguousBindingOption) (choice tui.AmbiguousBindingChoice, err error) {
-			session.Interact(func() {
-				choice, err = tui.PromptAmbiguousBinding(gameTitle, options)
-			})
-			return choice, err
-		}
-		bindingErr = bindUnboundSavesWithChooser(taskCtx, server, &state, scans, confirmed, &outcome, report, choose, chooseAmbiguous)
+		bindingErr = reconcileSaves(taskCtx, server, &state, scans, confirmed, &outcome, report, prompts, 0)
 	})
 	if waitErr != nil && !errors.Is(waitErr, tui.ErrAborted) {
 		return waitErr
@@ -524,6 +537,23 @@ func isNotFound(err error) bool {
 	return errors.As(err, &response) && response.StatusCode == http.StatusNotFound
 }
 
+// reconcilePrompts carries the reconcile pass's interactive prompts. A nil
+// set makes the pass headless — every prompt-shaped situation is reported
+// and left for an interactive track run (FDR-005).
+type reconcilePrompts struct {
+	stale     func(gameTitle, omnisaveName string) (tui.StaleBindingChoice, error)
+	ambiguous func(gameTitle string, options []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error)
+	diverged  func(gameTitle, omnisaveName string) (tui.DivergedBindingChoice, error)
+}
+
+func interactivePrompts() *reconcilePrompts {
+	return &reconcilePrompts{
+		stale:     tui.PromptStaleBinding,
+		ambiguous: tui.PromptAmbiguousBinding,
+		diverged:  tui.PromptDivergedBinding,
+	}
+}
+
 // bindUnboundSaves runs FDR-003's binding pass: conflict-free seeds and head
 // matches are automatic, while a unique older match asks whether to advance
 // or fork. Ambiguous and unmatched saves remain unbound.
@@ -536,11 +566,14 @@ func bindUnboundSaves(
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 ) error {
-	return bindUnboundSavesWithChooser(ctx, server, state, scans, confirmed, outcome, report,
-		tui.PromptStaleBinding, tui.PromptAmbiguousBinding)
+	return reconcileSaves(ctx, server, state, scans, confirmed, outcome, report, interactivePrompts(), 0)
 }
 
-func bindUnboundSavesWithChooser(
+// reconcileSaves is the shared reconcile pass (FDR-003, FDR-005): unbound
+// saves get their binding decision, bound saves get the three-way sync
+// comparison. pushFloor suppresses pushes for saves synced more recently
+// than the floor, so continuously flushing saves do not flood history.
+func reconcileSaves(
 	ctx context.Context,
 	server *remote.Client,
 	state *tracking.State,
@@ -548,8 +581,8 @@ func bindUnboundSavesWithChooser(
 	confirmed map[string]bool,
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
-	choose func(gameTitle, omnisaveName string) (tui.StaleBindingChoice, error),
-	chooseAmbiguous func(gameTitle string, options []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error),
+	prompts *reconcilePrompts,
+	pushFloor time.Duration,
 ) error {
 	type candidate struct {
 		local        tracking.LocalSave
@@ -605,14 +638,25 @@ func bindUnboundSavesWithChooser(
 		report.BindingFailed(err)
 		return nil
 	}
-	saveExists := make(map[string]bool, len(remoteSaves))
+	savesByID := make(map[string]omnisave.Omnisave, len(remoteSaves))
 	savesByGame := make(map[string][]omnisave.Omnisave)
 	for _, save := range remoteSaves {
-		saveExists[save.ID] = true
+		savesByID[save.ID] = save
 		savesByGame[save.GameID] = append(savesByGame[save.GameID], save)
 	}
 	histories := make(map[string][]omnisave.Revision)
 	historyLoaded := make(map[string]bool)
+	loadHistory := func(omnisaveID string) ([]omnisave.Revision, error) {
+		if !historyLoaded[omnisaveID] {
+			history, err := server.ListRevisions(ctx, omnisaveID)
+			if err != nil {
+				return nil, err
+			}
+			histories[omnisaveID] = history
+			historyLoaded[omnisaveID] = true
+		}
+		return histories[omnisaveID], nil
+	}
 
 	for _, candidate := range candidates {
 		if _, tracked := state.Games[candidate.local.GameID]; !tracked {
@@ -621,7 +665,11 @@ func bindUnboundSavesWithChooser(
 			continue
 		}
 		if bound, isBound := state.BindingFor(candidate.local); isBound {
-			if saveExists[bound.OmnisaveID] {
+			if remoteSave, exists := savesByID[bound.OmnisaveID]; exists {
+				if err := syncBoundSave(ctx, server, state, candidate.local, candidate.save,
+					bound, remoteSave, loadHistory, outcome, report, prompts, pushFloor); err != nil {
+					return err
+				}
 				continue
 			}
 			if len(savesByGame[candidate.serverGameID]) == 0 {
@@ -654,20 +702,16 @@ func bindUnboundSavesWithChooser(
 		lineages := make([]binding.Lineage, 0, len(gameSaves))
 		loadFailed := false
 		for _, remoteSave := range gameSaves {
-			if !historyLoaded[remoteSave.ID] {
-				history, err := server.ListRevisions(ctx, remoteSave.ID)
-				if err != nil {
-					outcome.Failed++
-					report.SaveFailed(candidate.local.GameTitle, err)
-					loadFailed = true
-					break
-				}
-				histories[remoteSave.ID] = history
-				historyLoaded[remoteSave.ID] = true
+			history, err := loadHistory(remoteSave.ID)
+			if err != nil {
+				outcome.Failed++
+				report.SaveFailed(candidate.local.GameTitle, err)
+				loadFailed = true
+				break
 			}
 			lineages = append(lineages, binding.Lineage{
 				Omnisave:  remoteSave,
-				Revisions: histories[remoteSave.ID],
+				Revisions: history,
 			})
 		}
 		if loadFailed {
@@ -704,7 +748,13 @@ func bindUnboundSavesWithChooser(
 				continue
 			}
 			matchedRevision := matched.Revisions[len(matched.Revisions)-1]
-			choice, err := choose(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave))
+			if prompts == nil {
+				// Headless: the stale question waits for an interactive run.
+				outcome.Unbound++
+				report.Behind(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave))
+				continue
+			}
+			choice, err := prompts.stale(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave))
 			if err != nil {
 				return err
 			}
@@ -757,6 +807,11 @@ func bindUnboundSavesWithChooser(
 		}
 		// Zero or several matches: the pass never guesses (FDR-003) — the
 		// user picks the lineage, seeds fresh, or defers to manual bind.
+		if prompts == nil {
+			outcome.Unbound++
+			report.Unbound(candidate.local.GameTitle)
+			continue
+		}
 		matchedRevisions := make(map[string]string, len(matches))
 		for _, match := range matches {
 			matchedRevisions[match.Omnisave.ID] = match.Revisions[len(match.Revisions)-1].ID
@@ -769,7 +824,7 @@ func bindUnboundSavesWithChooser(
 				MatchedRevisionID: matchedRevisions[remoteSave.ID],
 			})
 		}
-		choice, err := chooseAmbiguous(candidate.local.GameTitle, options)
+		choice, err := prompts.ambiguous(candidate.local.GameTitle, options)
 		if err != nil {
 			return err
 		}
@@ -862,6 +917,227 @@ func omnisaveDisplayName(save omnisave.Omnisave) string {
 	return "Omnisave " + id
 }
 
+// syncBoundSave runs FDR-005's three-way comparison for one bound save:
+// the local content against the binding's baseline against the Omnisave's
+// head. Push and pull are lossless by construction; anything else is
+// divergence and never guessed at.
+func syncBoundSave(
+	ctx context.Context,
+	server *remote.Client,
+	state *tracking.State,
+	local tracking.LocalSave,
+	save target.Save,
+	bound tracking.Binding,
+	remoteSave omnisave.Omnisave,
+	loadHistory func(string) ([]omnisave.Revision, error),
+	outcome *tui.TrackOutcome,
+	report *tui.TrackReport,
+	prompts *reconcilePrompts,
+	pushFloor time.Duration,
+) error {
+	history, err := loadHistory(remoteSave.ID)
+	if err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return nil
+	}
+	manifest, err := binding.Manifest(save)
+	if err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return nil
+	}
+	head, headOK := revisionByID(history, remoteSave.HeadRevisionID)
+	if !headOK {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, errors.New("bound Omnisave has no readable head"))
+		return nil
+	}
+	name := omnisaveDisplayName(remoteSave)
+	var baseline omnisave.Revision
+	baselineOK := false
+	if bound.LastSyncedRevisionID != nil {
+		baseline, baselineOK = revisionByID(history, bound.LastSyncedRevisionID)
+	}
+	if !baselineOK {
+		// A binding without a baseline (a manual bind to non-matching
+		// content) is diverged from the start (FDR-005, decision 1).
+		return resolveDivergence(ctx, server, state, local, save, remoteSave, head, nil, outcome, report, prompts)
+	}
+
+	if head.ID == baseline.ID {
+		if binding.MatchesManifest(manifest, baseline) {
+			report.UpToDate(local.GameTitle)
+			return nil
+		}
+		if pushFloor > 0 && bound.LastSyncedAt != nil && time.Since(*bound.LastSyncedAt) < pushFloor {
+			// Spacing floor: too soon after the last commit.
+			report.UpToDate(local.GameTitle)
+			return nil
+		}
+		revision, err := binding.Push(ctx, server, remoteSave.ID, save, baseline.ID, head.Files)
+		if err != nil {
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+		if err := state.RecordSynced(local, remoteSave.ID, revision.ID); err != nil {
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+		outcome.Pushed++
+		report.SyncedUp(local.GameTitle, name)
+		return nil
+	}
+
+	// The head moved past the baseline.
+	if binding.MatchesManifest(manifest, head) {
+		// Local already carries the head's content; only the baseline lags.
+		if err := state.RecordSynced(local, remoteSave.ID, head.ID); err != nil {
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+		outcome.Rebound++
+		report.Rebound(local.GameTitle, name)
+		return nil
+	}
+	if binding.MatchesManifest(manifest, baseline) {
+		// Pull. Lossless: the replaced content is the baseline revision,
+		// which the server keeps; placement re-verifies local is unchanged.
+		if err := binding.FastForward(ctx, server, save, baseline, head); err != nil {
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+		if err := state.RecordSynced(local, remoteSave.ID, head.ID); err != nil {
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+		outcome.Pulled++
+		report.SyncedDown(local.GameTitle, name)
+		return nil
+	}
+	return resolveDivergence(ctx, server, state, local, save, remoteSave, head, &baseline, outcome, report, prompts)
+}
+
+// resolveDivergence handles a save with new progress on both sides.
+// Headless passes report and skip; interactive runs ask, and both answers
+// keep every byte (FDR-005, decision 4).
+func resolveDivergence(
+	ctx context.Context,
+	server *remote.Client,
+	state *tracking.State,
+	local tracking.LocalSave,
+	save target.Save,
+	remoteSave omnisave.Omnisave,
+	head omnisave.Revision,
+	baseline *omnisave.Revision,
+	outcome *tui.TrackOutcome,
+	report *tui.TrackReport,
+	prompts *reconcilePrompts,
+) error {
+	name := omnisaveDisplayName(remoteSave)
+	if prompts == nil {
+		outcome.Diverged++
+		report.Diverged(local.GameTitle, name)
+		return nil
+	}
+	choice, err := prompts.diverged(local.GameTitle, name)
+	if err != nil {
+		return err
+	}
+	preservedName := forkDisplayName(remoteSave)
+	if choice == tui.DivergedBindingJump {
+		preservedName = divergedDisplayName(remoteSave)
+	}
+	preserved, preservedRevision, err := preserveLocalProgress(ctx, server, save, remoteSave, baseline, preservedName)
+	if err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return nil
+	}
+	outcome.Forked++
+	report.Forked(local.GameTitle, omnisaveDisplayName(*preserved))
+	if choice == tui.DivergedBindingFork {
+		if err := state.Bind(local, preserved.ID); err != nil {
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+		if err := state.RecordSynced(local, preserved.ID, preservedRevision.ID); err != nil {
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+		return nil
+	}
+	// Jump: the local progress is preserved on its fork; adopt the head.
+	// The preserved revision carries exactly the local content, so the
+	// staged placement can verify against it.
+	if err := binding.FastForward(ctx, server, save, *preservedRevision, head); err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return nil
+	}
+	if err := state.Bind(local, remoteSave.ID); err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return nil
+	}
+	if err := state.RecordSynced(local, remoteSave.ID, head.ID); err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return nil
+	}
+	outcome.Pulled++
+	report.SyncedDown(local.GameTitle, name)
+	return nil
+}
+
+// preserveLocalProgress makes this device's unsynced content a server-side
+// lineage of its own: a fork of the baseline carrying one commit of the
+// local content, or a fresh seed when the binding never had a baseline.
+func preserveLocalProgress(
+	ctx context.Context,
+	server *remote.Client,
+	save target.Save,
+	remoteSave omnisave.Omnisave,
+	baseline *omnisave.Revision,
+	name string,
+) (*omnisave.Omnisave, *omnisave.Revision, error) {
+	if baseline == nil {
+		return binding.Seed(ctx, server, remoteSave.GameID, save)
+	}
+	fork, err := server.ForkOmnisave(ctx, remoteSave.ID, omnisave.ForkOmnisave{
+		RevisionID:  baseline.ID,
+		DisplayName: name,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	revision, err := binding.Push(ctx, server, fork.Omnisave.ID, save, fork.Revision.ID, fork.Revision.Files)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &fork.Omnisave, revision, nil
+}
+
+func divergedDisplayName(source omnisave.Omnisave) string {
+	name := strings.TrimSpace(source.DisplayName)
+	if name == "" {
+		return "Diverged"
+	}
+	suffix := " (diverged)"
+	runes := []rune(name)
+	if len(runes)+len([]rune(suffix)) > 100 {
+		runes = runes[:100-len([]rune(suffix))]
+	}
+	return string(runes) + suffix
+}
+
 func forkDisplayName(source omnisave.Omnisave) string {
 	name := strings.TrimSpace(source.DisplayName)
 	if name == "" {
@@ -906,6 +1182,8 @@ func printUsage() {
 
 Usage:
   omnisave-client [track] [--state path]
+  omnisave-client sync [--state path]
+  omnisave-client watch [--poll 10s] [--pull-every 15m] [--floor 5m]
   omnisave-client connect [URL] [--state path]
   omnisave-client scan [--verbose]
   omnisave-client bind [--state path]
@@ -915,6 +1193,12 @@ Commands:
            are added to your server library and record this device's provenance.
            Running omnisave-client with no command runs track; the first run
            asks for your server connection.
+  sync     Sync every tracked save once: local progress uploads, server
+           progress downloads, and anything needing a decision is reported
+           for the next track run. Never prompts.
+  watch    Keep syncing continuously: commits shortly after the game stops
+           writing its save and checks the server periodically. Run it under
+           your service manager to survive reboots.
   connect  Link this device to your Omnisave server and remember the connection
   scan     Discover installed targets, games, and saves without changing state
   bind     Choose which Omnisave a discovered local save should synchronize with

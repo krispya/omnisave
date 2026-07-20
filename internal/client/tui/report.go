@@ -4,18 +4,34 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
-// Track reporting groups events under the game they belong to: each game
-// appears once with a state glyph, and every event beneath it has the same
-// shape — a dim, indented sentence starting with a capital. Run-wide
-// failures print first; games with no events do not appear at all.
+// Track reporting gives every game one line: a state glyph, the title
+// padded to a shared column, and its status — dim sentences joined by
+// dots, or "Up to date" when the pass needed nothing. Run-wide failures
+// print first.
 
 // TrackReport buffers tracking results and renders them grouped by game.
 type TrackReport struct {
 	general []string
 	order   []string
 	games   map[string]*trackedGameReport
+
+	// OnUpdate, when set, receives a fresh snapshot of the rendered game
+	// lines after every event, so live views repaint as a pass progresses.
+	OnUpdate func(lines []string)
+}
+
+func (r *TrackReport) changed() {
+	if r.OnUpdate != nil {
+		r.OnUpdate(r.render())
+	}
+}
+
+// Lines returns the current rendered game lines.
+func (r *TrackReport) Lines() []string {
+	return r.render()
 }
 
 type trackedGameReport struct {
@@ -39,10 +55,12 @@ func (r *TrackReport) game(title string) *trackedGameReport {
 func (r *TrackReport) event(title, sentence string) {
 	entry := r.game(title)
 	entry.events = append(entry.events, capitalized(sentence))
+	r.changed()
 }
 
 func (r *TrackReport) mark(title, glyph string) {
 	r.game(title).glyph = glyph
+	r.changed()
 }
 
 // Added records a game newly created in the Library.
@@ -100,9 +118,13 @@ func (r *TrackReport) Rebound(title, omnisaveName string) {
 	r.event(title, "save matches the head of "+omnisaveName+" and is resyncing")
 }
 
-// NoSave records that an installed game has no local save content to protect.
+// NoSave records that an installed game has no local save content to
+// protect. The idle glyph yields to any stronger state already reported.
 func (r *TrackReport) NoSave(title string) {
-	r.event(title, "no save available to sync")
+	if entry := r.game(title); entry.glyph == "" {
+		entry.glyph = mutedStyle.Render("·")
+	}
+	r.event(title, "no save available")
 }
 
 // FastForwarded records a stale local save advanced to a named Omnisave head.
@@ -113,6 +135,37 @@ func (r *TrackReport) FastForwarded(title, omnisaveName string) {
 // Forked records a stale local save continued as a new named lineage.
 func (r *TrackReport) Forked(title, omnisaveName string) {
 	r.event(title, "save forked as "+omnisaveName)
+}
+
+// UpToDate records a game whose saves needed nothing this pass, so every
+// tracked game still gets its line.
+func (r *TrackReport) UpToDate(title string) {
+	r.game(title)
+	r.changed()
+}
+
+// SyncedUp records local progress committed to the bound Omnisave.
+func (r *TrackReport) SyncedUp(title, omnisaveName string) {
+	r.event(title, "save synced to "+omnisaveName)
+}
+
+// SyncedDown records the bound Omnisave's head applied to the local save.
+func (r *TrackReport) SyncedDown(title, omnisaveName string) {
+	r.event(title, "save synced from "+omnisaveName)
+}
+
+// Behind records a save matching an older revision, waiting for an
+// interactive run to choose between advancing and forking.
+func (r *TrackReport) Behind(title, omnisaveName string) {
+	r.mark(title, mutedStyle.Render("○"))
+	r.event(title, "save is behind "+omnisaveName+", run omnisave-client track to resolve")
+}
+
+// Diverged records a save with new progress on both sides, waiting for an
+// interactive run to resolve.
+func (r *TrackReport) Diverged(title, omnisaveName string) {
+	r.mark(title, mutedStyle.Render("○"))
+	r.event(title, "save diverged from "+omnisaveName+", run omnisave-client track to resolve")
 }
 
 // Bound records a save mapped to the Omnisave chosen in the ambiguity
@@ -141,17 +194,24 @@ func (r *TrackReport) SaveFailed(title string, err error) {
 // SyncFailed records a failure that prevented the whole server update.
 func (r *TrackReport) SyncFailed(err error) {
 	r.general = append(r.general, capitalized("library sync failed — "+strings.TrimSpace(err.Error())))
+	r.changed()
 }
 
 // BindingFailed records a failure that prevented the whole binding pass.
 func (r *TrackReport) BindingFailed(err error) {
 	r.general = append(r.general, capitalized("save binding failed — "+strings.TrimSpace(err.Error())))
+	r.changed()
 }
 
-// Print renders run-wide failures, then each game with its events beneath.
+// Print renders run-wide failures, then each game's line, blank-line
+// separated from the summary that follows.
 func (r *TrackReport) Print() {
-	for _, line := range r.render() {
+	lines := r.render()
+	for _, line := range lines {
 		fmt.Println(line)
+	}
+	if len(lines) > 0 {
+		fmt.Println()
 	}
 }
 
@@ -160,17 +220,24 @@ func (r *TrackReport) render() []string {
 	for _, sentence := range r.general {
 		lines = append(lines, "  "+errorStyle.Render("✗")+" "+mutedStyle.Render(sentence))
 	}
+	width := 0
+	for _, title := range r.order {
+		if count := utf8.RuneCountInString(title); count > width {
+			width = count
+		}
+	}
 	for _, title := range r.order {
 		entry := r.games[title]
 		glyph := entry.glyph
 		if glyph == "" {
-			// Only save events happened; the game itself synced quietly.
 			glyph = successStyle.Render("✓")
 		}
-		lines = append(lines, "  "+glyph+" "+plainTitle(title))
-		for _, event := range entry.events {
-			lines = append(lines, "      "+mutedStyle.Render(event))
+		status := "Up to date"
+		if len(entry.events) > 0 {
+			status = strings.Join(entry.events, " · ")
 		}
+		padding := strings.Repeat(" ", width-utf8.RuneCountInString(title))
+		lines = append(lines, "  "+glyph+" "+plainTitle(title)+padding+"  "+mutedStyle.Render(status))
 	}
 	return lines
 }
@@ -188,20 +255,30 @@ type TrackOutcome struct {
 	Forked    int
 	Bound     int
 	Unbound   int
+	Pushed    int
+	Pulled    int
+	Diverged  int
 	Failed    int
 	Synced    bool
 }
 
-func (o TrackOutcome) changes() int {
-	return o.Added + o.Linked + o.Untracked + o.Pending + o.Seeded + o.Rebound + o.Advanced + o.Forked + o.Bound + o.Unbound + o.Failed
+// Changed reports whether the run did anything worth showing.
+func (o TrackOutcome) Changed() bool {
+	return o.changes() > 0
 }
 
-// TrackSummary prints the closing dim tally, blank-line separated from any
-// change lines above it.
+func (o TrackOutcome) changes() int {
+	return o.Added + o.Linked + o.Untracked + o.Pending + o.Seeded + o.Rebound + o.Advanced +
+		o.Forked + o.Bound + o.Unbound + o.Pushed + o.Pulled + o.Diverged + o.Failed
+}
+
+// TrackSummary prints the closing dim tally.
 func TrackSummary(outcome TrackOutcome) {
-	if outcome.changes() > 0 {
-		fmt.Println()
-	}
+	fmt.Println(SummaryLine(outcome))
+}
+
+// SummaryLine renders the closing dim tally as one line.
+func SummaryLine(outcome TrackOutcome) string {
 	var segments []string
 	if outcome.Added > 0 {
 		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d added", outcome.Added)))
@@ -233,6 +310,12 @@ func TrackSummary(outcome TrackOutcome) {
 	if outcome.Unbound > 0 {
 		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d unbound", outcome.Unbound)))
 	}
+	if outcome.Pushed+outcome.Pulled > 0 {
+		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d synced", outcome.Pushed+outcome.Pulled)))
+	}
+	if outcome.Diverged > 0 {
+		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d diverged", outcome.Diverged)))
+	}
 	if outcome.Failed > 0 {
 		segments = append(segments, errorStyle.Render(fmt.Sprintf("%d failed", outcome.Failed)))
 	}
@@ -241,7 +324,7 @@ func TrackSummary(outcome TrackOutcome) {
 		tracked += " · up to date"
 	}
 	segments = append(segments, mutedStyle.Render(tracked))
-	fmt.Println("  " + strings.Join(segments, mutedStyle.Render(" · ")))
+	return "  " + strings.Join(segments, mutedStyle.Render(" · "))
 }
 
 func withCanonical(sentence, title, canonical string) string {
