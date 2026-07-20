@@ -20,7 +20,7 @@ path, syncing-down built the read path; sync makes both routine.
 - Sync decides per bound save by comparing three states: the local
   content, the binding's sync baseline, and the Omnisave's head.
   - All three equal — the save is in sync; nothing happens, and the game's
-    line reads up to date.
+    line reads its standing state: "Save 1 · synced 2m ago".
   - Local moved, head still at the baseline — the local changes commit as
     a new revision and the baseline advances with the head.
   - Head moved, local still at the baseline — the head syncs down and the

@@ -736,7 +736,7 @@ func reconcileSaves(
 				continue
 			}
 			outcome.Rebound++
-			report.Rebound(candidate.local.GameTitle, omnisaveDisplayName(matched))
+			report.SyncedWith(candidate.local.GameTitle, omnisaveDisplayName(matched), time.Now())
 			continue
 		}
 		if len(matches) == 1 {
@@ -776,7 +776,7 @@ func reconcileSaves(
 					continue
 				}
 				outcome.Advanced++
-				report.FastForwarded(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave))
+				report.SyncedWith(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave), time.Now())
 				continue
 			case tui.StaleBindingFork:
 				fork, err := server.ForkOmnisave(ctx, matched.Omnisave.ID, omnisave.ForkOmnisave{
@@ -799,7 +799,7 @@ func reconcileSaves(
 					continue
 				}
 				outcome.Forked++
-				report.Forked(candidate.local.GameTitle, omnisaveDisplayName(fork.Omnisave))
+				report.SyncedWith(candidate.local.GameTitle, omnisaveDisplayName(fork.Omnisave), time.Now())
 				continue
 			default:
 				return fmt.Errorf("unknown stale binding choice %q", choice)
@@ -853,7 +853,11 @@ func reconcileSaves(
 				}
 			}
 			outcome.Bound++
-			report.Bound(candidate.local.GameTitle, name, matchedRevisionID != "")
+			if matchedRevisionID != "" {
+				report.SyncedWith(candidate.local.GameTitle, name, time.Now())
+			} else {
+				report.BoundUnsynced(candidate.local.GameTitle, name)
+			}
 		default:
 			outcome.Unbound++
 			report.Unbound(candidate.local.GameTitle)
@@ -891,7 +895,7 @@ func seedCandidateSave(
 		return
 	}
 	outcome.Seeded++
-	report.Seeded(local.GameTitle, created.DisplayName)
+	report.SyncedWith(local.GameTitle, omnisaveDisplayName(*created), time.Now())
 }
 
 func revisionByID(history []omnisave.Revision, id *string) (omnisave.Revision, bool) {
@@ -967,12 +971,12 @@ func syncBoundSave(
 
 	if head.ID == baseline.ID {
 		if binding.MatchesManifest(manifest, baseline) {
-			report.UpToDate(local.GameTitle)
+			report.SyncedWith(local.GameTitle, name, lastSyncedAt(bound))
 			return nil
 		}
 		if pushFloor > 0 && bound.LastSyncedAt != nil && time.Since(*bound.LastSyncedAt) < pushFloor {
 			// Spacing floor: too soon after the last commit.
-			report.UpToDate(local.GameTitle)
+			report.SyncedWith(local.GameTitle, name, lastSyncedAt(bound))
 			return nil
 		}
 		revision, err := binding.Push(ctx, server, remoteSave.ID, save, baseline.ID, head.Files)
@@ -987,7 +991,7 @@ func syncBoundSave(
 			return nil
 		}
 		outcome.Pushed++
-		report.SyncedUp(local.GameTitle, name)
+		report.SyncedWith(local.GameTitle, name, time.Now())
 		return nil
 	}
 
@@ -1000,7 +1004,7 @@ func syncBoundSave(
 			return nil
 		}
 		outcome.Rebound++
-		report.Rebound(local.GameTitle, name)
+		report.SyncedWith(local.GameTitle, name, time.Now())
 		return nil
 	}
 	if binding.MatchesManifest(manifest, baseline) {
@@ -1017,7 +1021,7 @@ func syncBoundSave(
 			return nil
 		}
 		outcome.Pulled++
-		report.SyncedDown(local.GameTitle, name)
+		report.SyncedWith(local.GameTitle, name, time.Now())
 		return nil
 	}
 	return resolveDivergence(ctx, server, state, local, save, remoteSave, head, &baseline, outcome, report, prompts)
@@ -1060,7 +1064,6 @@ func resolveDivergence(
 		return nil
 	}
 	outcome.Forked++
-	report.Forked(local.GameTitle, omnisaveDisplayName(*preserved))
 	if choice == tui.DivergedBindingFork {
 		if err := state.Bind(local, preserved.ID); err != nil {
 			outcome.Failed++
@@ -1072,9 +1075,11 @@ func resolveDivergence(
 			report.SaveFailed(local.GameTitle, err)
 			return nil
 		}
+		report.SyncedWith(local.GameTitle, omnisaveDisplayName(*preserved), time.Now())
 		return nil
 	}
-	// Jump: the local progress is preserved on its fork; adopt the head.
+	// Jump: name the preservation fork, then adopt the head.
+	report.Forked(local.GameTitle, omnisaveDisplayName(*preserved))
 	// The preserved revision carries exactly the local content, so the
 	// staged placement can verify against it.
 	if err := binding.FastForward(ctx, server, save, *preservedRevision, head); err != nil {
@@ -1093,7 +1098,7 @@ func resolveDivergence(
 		return nil
 	}
 	outcome.Pulled++
-	report.SyncedDown(local.GameTitle, name)
+	report.SyncedWith(local.GameTitle, name, time.Now())
 	return nil
 }
 
@@ -1123,6 +1128,13 @@ func preserveLocalProgress(
 		return nil, nil, err
 	}
 	return &fork.Omnisave, revision, nil
+}
+
+func lastSyncedAt(bound tracking.Binding) time.Time {
+	if bound.LastSyncedAt == nil {
+		return time.Time{}
+	}
+	return *bound.LastSyncedAt
 }
 
 func divergedDisplayName(source omnisave.Omnisave) string {
