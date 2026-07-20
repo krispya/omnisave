@@ -35,7 +35,7 @@ func TestWatchViewShowsTheTableTallyAndFooter(t *testing.T) {
 		"✓ Slay the Spire 2  Up to date",
 		"· Project Zomboid   No save available",
 		"2 tracked · up to date",
-		"watching 3 save files · synced just now",
+		"watching 3 save paths · synced just now",
 		"http://localhost:8080",
 		"s sync now · q quit",
 	} {

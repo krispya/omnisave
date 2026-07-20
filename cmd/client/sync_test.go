@@ -115,6 +115,26 @@ func syncOnce(t *testing.T, server *remote.Client, fixture *bindingFixture, prom
 	return outcome
 }
 
+func TestWatchedPathsIncludeParentDirectoriesSoNewFilesTrigger(t *testing.T) {
+	fixture := newBindingFixture(t, "saved-game-content")
+	paths := watchedFiles(&fixture.state, fixture.scans)
+
+	wantFile := fixture.localPath
+	wantDir := filepath.Dir(fixture.localPath)
+	foundFile, foundDir := false, false
+	for _, path := range paths {
+		if path == wantFile {
+			foundFile = true
+		}
+		if path == wantDir {
+			foundDir = true
+		}
+	}
+	if !foundFile || !foundDir {
+		t.Fatalf("expected both the save file and its directory to be polled, got %q", paths)
+	}
+}
+
 func TestSyncLifecyclePushesPullsAndReportsDivergence(t *testing.T) {
 	server := newRealServer(t)
 	fixture := newSyncFixture(t, "first-progress")
