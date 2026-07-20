@@ -238,6 +238,14 @@ var migrations = []string{
 		       OR (earlier.created_at = omnisaves.created_at AND earlier.id <= omnisaves.id))
 	)
 	WHERE display_name = '';`,
+
+	// Artifact metadata: the logical (uncompressed) size of content stored
+	// gzip-compressed on disk. Artifacts predating compression have no row
+	// and are stat'ed directly as raw files.
+	`CREATE TABLE artifacts (
+		sha256 TEXT PRIMARY KEY,
+		size   INTEGER NOT NULL
+	);`,
 }
 
 func migrate(db *sql.DB) error {

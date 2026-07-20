@@ -3,12 +3,14 @@ package remote
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -161,15 +163,27 @@ func (c *Client) ForkOmnisave(ctx context.Context, id string, input omnisave.For
 
 // UploadArtifact stores content-addressed bytes the server verifies by hash.
 func (c *Client) UploadArtifact(ctx context.Context, artifact omnisave.Artifact, content io.Reader) error {
+	// Save content compresses well and travels compressed; the artifact's
+	// logical size rides a header since Content-Length now measures wire
+	// bytes. Saves are small, so buffering the compressed body to learn
+	// its length costs less than a chunked upload would complicate.
+	var compressed bytes.Buffer
+	compressor := gzip.NewWriter(&compressed)
+	if _, err := io.Copy(compressor, content); err != nil {
+		return fmt.Errorf("compress artifact: %w", err)
+	}
+	if err := compressor.Close(); err != nil {
+		return fmt.Errorf("compress artifact: %w", err)
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPut,
-		c.baseURL+"/api/v1/artifacts/"+url.PathEscape(artifact.SHA256), content)
+		c.baseURL+"/api/v1/artifacts/"+url.PathEscape(artifact.SHA256), &compressed)
 	if err != nil {
 		return err
 	}
-	// The server rejects uploads with an unknown length, and a plain reader
-	// advertises none — the artifact's measured size is the claim it checks.
-	request.ContentLength = artifact.Size
+	request.ContentLength = int64(compressed.Len())
 	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Content-Encoding", "gzip")
+	request.Header.Set("X-Omnisave-Size", strconv.FormatInt(artifact.Size, 10))
 	format := artifact.Format
 	if format == "" {
 		format = "application/octet-stream"
