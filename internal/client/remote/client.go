@@ -225,13 +225,27 @@ func (c *Client) postJSON(ctx context.Context, path string, payload, result any)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
-		return &ResponseError{StatusCode: response.StatusCode}
+		return decodeErrorResponse(response)
 	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBody)).Decode(result); err != nil {
 		return fmt.Errorf("decode Omnisave server response: %w", err)
 	}
 	return nil
+}
+
+// decodeErrorResponse surfaces structured API errors the client acts on —
+// a commit rejected for missing artifacts carries exactly which content to
+// upload — and reports everything else by status.
+func decodeErrorResponse(response *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(response.Body, maxResponseBody))
+	var details struct {
+		Error         string   `json:"error"`
+		MissingSHA256 []string `json:"missing_sha256"`
+	}
+	if json.Unmarshal(body, &details) == nil && details.Error == "artifact_missing" {
+		return &omnisave.MissingArtifacts{SHA256: details.MissingSHA256}
+	}
+	return &ResponseError{StatusCode: response.StatusCode}
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, result any) error {
