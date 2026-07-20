@@ -59,6 +59,10 @@ path, syncing-down built the read path; sync makes both routine.
   an empty local save never commits over good server content, and each
   save has a spacing floor so continuously flushing saves (emulator SRAM)
   do not flood their history.
+- Transfers are incremental even though revisions are complete: a commit
+  is attempted first, and only the content the server reports missing is
+  uploaded — an unchanged file, or content another Device already
+  uploaded, never travels twice.
 - Failures leave both sides valid: an interrupted upload leaves the head
   where it was; an interrupted download leaves the local save untouched.
 - In a terminal, watch presents a live view: every tracked game's line
