@@ -96,7 +96,7 @@ export function SaveList({
                 <div className="h-5">
                   <SaveNameEditor save={save} fallbackName={fallbackName} onSave={onRenameSave} />
                 </div>
-                <p className="mt-1 text-xs text-slate-500">Created {formatDate(save.created_at)}</p>
+                <p className="mt-1 text-xs text-slate-500">Updated {formatDate(save.updated_at)}</p>
               </div>
               <div className="max-w-36 min-w-0 text-right text-[11px] text-[#e5a00d]/80">
                 {sourceName ? (

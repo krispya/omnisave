@@ -48,11 +48,13 @@ func (s *service) Create(ctx context.Context, input omnisave.CreateOmnisave) (*o
 			return nil, translateError(err)
 		}
 	}
+	now := time.Now().UTC()
 	save := omnisave.Omnisave{
 		ID:          uuid.NewString(),
 		GameID:      input.GameID,
 		DisplayName: displayName,
-		CreatedAt:   time.Now().UTC(),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 		Metadata:    cloneMap(input.Metadata),
 	}
 	if err := s.repository.InsertOmnisave(ctx, save); err != nil {
@@ -120,6 +122,7 @@ func (s *service) Fork(ctx context.Context, saveID string, input omnisave.ForkOm
 			RevisionID: sourceRevision.ID,
 		},
 		CreatedAt: now,
+		UpdatedAt: now,
 		Metadata:  mergeMaps(source.Metadata, input.Metadata),
 	}
 	initial := omnisave.Revision{
