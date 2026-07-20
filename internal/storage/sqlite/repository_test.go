@@ -103,6 +103,56 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 	}
 }
 
+func TestUpdatedAtFollowsTheHeadRevision(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repository, err := sqlite.Open(
+		filepath.Join(directory, "omnisave.db"),
+		filepath.Join(directory, "artifacts"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves := omnisaveservice.New(repository)
+
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := saves.Get(ctx, save.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.UpdatedAt.Equal(stored.CreatedAt) {
+		t.Fatalf("expected a fresh save updated at its creation, got %v", stored.UpdatedAt)
+	}
+
+	artifact := storeOmnisaveArtifact(t, ctx, saves, "game-save contents")
+	revision, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "pokemon.sav", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err = saves.Get(ctx, save.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.UpdatedAt.Equal(revision.CreatedAt) {
+		t.Fatalf("expected the commit to move updated_at to %v, got %v", revision.CreatedAt, stored.UpdatedAt)
+	}
+
+	displayName := "After the commit"
+	renamed, err := saves.Update(ctx, save.ID, omnisave.UpdateOmnisave{DisplayName: &displayName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !renamed.UpdatedAt.Equal(revision.CreatedAt) {
+		t.Fatalf("expected a rename to leave updated_at at %v, got %v", revision.CreatedAt, renamed.UpdatedAt)
+	}
+}
+
 func TestDeleteOmnisaveKeepsSharedArtifacts(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()

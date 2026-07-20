@@ -70,7 +70,11 @@ func (r *Repository) InsertOmnisave(ctx context.Context, save omnisave.Omnisave)
 func (r *Repository) ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, game_id, display_name, head_revision_id,
-			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
+			forked_from_omnisave_id, forked_from_revision_id, created_at,
+			COALESCE(
+				(SELECT created_at FROM revisions WHERE id = omnisaves.head_revision_id),
+				created_at
+			), metadata
 		FROM omnisaves ORDER BY created_at, id`,
 	)
 	if err != nil {
@@ -92,7 +96,11 @@ func (r *Repository) ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, er
 func (r *Repository) GetOmnisave(ctx context.Context, id string) (*omnisave.Omnisave, error) {
 	save, err := scanOmnisave(r.db.QueryRowContext(ctx,
 		`SELECT id, game_id, display_name, head_revision_id,
-			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
+			forked_from_omnisave_id, forked_from_revision_id, created_at,
+			COALESCE(
+				(SELECT created_at FROM revisions WHERE id = omnisaves.head_revision_id),
+				created_at
+			), metadata
 		FROM omnisaves WHERE id = ?`, id,
 	))
 	return save, translateNotFound(err)
@@ -397,11 +405,11 @@ type scanner interface {
 
 func scanOmnisave(row scanner) (*omnisave.Omnisave, error) {
 	var save omnisave.Omnisave
-	var createdAt, metadata string
+	var createdAt, updatedAt, metadata string
 	var head, forkSave, forkRevision sql.NullString
 	if err := row.Scan(
 		&save.ID, &save.GameID, &save.DisplayName, &head,
-		&forkSave, &forkRevision, &createdAt, &metadata,
+		&forkSave, &forkRevision, &createdAt, &updatedAt, &metadata,
 	); err != nil {
 		return nil, err
 	}
@@ -414,6 +422,10 @@ func scanOmnisave(row scanner) (*omnisave.Omnisave, error) {
 	}
 	var err error
 	save.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return nil, err
+	}
+	save.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
 	if err != nil {
 		return nil, err
 	}
