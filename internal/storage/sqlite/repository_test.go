@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -470,6 +472,79 @@ func TestProvenanceSurvivesUntrackAndSaveDeletion(t *testing.T) {
 		DeviceID: device.ID, FirstTrackedAt: time.Now().UTC(), LastSeenAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("the device should outlive its deleted games: %v", err)
+	}
+}
+
+func TestArtifactsRestCompressedButKeepTheirIdentity(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repository, err := sqlite.Open(
+		filepath.Join(directory, "omnisave.db"),
+		filepath.Join(directory, "artifacts"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves := omnisaveservice.New(repository)
+
+	contents := strings.Repeat("very compressible save data. ", 200)
+	artifact := storeOmnisaveArtifact(t, ctx, saves, contents)
+
+	stored, err := os.Stat(filepath.Join(directory, "artifacts", artifact.SHA256+".gz"))
+	if err != nil {
+		t.Fatalf("expected the artifact to rest as a compressed file: %v", err)
+	}
+	if stored.Size() >= int64(len(contents)) {
+		t.Fatalf("expected compression to shrink %d bytes, stored %d", len(contents), stored.Size())
+	}
+	size, err := saves.StatArtifact(ctx, artifact.SHA256)
+	if err != nil || size != int64(len(contents)) {
+		t.Fatalf("expected the logical size, got %d (%v)", size, err)
+	}
+	payload, err := saves.OpenArtifact(ctx, artifact.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer payload.Close()
+	restored, err := io.ReadAll(payload)
+	if err != nil || string(restored) != contents {
+		t.Fatalf("expected the exact content back, got %d bytes (%v)", len(restored), err)
+	}
+}
+
+func TestArtifactsFromBeforeCompressionStayReadable(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repository, err := sqlite.Open(
+		filepath.Join(directory, "omnisave.db"),
+		filepath.Join(directory, "artifacts"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves := omnisaveservice.New(repository)
+
+	contents := "legacy raw artifact"
+	sum := sha256.Sum256([]byte(contents))
+	hash := hex.EncodeToString(sum[:])
+	if err := os.WriteFile(filepath.Join(directory, "artifacts", hash), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	size, err := saves.StatArtifact(ctx, hash)
+	if err != nil || size != int64(len(contents)) {
+		t.Fatalf("expected the raw file's size, got %d (%v)", size, err)
+	}
+	payload, err := saves.OpenArtifact(ctx, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer payload.Close()
+	restored, err := io.ReadAll(payload)
+	if err != nil || string(restored) != contents {
+		t.Fatalf("expected the raw content back, got %q (%v)", restored, err)
 	}
 }
 

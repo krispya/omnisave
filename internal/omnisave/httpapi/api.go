@@ -2,12 +2,14 @@
 package httpapi
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
@@ -187,11 +189,31 @@ func (a *API) putArtifact(w http.ResponseWriter, r *http.Request) {
 		format = "application/octet-stream"
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxRevisionBody)
+	// The artifact's identity is its uncompressed content. A compressed
+	// upload carries the logical size in a header, since Content-Length
+	// then measures the wire bytes instead of the claim to verify.
+	size := r.ContentLength
+	var payload io.Reader = r.Body
+	if r.Header.Get("Content-Encoding") == "gzip" {
+		declared, err := strconv.ParseInt(r.Header.Get("X-Omnisave-Size"), 10, 64)
+		if err != nil || declared < 0 || declared > maxRevisionBody {
+			writeError(w, omnisave.ErrInvalid)
+			return
+		}
+		decompressor, err := gzip.NewReader(r.Body)
+		if err != nil {
+			writeError(w, omnisave.ErrInvalid)
+			return
+		}
+		defer decompressor.Close()
+		size = declared
+		payload = io.LimitReader(decompressor, declared+1)
+	}
 	err := a.saves.StoreArtifact(r.Context(), omnisave.Artifact{
 		Format: format,
 		SHA256: r.PathValue("sha256"),
-		Size:   r.ContentLength,
-	}, r.Body)
+		Size:   size,
+	}, payload)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -220,10 +242,22 @@ func (a *API) getArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	defer payload.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("ETag", `"`+hash+`"`)
+	// Compress the wire when the client accepts it; Go clients do by
+	// default and decompress transparently, so save content — often very
+	// compressible — travels small with no client-side handling.
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		w.Header().Set("Content-Encoding", "gzip")
+		compressor := gzip.NewWriter(w)
+		defer compressor.Close()
+		if _, err := io.Copy(compressor, payload); err != nil {
+			return
+		}
+		return
+	}
 	if size, statErr := a.saves.StatArtifact(r.Context(), hash); statErr == nil {
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	}
-	w.Header().Set("ETag", `"`+hash+`"`)
 	if _, err := io.Copy(w, payload); err != nil {
 		return
 	}
