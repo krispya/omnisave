@@ -17,6 +17,7 @@ import (
 
 type fakeServer struct {
 	uploads     map[string][]byte
+	uploadCalls int
 	created     []omnisave.CreateOmnisave
 	committed   map[string]omnisave.CreateRevision
 	deleted     []string
@@ -31,6 +32,7 @@ func newFakeServer() *fakeServer {
 }
 
 func (f *fakeServer) UploadArtifact(_ context.Context, artifact omnisave.Artifact, content io.Reader) error {
+	f.uploadCalls++
 	data, err := io.ReadAll(content)
 	if err != nil {
 		return err
@@ -54,6 +56,19 @@ func (f *fakeServer) CreateOmnisave(_ context.Context, input omnisave.CreateOmni
 func (f *fakeServer) CommitRevision(_ context.Context, omnisaveID string, input omnisave.CreateRevision) (*omnisave.Revision, error) {
 	if f.commitError != nil {
 		return nil, f.commitError
+	}
+	// Like the real server: reject commits naming content that was never
+	// uploaded, listing exactly what is missing.
+	var missing []string
+	seen := make(map[string]bool)
+	for _, file := range input.Upserts {
+		if _, uploaded := f.uploads[file.Artifact.SHA256]; !uploaded && !seen[file.Artifact.SHA256] {
+			missing = append(missing, file.Artifact.SHA256)
+			seen[file.Artifact.SHA256] = true
+		}
+	}
+	if len(missing) > 0 {
+		return nil, &omnisave.MissingArtifacts{SHA256: missing}
 	}
 	f.committed[omnisaveID] = input
 	return &omnisave.Revision{ID: "revision-1", OmnisaveID: omnisaveID, Files: input.Upserts}, nil
@@ -201,7 +216,7 @@ func TestSeedUploadsContentAndCommitsInitialRevision(t *testing.T) {
 	if len(commit.Upserts) != 2 {
 		t.Fatalf("expected 2 upserts, got %d", len(commit.Upserts))
 	}
-	if commit.Upserts[0].Path != "battery/Zelda.srm" || commit.Upserts[1].Path != "battery/Zelda.rtc" {
+	if commit.Upserts[0].Path != "battery/Zelda.rtc" || commit.Upserts[1].Path != "battery/Zelda.srm" {
 		t.Fatalf("unexpected canonical paths: %s, %s", commit.Upserts[0].Path, commit.Upserts[1].Path)
 	}
 	for _, upsert := range commit.Upserts {
@@ -211,6 +226,28 @@ func TestSeedUploadsContentAndCommitsInitialRevision(t *testing.T) {
 	}
 	if len(server.deleted) != 0 {
 		t.Fatalf("nothing should be deleted on success, got %v", server.deleted)
+	}
+}
+
+func TestPushSkipsUploadingContentTheServerAlreadyHas(t *testing.T) {
+	directory := t.TempDir()
+	unchanged := writeFile(t, directory, "settings.json", "same-settings")
+	changed := writeFile(t, directory, "progress.sav", "new-progress")
+	save := target.Save{ID: "save-1", Files: []target.File{unchanged, changed}}
+
+	server := newFakeServer()
+	settingsDigest := sha256.Sum256([]byte("same-settings"))
+	server.uploads[hex.EncodeToString(settingsDigest[:])] = []byte("same-settings")
+
+	revision, err := binding.Push(context.Background(), server, "omnisave-1", save, "head-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revision == nil || len(server.committed["omnisave-1"].Upserts) != 2 {
+		t.Fatalf("expected a committed revision with both files, got %+v", server.committed)
+	}
+	if server.uploadCalls != 1 {
+		t.Fatalf("expected only the changed file to upload, got %d uploads", server.uploadCalls)
 	}
 }
 

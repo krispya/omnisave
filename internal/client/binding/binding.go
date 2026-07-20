@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -151,7 +152,7 @@ func Seed(ctx context.Context, server Server, serverGameID string, save target.S
 		return nil, nil, fmt.Errorf("local save has no files to seed")
 	}
 
-	upserts, err := uploadFiles(ctx, server, save)
+	upserts, err := Manifest(save)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -159,7 +160,7 @@ func Seed(ctx context.Context, server Server, serverGameID string, save target.S
 	if err != nil {
 		return nil, nil, fmt.Errorf("create Omnisave: %w", err)
 	}
-	revision, err := server.CommitRevision(ctx, created.ID, omnisave.CreateRevision{Upserts: upserts})
+	revision, err := commitContent(ctx, server, created.ID, save, omnisave.CreateRevision{Upserts: upserts})
 	if err != nil {
 		// An Omnisave with no revisions is indistinguishable from lost data;
 		// remove the empty shell so a retry starts clean.
@@ -185,7 +186,7 @@ func Push(ctx context.Context, server Server, omnisaveID string, save target.Sav
 	if len(save.Files) == 0 {
 		return nil, fmt.Errorf("local save has no files to push")
 	}
-	upserts, err := uploadFiles(ctx, server, save)
+	upserts, err := Manifest(save)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +200,7 @@ func Push(ctx context.Context, server Server, omnisaveID string, save target.Sav
 			deletes = append(deletes, file.Path)
 		}
 	}
-	revision, err := server.CommitRevision(ctx, omnisaveID, omnisave.CreateRevision{
+	revision, err := commitContent(ctx, server, omnisaveID, save, omnisave.CreateRevision{
 		ExpectedHeadID: &expectedHeadID,
 		Upserts:        upserts,
 		Deletes:        deletes,
@@ -210,28 +211,56 @@ func Push(ctx context.Context, server Server, omnisaveID string, save target.Sav
 	return revision, nil
 }
 
-func uploadFiles(ctx context.Context, server Server, save target.Save) ([]omnisave.RevisionFile, error) {
-	upserts := make([]omnisave.RevisionFile, 0, len(save.Files))
+// commitContent commits the local save's manifest, uploading only the
+// artifacts the server reports missing: identical content — an unchanged
+// file, another Device's earlier upload — never travels twice.
+func commitContent(ctx context.Context, server Server, omnisaveID string, save target.Save, input omnisave.CreateRevision) (*omnisave.Revision, error) {
+	revision, err := server.CommitRevision(ctx, omnisaveID, input)
+	var missing *omnisave.MissingArtifacts
+	if !errors.As(err, &missing) {
+		return revision, err
+	}
+	if err := uploadMissing(ctx, server, save, input.Upserts, missing.SHA256); err != nil {
+		return nil, err
+	}
+	return server.CommitRevision(ctx, omnisaveID, input)
+}
+
+// uploadMissing sends exactly the artifacts the server lacks, reading each
+// from the local file that carries it. A file whose bytes changed since
+// the manifest was computed fails the sync rather than committing a torn
+// mixture of old and new content.
+func uploadMissing(ctx context.Context, server Server, save target.Save, upserts []omnisave.RevisionFile, missing []string) error {
+	wanted := make(map[string]bool, len(missing))
+	for _, hash := range missing {
+		wanted[hash] = true
+	}
+	artifacts := make(map[string]omnisave.Artifact, len(upserts))
+	for _, file := range upserts {
+		artifacts[file.Path] = file.Artifact
+	}
 	for _, file := range save.Files {
+		artifact, known := artifacts[CanonicalPath(file)]
+		if !known || !wanted[artifact.SHA256] {
+			continue
+		}
 		content, err := os.ReadFile(file.Path)
 		if err != nil {
-			return nil, fmt.Errorf("read local save file: %w", err)
+			return fmt.Errorf("read local save file: %w", err)
 		}
 		digest := sha256.Sum256(content)
-		artifact := omnisave.Artifact{
-			Format: "application/octet-stream",
-			SHA256: hex.EncodeToString(digest[:]),
-			Size:   int64(len(content)),
+		if hex.EncodeToString(digest[:]) != artifact.SHA256 {
+			return fmt.Errorf("local save changed during upload")
 		}
 		if err := server.UploadArtifact(ctx, artifact, bytes.NewReader(content)); err != nil {
-			return nil, fmt.Errorf("upload %s: %w", filepath.Base(file.Path), err)
+			return fmt.Errorf("upload %s: %w", filepath.Base(file.Path), err)
 		}
-		upserts = append(upserts, omnisave.RevisionFile{
-			Path:     CanonicalPath(file),
-			Artifact: artifact,
-		})
+		delete(wanted, artifact.SHA256)
 	}
-	return upserts, nil
+	if len(wanted) > 0 {
+		return fmt.Errorf("server is missing content this save does not carry")
+	}
+	return nil
 }
 
 // CanonicalPath names a native file inside a revision: location-scoped,
