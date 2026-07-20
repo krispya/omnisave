@@ -50,7 +50,7 @@ func (r *MemoryRepository) InsertOmnisave(_ context.Context, save omnisave.Omnis
 func (r *MemoryRepository) ListOmnisaves(context.Context) ([]omnisave.Omnisave, error) {
 	result := make([]omnisave.Omnisave, 0, len(r.saves))
 	for _, save := range r.saves {
-		result = append(result, save)
+		result = append(result, r.deriveUpdatedAt(save))
 	}
 	return result, nil
 }
@@ -60,7 +60,23 @@ func (r *MemoryRepository) GetOmnisave(_ context.Context, id string) (*omnisave.
 	if !ok {
 		return nil, storage.ErrNotFound
 	}
+	save = r.deriveUpdatedAt(save)
 	return &save, nil
+}
+
+// deriveUpdatedAt mirrors the SQL repository: the head revision's creation
+// time, or the save's own when it has no revisions.
+func (r *MemoryRepository) deriveUpdatedAt(save omnisave.Omnisave) omnisave.Omnisave {
+	save.UpdatedAt = save.CreatedAt
+	if save.HeadRevisionID == nil {
+		return save
+	}
+	for _, revision := range r.revisions[save.ID] {
+		if revision.ID == *save.HeadRevisionID {
+			save.UpdatedAt = revision.CreatedAt
+		}
+	}
+	return save
 }
 
 func (r *MemoryRepository) UpdateOmnisaveDisplayName(_ context.Context, id, displayName string) error {

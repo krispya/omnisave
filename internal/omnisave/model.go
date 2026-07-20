@@ -11,7 +11,9 @@ type Omnisave struct {
 	HeadRevisionID *string           `json:"head_revision_id"`
 	ForkedFrom     *ForkOrigin       `json:"forked_from,omitempty"`
 	CreatedAt      time.Time         `json:"created_at"`
-	Metadata       map[string]string `json:"metadata,omitempty"`
+	// UpdatedAt is when the head revision was committed; CreatedAt if none.
+	UpdatedAt time.Time         `json:"updated_at"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
 // ForkOrigin identifies the snapshot from which another Omnisave began.
