@@ -177,7 +177,7 @@ func (r *Repository) DeleteOmnisave(ctx context.Context, id string) error {
 	}
 
 	for _, hash := range unreferenced {
-		if err := os.Remove(r.artifactPath(hash)); err != nil && !os.IsNotExist(err) {
+		if err := r.removeArtifact(hash); err != nil {
 			return err
 		}
 	}

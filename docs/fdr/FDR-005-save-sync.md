@@ -158,6 +158,23 @@ process is trivially debuggable.
 **Tradeoff:** Until packaging lands, "install the watcher" is a second
 manual step after installing the binary.
 
+### 7. Artifacts are compressed at rest and in transit
+
+**Decision:** Artifact content is gzip-compressed on the server's disk and
+on the wire in both directions. Identity never changes: an artifact is
+named and verified by the SHA-256 and size of its uncompressed content.
+Artifacts from before compression stay on disk as-is and remain readable;
+nothing rewrites them.
+**Why:** Save content is highly compressible, and both ends of the
+self-hosted deployment are constrained — NAS disk and handheld Wi-Fi.
+Keying identity to uncompressed content keeps dedup, content matching, and
+client verification independent of the encoding, and lets the encoding
+evolve per file later (zstd) without a data migration. gzip over stronger
+codecs because it is in the standard library: zero new dependencies.
+**Tradeoff:** CPU spent on every transfer, weaker ratios than zstd, and
+logical sizes need their own metadata since disk size no longer states
+them.
+
 ## Related
 
 - **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — heads move
