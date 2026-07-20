@@ -171,8 +171,8 @@ func TestTrackingCanJumpAStaleLocalSaveToTheMatchingLineageHead(t *testing.T) {
 		return tui.StaleBindingFastForward, nil
 	}
 
-	err = bindUnboundSavesWithChooser(context.Background(), remoteClient, &fixture.state, fixture.scans,
-		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, choose, failingAmbiguousChooser(t))
+	err = reconcileSaves(context.Background(), remoteClient, &fixture.state, fixture.scans,
+		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, testPrompts(choose, failingAmbiguousChooser(t), t), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,8 +234,8 @@ func TestTrackingCanForkAStaleLocalSaveAtItsMatchingRevision(t *testing.T) {
 		return tui.StaleBindingFork, nil
 	}
 
-	err = bindUnboundSavesWithChooser(context.Background(), remoteClient, &fixture.state, fixture.scans,
-		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, choose, failingAmbiguousChooser(t))
+	err = reconcileSaves(context.Background(), remoteClient, &fixture.state, fixture.scans,
+		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, testPrompts(choose, failingAmbiguousChooser(t), t), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,6 +409,23 @@ func TestDeletingAGameInTheDashUntracksItBeforeTheNextPrompt(t *testing.T) {
 	}
 }
 
+// testPrompts builds a prompt set whose diverged prompt fails the test —
+// binding-era tests never expect divergence.
+func testPrompts(
+	stale func(string, string) (tui.StaleBindingChoice, error),
+	ambiguous func(string, []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error),
+	t *testing.T,
+) *reconcilePrompts {
+	return &reconcilePrompts{stale: stale, ambiguous: ambiguous, diverged: failingDivergedChooser(t)}
+}
+
+func failingDivergedChooser(t *testing.T) func(string, string) (tui.DivergedBindingChoice, error) {
+	return func(gameTitle, _ string) (tui.DivergedBindingChoice, error) {
+		t.Fatalf("unexpected diverged prompt for %q", gameTitle)
+		return "", nil
+	}
+}
+
 func failingAmbiguousChooser(t *testing.T) func(string, []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error) {
 	return func(gameTitle string, _ []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error) {
 		t.Fatalf("unexpected ambiguity prompt for %q", gameTitle)
@@ -451,9 +468,9 @@ func TestAmbiguousSaveCanBindToAChosenOmnisaveWithNothingSyncedYet(t *testing.T)
 		return tui.AmbiguousBindingChoice{OmnisaveID: "omnisave-2"}, nil
 	}
 
-	err = bindUnboundSavesWithChooser(context.Background(), remoteClient, &fixture.state, fixture.scans,
+	err = reconcileSaves(context.Background(), remoteClient, &fixture.state, fixture.scans,
 		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{},
-		failingStaleChooser(t), chooseAmbiguous)
+		testPrompts(failingStaleChooser(t), chooseAmbiguous, t), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -501,9 +518,9 @@ func TestASaveMatchingTwoForkedLineagesBindsAtTheChosenRevision(t *testing.T) {
 		return tui.AmbiguousBindingChoice{OmnisaveID: "omnisave-2"}, nil
 	}
 
-	err = bindUnboundSavesWithChooser(context.Background(), remoteClient, &fixture.state, fixture.scans,
+	err = reconcileSaves(context.Background(), remoteClient, &fixture.state, fixture.scans,
 		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{},
-		failingStaleChooser(t), chooseAmbiguous)
+		testPrompts(failingStaleChooser(t), chooseAmbiguous, t), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,8 +563,8 @@ func TestAnAmbiguousSaveCanSeedANewOmnisaveOrStayUnbound(t *testing.T) {
 	deferring := func(string, []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error) {
 		return tui.AmbiguousBindingChoice{}, nil
 	}
-	err = bindUnboundSavesWithChooser(context.Background(), remoteClient, &fixture.state, fixture.scans,
-		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, failingStaleChooser(t), deferring)
+	err = reconcileSaves(context.Background(), remoteClient, &fixture.state, fixture.scans,
+		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, testPrompts(failingStaleChooser(t), deferring, t), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -559,8 +576,8 @@ func TestAnAmbiguousSaveCanSeedANewOmnisaveOrStayUnbound(t *testing.T) {
 	seeding := func(string, []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error) {
 		return tui.AmbiguousBindingChoice{Seed: true}, nil
 	}
-	err = bindUnboundSavesWithChooser(context.Background(), remoteClient, &fixture.state, fixture.scans,
-		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, failingStaleChooser(t), seeding)
+	err = reconcileSaves(context.Background(), remoteClient, &fixture.state, fixture.scans,
+		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, testPrompts(failingStaleChooser(t), seeding, t), 0)
 	if err != nil {
 		t.Fatal(err)
 	}

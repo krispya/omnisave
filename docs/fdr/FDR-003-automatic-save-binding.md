@@ -18,7 +18,7 @@ establishes the baseline that sync will later diff against.
 - After tracking completes, every tracked game that has a local save but no
   binding on this Device goes through the binding pass. Games without a
   local save are skipped untouched, and the result says that no save is
-  available to sync — unless the server has Omnisaves for them, in which
+  available — unless the server has Omnisaves for them, in which
   case syncing one down is offered
   ([FDR-004](FDR-004-sync-to-device.md)).
 - If the server has no Omnisaves for the game, one is created and seeded:
@@ -147,7 +147,7 @@ the same save matches both lineages.
 ### 7. No local save, no Omnisave
 
 **Decision:** Tracked games without a local save are skipped — no empty
-Omnisave, no binding — and reported as having no save available to sync.
+Omnisave, no binding — and reported as having no save available.
 **Why:** There is nothing to protect yet, and an Omnisave with no revisions
 is indistinguishable from lost data. A later pass picks the game up once
 it has been played.
@@ -192,4 +192,7 @@ exists and runs.
   [FDR-002](FDR-002-game-lifecycle.md) — the detect → track → bind
   lifecycle this automates, Device self-identification, and Omnisave
   survival across untracking; [FDR-004](FDR-004-sync-to-device.md) — the
-  read counterpart: offering server saves to a Device that has none.
+  read counterpart: offering server saves to a Device that has none;
+  [FDR-005](FDR-005-save-sync.md) — ongoing sync, which re-runs this
+  pass's automatic half and gives baseline-less bindings their
+  resolution.

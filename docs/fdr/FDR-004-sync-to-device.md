@@ -19,7 +19,7 @@ onto a new machine.
 
 - During the binding pass, a tracked and confirmed game with no local save
   whose server has Omnisaves triggers the offer. Today that case reports
-  "no save available to sync" and stops; with this feature it asks instead.
+  "no save available" and stops; with this feature it asks instead.
 - The offer lists the game's Omnisaves by name, plus "decide later". It is
   always asked, even when exactly one Omnisave exists.
 - Choosing an Omnisave syncs it immediately: its head revision's files are
@@ -119,13 +119,6 @@ fast-forward, forking, and manual bind cover it.
   this extends, whose open question about fresh Devices this resolves, and
   whose fast-forward staging this shares;
   [FDR-002](FDR-002-game-lifecycle.md) — Device identity and the lifecycle
-  that makes a fresh Device expected rather than exceptional.
-
-## Open Questions
-
-- Should the offer describe each Omnisave beyond its name — head recency,
-  size — to help choose between playthroughs?
-- Should later runs keep repeating a declined offer indefinitely, or should
-  "decide later" eventually be rememberable?
-- The full synchronization FDR should absorb this as its pull path and keep
-  the staging policy single-homed.
+  that makes a fresh Device expected rather than exceptional;
+  [FDR-005](FDR-005-save-sync.md) — ongoing sync for saves once they are
+  bound, whose pull direction reuses this record's staging policy.

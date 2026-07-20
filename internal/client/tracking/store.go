@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -52,12 +53,13 @@ type LocalSave struct {
 
 // Binding maps one local save to one independently versioned Omnisave.
 type Binding struct {
-	Adapter              string  `json:"adapter"`
-	TargetID             string  `json:"target_id"`
-	LocalSaveID          string  `json:"local_save_id"`
-	LocalGameID          string  `json:"local_game_id"`
-	OmnisaveID           string  `json:"omnisave_id"`
-	LastSyncedRevisionID *string `json:"last_synced_revision_id"`
+	Adapter              string     `json:"adapter"`
+	TargetID             string     `json:"target_id"`
+	LocalSaveID          string     `json:"local_save_id"`
+	LocalGameID          string     `json:"local_game_id"`
+	OmnisaveID           string     `json:"omnisave_id"`
+	LastSyncedRevisionID *string    `json:"last_synced_revision_id"`
+	LastSyncedAt         *time.Time `json:"last_synced_at,omitempty"`
 }
 
 // State contains this machine's tracked games and save bindings.
@@ -300,7 +302,9 @@ func (s *State) RecordSynced(local LocalSave, omnisaveID, revisionID string) err
 			if s.Bindings[index].OmnisaveID != omnisaveID {
 				return fmt.Errorf("local save binding changed")
 			}
+			now := time.Now().UTC()
 			s.Bindings[index].LastSyncedRevisionID = &revisionID
+			s.Bindings[index].LastSyncedAt = &now
 			return nil
 		}
 	}

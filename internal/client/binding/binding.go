@@ -169,6 +169,47 @@ func Seed(ctx context.Context, server Server, serverGameID string, save target.S
 	return created, revision, nil
 }
 
+// MatchesManifest reports whether a local manifest equals a revision's files.
+func MatchesManifest(manifest []omnisave.RevisionFile, revision omnisave.Revision) bool {
+	return sameManifest(manifest, revision.Files)
+}
+
+// Push commits the local save's current content as a new revision on top of
+// the expected head — the binding's sync baseline (FDR-005). Deletes cover
+// baseline paths the local save no longer has. The returned revision is the
+// binding's next baseline.
+func Push(ctx context.Context, server Server, omnisaveID string, save target.Save, expectedHeadID string, headFiles []omnisave.RevisionFile) (*omnisave.Revision, error) {
+	if omnisaveID == "" || expectedHeadID == "" {
+		return nil, fmt.Errorf("push needs a bound Omnisave and its baseline")
+	}
+	if len(save.Files) == 0 {
+		return nil, fmt.Errorf("local save has no files to push")
+	}
+	upserts, err := uploadFiles(ctx, server, save)
+	if err != nil {
+		return nil, err
+	}
+	local := make(map[string]bool, len(upserts))
+	for _, file := range upserts {
+		local[file.Path] = true
+	}
+	var deletes []string
+	for _, file := range headFiles {
+		if !local[file.Path] {
+			deletes = append(deletes, file.Path)
+		}
+	}
+	revision, err := server.CommitRevision(ctx, omnisaveID, omnisave.CreateRevision{
+		ExpectedHeadID: &expectedHeadID,
+		Upserts:        upserts,
+		Deletes:        deletes,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("commit local progress: %w", err)
+	}
+	return revision, nil
+}
+
 func uploadFiles(ctx context.Context, server Server, save target.Save) ([]omnisave.RevisionFile, error) {
 	upserts := make([]omnisave.RevisionFile, 0, len(save.Files))
 	for _, file := range save.Files {
