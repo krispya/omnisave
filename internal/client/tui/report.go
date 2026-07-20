@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -18,14 +19,14 @@ type TrackReport struct {
 	order   []string
 	games   map[string]*trackedGameReport
 
-	// OnUpdate, when set, receives a fresh snapshot of the rendered game
-	// lines after every event, so live views repaint as a pass progresses.
-	OnUpdate func(lines []string)
+	// OnUpdate, when set, receives a fresh snapshot after every event, so
+	// live views repaint as a pass progresses.
+	OnUpdate func(snapshot ReportSnapshot)
 }
 
 func (r *TrackReport) changed() {
 	if r.OnUpdate != nil {
-		r.OnUpdate(r.render())
+		r.OnUpdate(r.Snapshot())
 	}
 }
 
@@ -35,8 +36,10 @@ func (r *TrackReport) Lines() []string {
 }
 
 type trackedGameReport struct {
-	glyph  string
-	events []string
+	glyph      string
+	events     []string
+	syncedWith string
+	syncedAt   time.Time
 }
 
 func (r *TrackReport) game(title string) *trackedGameReport {
@@ -103,21 +106,6 @@ func (r *TrackReport) Failed(title string, err error) {
 	r.event(title, "failed — "+strings.TrimSpace(err.Error()))
 }
 
-// Seeded records a game's local save seeded into a new Omnisave, named
-// when the server reports a display name for it.
-func (r *TrackReport) Seeded(title, omnisaveName string) {
-	if omnisaveName == "" {
-		r.event(title, "save seeded to a new Omnisave")
-		return
-	}
-	r.event(title, "save seeded as "+omnisaveName)
-}
-
-// Rebound records a local save automatically reattached to a named Omnisave.
-func (r *TrackReport) Rebound(title, omnisaveName string) {
-	r.event(title, "save matches the head of "+omnisaveName+" and is resyncing")
-}
-
 // NoSave records that an installed game has no local save content to
 // protect. The idle glyph yields to any stronger state already reported.
 func (r *TrackReport) NoSave(title string) {
@@ -125,11 +113,6 @@ func (r *TrackReport) NoSave(title string) {
 		entry.glyph = mutedStyle.Render("·")
 	}
 	r.event(title, "no save available")
-}
-
-// FastForwarded records a stale local save advanced to a named Omnisave head.
-func (r *TrackReport) FastForwarded(title, omnisaveName string) {
-	r.event(title, "save jumped to the head of "+omnisaveName)
 }
 
 // Forked records a stale local save continued as a new named lineage.
@@ -144,14 +127,18 @@ func (r *TrackReport) UpToDate(title string) {
 	r.changed()
 }
 
-// SyncedUp records local progress committed to the bound Omnisave.
-func (r *TrackReport) SyncedUp(title, omnisaveName string) {
-	r.event(title, "save synced to "+omnisaveName)
-}
-
-// SyncedDown records the bound Omnisave's head applied to the local save.
-func (r *TrackReport) SyncedDown(title, omnisaveName string) {
-	r.event(title, "save synced from "+omnisaveName)
+// SyncedWith records a bound save's standing state: the Omnisave it syncs
+// with and when the last sync event happened — a seed, push, pull, or
+// rebind now, or the recorded time of an earlier one. Every healthy bound
+// save reads "Save 1 · synced 2m ago"; what happened this pass lives in
+// the summary tally. Live views age the timestamp between passes.
+func (r *TrackReport) SyncedWith(title, omnisaveName string, at time.Time) {
+	entry := r.game(title)
+	if entry.syncedWith == "" || at.After(entry.syncedAt) {
+		entry.syncedWith = omnisaveName
+		entry.syncedAt = at
+	}
+	r.changed()
 }
 
 // Behind records a save matching an older revision, waiting for an
@@ -168,14 +155,9 @@ func (r *TrackReport) Diverged(title, omnisaveName string) {
 	r.event(title, "save diverged from "+omnisaveName+", run omnisave-client track to resolve")
 }
 
-// Bound records a save mapped to the Omnisave chosen in the ambiguity
-// prompt: with a matching revision the sync baseline is set there; without
-// one the mapping waits for synchronization to reconcile the content.
-func (r *TrackReport) Bound(title, omnisaveName string, matched bool) {
-	if matched {
-		r.event(title, "save bound to "+omnisaveName+" at a matching revision")
-		return
-	}
+// BoundUnsynced records a save mapped to a chosen Omnisave with no
+// matching revision: the mapping exists, but nothing has synced yet.
+func (r *TrackReport) BoundUnsynced(title, omnisaveName string) {
 	r.event(title, "save bound to "+omnisaveName+" with nothing synced yet")
 }
 
@@ -216,28 +198,78 @@ func (r *TrackReport) Print() {
 }
 
 func (r *TrackReport) render() []string {
-	var lines []string
-	for _, sentence := range r.general {
-		lines = append(lines, "  "+errorStyle.Render("✗")+" "+mutedStyle.Render(sentence))
-	}
-	width := 0
-	for _, title := range r.order {
-		if count := utf8.RuneCountInString(title); count > width {
-			width = count
-		}
-	}
+	return ComposeReport(r.Snapshot(), time.Now())
+}
+
+// GameStatus is one game's report line as data, so live views can age the
+// synced timestamp between passes.
+type GameStatus struct {
+	Glyph      string
+	Title      string
+	Events     string
+	SyncedWith string
+	SyncedAt   time.Time
+}
+
+// ReportSnapshot is the report's current content in renderable form.
+type ReportSnapshot struct {
+	General []string
+	Games   []GameStatus
+}
+
+// Snapshot exports the report for live rendering.
+func (r *TrackReport) Snapshot() ReportSnapshot {
+	games := make([]GameStatus, 0, len(r.order))
 	for _, title := range r.order {
 		entry := r.games[title]
 		glyph := entry.glyph
 		if glyph == "" {
 			glyph = successStyle.Render("✓")
 		}
-		status := "Up to date"
-		if len(entry.events) > 0 {
-			status = strings.Join(entry.events, " · ")
+		games = append(games, GameStatus{
+			Glyph:      glyph,
+			Title:      title,
+			Events:     strings.Join(entry.events, " · "),
+			SyncedWith: entry.syncedWith,
+			SyncedAt:   entry.syncedAt,
+		})
+	}
+	return ReportSnapshot{General: append([]string(nil), r.general...), Games: games}
+}
+
+// ComposeReport renders a snapshot's lines as of now, so quiet bound saves
+// read "Save 1 · synced 2m ago" with a truthful age.
+func ComposeReport(snapshot ReportSnapshot, now time.Time) []string {
+	var lines []string
+	for _, sentence := range snapshot.General {
+		lines = append(lines, "  "+errorStyle.Render("✗")+" "+mutedStyle.Render(sentence))
+	}
+	width := 0
+	for _, game := range snapshot.Games {
+		if count := utf8.RuneCountInString(game.Title); count > width {
+			width = count
 		}
-		padding := strings.Repeat(" ", width-utf8.RuneCountInString(title))
-		lines = append(lines, "  "+glyph+" "+plainTitle(title)+padding+"  "+mutedStyle.Render(status))
+	}
+	for _, game := range snapshot.Games {
+		synced := ""
+		switch {
+		case game.SyncedWith != "" && !game.SyncedAt.IsZero():
+			synced = game.SyncedWith + " · synced " + ago(now, game.SyncedAt)
+		case game.SyncedWith != "":
+			synced = game.SyncedWith + " · up to date"
+		}
+		status := game.Events
+		switch {
+		case status != "" && synced != "":
+			status = status + " · " + synced
+		case status == "":
+			status = synced
+		}
+		if status == "" {
+			status = "Up to date"
+		}
+		padding := strings.Repeat(" ", width-utf8.RuneCountInString(game.Title))
+		lines = append(lines, "  "+game.Glyph+" "+plainTitle(game.Title)+padding+"  "+mutedStyle.Render(status))
 	}
 	return lines
 }

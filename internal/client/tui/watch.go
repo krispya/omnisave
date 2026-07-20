@@ -66,48 +66,52 @@ func (d *WatchDisplay) Watching(files int) {
 
 // PassStarted marks the view as syncing.
 func (d *WatchDisplay) PassStarted() {
-	d.program.Send(watchPassStartedMsg{})
-}
-
-// Snapshot repaints the game table mid-pass.
-func (d *WatchDisplay) Snapshot(lines []string) {
-	d.program.Send(watchSnapshotMsg{lines: lines})
+	d.program.Send(watchPassStartedMsg{at: time.Now()})
 }
 
 // PassFinished settles the view with a pass's final table and tally. The
-// live view always repaints, so the changed flag is only for log sinks.
-func (d *WatchDisplay) PassFinished(lines []string, summary string, changed bool, err error) {
-	d.program.Send(watchPassFinishedMsg{lines: lines, summary: summary, err: err, at: time.Now()})
+// table swaps in whole only when a pass completes — mid-pass the previous
+// settled table stays put and the footer spinner is the activity signal,
+// so running a pass never reflows the layout. The live view always
+// repaints, so the changed flag is only for log sinks.
+func (d *WatchDisplay) PassFinished(snapshot ReportSnapshot, summary string, changed bool, err error) {
+	d.program.Send(watchPassFinishedMsg{snapshot: snapshot, summary: summary, err: err, at: time.Now()})
 }
 
 type (
 	watchWatchingMsg     struct{ files int }
-	watchPassStartedMsg  struct{}
-	watchSnapshotMsg     struct{ lines []string }
+	watchPassStartedMsg  struct{ at time.Time }
 	watchPassFinishedMsg struct {
-		lines   []string
-		summary string
-		err     error
-		at      time.Time
+		snapshot ReportSnapshot
+		summary  string
+		err      error
+		at       time.Time
 	}
-	watchClockMsg time.Time
+	watchSpinDoneMsg struct{ generation int }
+	watchClockMsg    time.Time
 )
+
+// spinnerMinimum keeps the header spinner visible for at least one full
+// rotation, so a fast pass still visibly acknowledges the command.
+const spinnerMinimum = time.Second
 
 func watchClock() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return watchClockMsg(t) })
 }
 
 type watchModel struct {
-	config   WatchConfig
-	requests chan<- WatchRequest
-	spinner  spinner.Model
-	files    int
-	lines    []string
-	summary  string
-	failure  string
-	syncing  bool
-	synced   time.Time
-	now      time.Time
+	config         WatchConfig
+	requests       chan<- WatchRequest
+	spinner        spinner.Model
+	files          int
+	snapshot       ReportSnapshot
+	summary        string
+	failure        string
+	syncing        bool
+	syncStarted    time.Time
+	spinGeneration int
+	synced         time.Time
+	now            time.Time
 }
 
 func (m watchModel) Init() tea.Cmd {
@@ -139,16 +143,27 @@ func (m watchModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.files = message.files
 	case watchPassStartedMsg:
 		m.syncing = true
-	case watchSnapshotMsg:
-		m.lines = message.lines
+		m.syncStarted = message.at
+		m.spinGeneration++
 	case watchPassFinishedMsg:
-		m.syncing = false
 		m.synced = message.at
-		m.lines = message.lines
+		m.snapshot = message.snapshot
 		m.summary = message.summary
 		m.failure = ""
 		if message.err != nil {
 			m.failure = message.err.Error()
+		}
+		// Results land immediately; the spinner finishes its rotation.
+		if remaining := spinnerMinimum - message.at.Sub(m.syncStarted); remaining > 0 {
+			generation := m.spinGeneration
+			return m, tea.Tick(remaining, func(time.Time) tea.Msg {
+				return watchSpinDoneMsg{generation: generation}
+			})
+		}
+		m.syncing = false
+	case watchSpinDoneMsg:
+		if message.generation == m.spinGeneration {
+			m.syncing = false
 		}
 	}
 	return m, nil
@@ -156,11 +171,17 @@ func (m watchModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m watchModel) View() string {
 	var view strings.Builder
-	view.WriteString(titleStyle.Render("▲ Omnisave") + mutedStyle.Render(" · watching") + "\n\n")
-	if len(m.lines) == 0 {
+	header := titleStyle.Render("▲ Omnisave") + mutedStyle.Render(" · watching")
+	if m.syncing {
+		// Activity lives here, appended, so no other line ever reflows.
+		header += " " + m.spinner.View()
+	}
+	view.WriteString(header + "\n\n")
+	lines := ComposeReport(m.snapshot, m.now)
+	if len(lines) == 0 {
 		view.WriteString(mutedStyle.Render("  No tracked saves discovered yet") + "\n")
 	}
-	for _, line := range m.lines {
+	for _, line := range lines {
 		view.WriteString(line + "\n")
 	}
 	view.WriteString("\n")
@@ -176,9 +197,6 @@ func (m watchModel) View() string {
 }
 
 func (m watchModel) activity() string {
-	if m.syncing {
-		return m.spinner.View() + " syncing"
-	}
 	if m.synced.IsZero() {
 		return fmt.Sprintf("watching %d save paths", m.files)
 	}

@@ -23,8 +23,7 @@ import (
 type watchSink interface {
 	Watching(files int)
 	PassStarted()
-	Snapshot(lines []string)
-	PassFinished(lines []string, summary string, changed bool, err error)
+	PassFinished(snapshot tui.ReportSnapshot, summary string, changed bool, err error)
 	Requests() <-chan tui.WatchRequest
 }
 
@@ -105,20 +104,20 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 		sink.PassStarted()
 		state, err := l.store.Load()
 		if err != nil {
-			sink.PassFinished(nil, "", false, err)
+			sink.PassFinished(tui.ReportSnapshot{}, "", false, err)
 			return nil
 		}
-		report := &tui.TrackReport{OnUpdate: sink.Snapshot}
+		report := &tui.TrackReport{}
 		outcome, files, err := syncPass(ctx, l.scanner, l.server, &state, report, l.floor)
 		if err != nil {
-			sink.PassFinished(report.Lines(), "", false, err)
+			sink.PassFinished(report.Snapshot(), "", false, err)
 			return files
 		}
 		if err := l.store.Save(state); err != nil {
-			sink.PassFinished(report.Lines(), "", false, err)
+			sink.PassFinished(report.Snapshot(), "", false, err)
 			return files
 		}
-		sink.PassFinished(report.Lines(), tui.SummaryLine(outcome), outcome.Changed(), nil)
+		sink.PassFinished(report.Snapshot(), tui.SummaryLine(outcome), outcome.Changed(), nil)
 		return files
 	}
 
@@ -170,10 +169,9 @@ func (plainWatchSink) Watching(files int) {
 	fmt.Printf("Watching %d save paths\n", files)
 }
 
-func (plainWatchSink) PassStarted()            {}
-func (plainWatchSink) Snapshot(lines []string) {}
+func (plainWatchSink) PassStarted() {}
 
-func (plainWatchSink) PassFinished(lines []string, summary string, changed bool, err error) {
+func (plainWatchSink) PassFinished(snapshot tui.ReportSnapshot, summary string, changed bool, err error) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "omnisave-client watch: %v\n", err)
 		return
@@ -181,7 +179,7 @@ func (plainWatchSink) PassFinished(lines []string, summary string, changed bool,
 	if !changed {
 		return
 	}
-	for _, line := range lines {
+	for _, line := range tui.ComposeReport(snapshot, time.Now()) {
 		fmt.Println(line)
 	}
 	fmt.Println()
