@@ -4,63 +4,66 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTrackReportGivesEachGameOneAlignedLine(t *testing.T) {
 	report := &TrackReport{}
 	report.Added("Slay the Spire 2", "Slay the Spire II")
-	report.Seeded("Slay the Spire 2", "Slay the Spire II save")
+	report.SyncedWith("Slay the Spire 2", "Save 1", time.Now())
 	report.Linked("Project Zomboid", "")
 	report.Unbound("Project Zomboid")
 
 	rendered := strings.Join(report.render(), "\n")
 	expected := strings.Join([]string{
-		"  + Slay the Spire 2  Added to the library as Slay the Spire II · Save seeded as Slay the Spire II save",
+		"  + Slay the Spire 2  Added to the library as Slay the Spire II · Save 1 · synced just now",
 		"  ✓ Project Zomboid   Linked to the library · Save needs omnisave-client bind",
 	}, "\n")
 	if rendered != expected {
-		t.Fatalf("expected one aligned line per game with dot-joined statuses, got:\n%s", rendered)
+		t.Fatalf("expected one aligned line per game with the bound state last, got:\n%s", rendered)
+	}
+}
+
+func TestQuietBoundSavesNameTheirOmnisaveAndAge(t *testing.T) {
+	report := &TrackReport{}
+	report.SyncedWith("Slay the Spire 2", "Save 1", time.Now().Add(-2*time.Minute))
+
+	rendered := strings.Join(report.render(), "\n")
+	if !strings.Contains(rendered, "✓ Slay the Spire 2  Save 1 · synced 2m ago") {
+		t.Fatalf("expected the quiet line to name the Omnisave with its age, got:\n%s", rendered)
+	}
+
+	legacy := &TrackReport{}
+	legacy.SyncedWith("Chrono Trigger", "New Game+", time.Time{})
+	if !strings.Contains(strings.Join(legacy.render(), "\n"), "New Game+ · up to date") {
+		t.Fatalf("expected a binding without a timestamp to fall back, got %q", legacy.render())
 	}
 }
 
 func TestTrackReportShowsUpToDateGamesInsteadOfHidingThem(t *testing.T) {
 	report := &TrackReport{}
 	report.UpToDate("Slay the Spire 2")
-	report.SyncedUp("Stardew Valley", "Farm run")
 
 	rendered := strings.Join(report.render(), "\n")
 	if !strings.Contains(rendered, "✓ Slay the Spire 2  Up to date") {
-		t.Fatalf("expected an in-sync game to earn an up-to-date line, got:\n%s", rendered)
-	}
-	if !strings.Contains(rendered, "Save synced to Farm run") {
-		t.Fatalf("expected the synced game's status, got:\n%s", rendered)
+		t.Fatalf("expected a registered game with no binding info to show up to date, got:\n%s", rendered)
 	}
 }
 
 func TestTrackReportStreamsSnapshotsToLiveViews(t *testing.T) {
-	var snapshots [][]string
-	report := &TrackReport{OnUpdate: func(lines []string) {
-		snapshots = append(snapshots, lines)
+	var snapshots []ReportSnapshot
+	report := &TrackReport{OnUpdate: func(snapshot ReportSnapshot) {
+		snapshots = append(snapshots, snapshot)
 	}}
 	report.UpToDate("Slay the Spire 2")
-	report.SyncedUp("Slay the Spire 2", "Save 1")
+	report.SyncedWith("Slay the Spire 2", "Save 1", time.Now())
 
 	if len(snapshots) < 2 {
 		t.Fatalf("expected a snapshot per event, got %d", len(snapshots))
 	}
-	last := strings.Join(snapshots[len(snapshots)-1], "\n")
-	if !strings.Contains(last, "Save synced to Save 1") {
-		t.Fatalf("expected the final snapshot to carry the latest status, got:\n%s", last)
-	}
-}
-
-func TestTrackReportSeedingWithoutADisplayNameStaysGeneric(t *testing.T) {
-	report := &TrackReport{}
-	report.Seeded("Slay the Spire 2", "")
-
-	rendered := strings.Join(report.render(), "\n")
-	if !strings.Contains(rendered, "Save seeded to a new Omnisave") {
-		t.Fatalf("expected an unnamed seed to fall back to the generic sentence, got %q", rendered)
+	last := strings.Join(ComposeReport(snapshots[len(snapshots)-1], time.Now()), "\n")
+	if !strings.Contains(last, "Save 1 · synced just now") {
+		t.Fatalf("expected the final snapshot to carry the bound state, got:\n%s", last)
 	}
 }
 
@@ -85,26 +88,24 @@ func TestTrackReportGivesSavelessGamesTheIdleGlyph(t *testing.T) {
 	}
 }
 
-func TestTrackReportShowsAnAutomaticExistingSaveMatch(t *testing.T) {
+func TestTrackReportNamesTheJumpPreservationFork(t *testing.T) {
 	report := &TrackReport{}
-	report.Rebound("Chrono Trigger", "New Game+")
+	report.Forked("Chrono Trigger", "New Game+ (diverged)")
+	report.SyncedWith("Chrono Trigger", "New Game+", time.Now())
 
-	rendered := report.render()
-	if len(rendered) != 1 || !strings.HasPrefix(rendered[0], "  ✓ Chrono Trigger") ||
-		!strings.Contains(rendered[0], "Save matches the head of New Game+ and is resyncing") {
-		t.Fatalf("expected the automatic match beside the game, got %q", rendered)
+	rendered := strings.Join(report.render(), "\n")
+	if !strings.Contains(rendered, "Save forked as New Game+ (diverged) · New Game+ · synced just now") {
+		t.Fatalf("expected the preservation fork named beside the bound state, got:\n%s", rendered)
 	}
 }
 
-func TestTrackReportNamesBothStaleMatchOutcomes(t *testing.T) {
+func TestTrackReportSaysWhenABindingHasNothingSyncedYet(t *testing.T) {
 	report := &TrackReport{}
-	report.FastForwarded("Chrono Trigger", "New Game+")
-	report.Forked("Chrono Trigger", "New Game+ (fork)")
+	report.BoundUnsynced("Chrono Trigger", "New Game+")
 
 	rendered := strings.Join(report.render(), "\n")
-	if !strings.Contains(rendered, "Save jumped to the head of New Game+") ||
-		!strings.Contains(rendered, "Save forked as New Game+ (fork)") {
-		t.Fatalf("expected both stale-match outcomes to name their Omnisaves, got %q", rendered)
+	if !strings.Contains(rendered, "Save bound to New Game+ with nothing synced yet") {
+		t.Fatalf("expected the unsynced binding sentence, got:\n%s", rendered)
 	}
 }
 
@@ -122,20 +123,18 @@ func TestTrackReportExplainsAServerDeletionOnTheUntrackLine(t *testing.T) {
 	}
 }
 
-func TestTrackReportSpeaksSyncInBothDirections(t *testing.T) {
+func TestTrackReportSpeaksSyncExceptions(t *testing.T) {
 	report := &TrackReport{}
-	report.SyncedUp("Slay the Spire 2", "Save 1")
-	report.SyncedDown("Stardew Valley", "Farm run")
 	report.Diverged("Chrono Trigger", "New Game+")
+	report.Behind("Stardew Valley", "Farm run")
 
 	rendered := strings.Join(report.render(), "\n")
 	for _, sentence := range []string{
-		"Save synced to Save 1",
-		"Save synced from Farm run",
 		"Save diverged from New Game+, run omnisave-client track to resolve",
+		"Save is behind Farm run, run omnisave-client track to resolve",
 	} {
 		if !strings.Contains(rendered, sentence) {
-			t.Fatalf("expected %q in the sync report, got:\n%s", sentence, rendered)
+			t.Fatalf("expected %q in the report, got:\n%s", sentence, rendered)
 		}
 	}
 	if !strings.Contains(rendered, "  ○ Chrono Trigger") {

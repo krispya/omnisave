@@ -24,13 +24,13 @@ establishes the baseline that sync will later diff against.
 - If the server has no Omnisaves for the game, one is created and seeded:
   the local save's content becomes its initial revision, and the binding
   records that revision as the sync baseline. The server names the new
-  Omnisave ("Save N"), the result says "Save seeded as Save N," and it
+  Omnisave ("Save N"), the result reads "Save N · synced just now," and it
   appears in the Dash under that name with no further action.
 - If the server already has Omnisaves for the game, the local save is
   compared by content against their full revision histories.
 - Matching the head of exactly one Omnisave rebinds automatically with the
   head as the baseline — this Device is simply up to date, and the result
-  says "Save matches the head of Save N and is resyncing."
+  reads "Save N · synced just now."
 - Matching an older revision of exactly one Omnisave means the save went
   stale: it was tracked at some point and play continued on another
   Device. The user chooses between fast-forwarding — the head's content
