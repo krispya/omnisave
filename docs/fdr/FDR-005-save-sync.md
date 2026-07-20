@@ -33,11 +33,12 @@ path, syncing-down built the read path; sync makes both routine.
   from the start and resolves the same way.
 - `omnisave-client sync` runs one pass over every binding, reports each
   outcome in the track report voice, and exits. It never prompts.
-- `omnisave-client watch` stays running: it watches bound save locations
-  and commits shortly after the game finishes a burst of writes, so a
-  crash or a Deck going to sleep loses at most the burst in progress. It
-  checks for server-side movement when it starts and periodically after.
-  It never prompts.
+- `omnisave-client watch` stays running: it watches bound save locations —
+  the known files and their directories, so a file appearing in a save
+  also triggers — and commits shortly after the game finishes a burst of
+  writes, so a crash or a Deck going to sleep loses at most the burst in
+  progress. It checks for server-side movement when it starts and
+  periodically after. It never prompts.
 - Diverged saves are reported — "save diverged from …; run
   omnisave-client track to resolve" — and skipped until an interactive
   track run asks: fork here, and this Device's progress continues as a new

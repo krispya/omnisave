@@ -180,9 +180,9 @@ func (m watchModel) activity() string {
 		return m.spinner.View() + " syncing"
 	}
 	if m.synced.IsZero() {
-		return fmt.Sprintf("watching %d save files", m.files)
+		return fmt.Sprintf("watching %d save paths", m.files)
 	}
-	return fmt.Sprintf("watching %d save files · synced %s", m.files, ago(m.now, m.synced))
+	return fmt.Sprintf("watching %d save paths · synced %s", m.files, ago(m.now, m.synced))
 }
 
 func ago(now, then time.Time) string {

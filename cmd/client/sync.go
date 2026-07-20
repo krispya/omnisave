@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -83,9 +84,12 @@ func syncPass(
 	return outcome, watchedFiles(state, scans), nil
 }
 
-// watchedFiles lists the local files of tracked games' discovered saves.
+// watchedFiles lists the local files of tracked games' discovered saves,
+// plus their parent directories: a file appearing in a save's directory
+// bumps the directory's mtime, so new files trigger a pass even though
+// their own paths were never seen before.
 func watchedFiles(state *tracking.State, scans []client.TargetScan) []string {
-	var files []string
+	paths := make(map[string]bool)
 	for _, scan := range scans {
 		for _, discovered := range scan.Games {
 			if _, tracked := state.Games[discovered.Game.ID]; !tracked {
@@ -93,11 +97,16 @@ func watchedFiles(state *tracking.State, scans []client.TargetScan) []string {
 			}
 			for _, save := range discovered.Saves {
 				for _, file := range save.Files {
-					files = append(files, file.Path)
+					paths[file.Path] = true
+					paths[filepath.Dir(file.Path)] = true
 				}
 			}
 		}
 	}
-	sort.Strings(files)
-	return files
+	sorted := make([]string, 0, len(paths))
+	for path := range paths {
+		sorted = append(sorted, path)
+	}
+	sort.Strings(sorted)
+	return sorted
 }
