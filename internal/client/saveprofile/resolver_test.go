@@ -18,7 +18,7 @@ func TestWindowsProfileResolvesInsideAProtonEnvironment(t *testing.T) {
 	if err := os.MkdirAll(saveDirectory, 0755); err != nil {
 		t.Fatal(err)
 	}
-	savePath := filepath.Join(saveDirectory, "slot.sav")
+	savePath := filepath.Join(saveDirectory, "progress.sav")
 	if err := os.WriteFile(savePath, []byte("progress"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestLudusaviMacProfileResolvesApplicationSupportSave(t *testing.T) {
 	if err := os.MkdirAll(saveDirectory, 0755); err != nil {
 		t.Fatal(err)
 	}
-	savePath := filepath.Join(saveDirectory, "slot.sav")
+	savePath := filepath.Join(saveDirectory, "progress.sav")
 	if err := os.WriteFile(savePath, []byte("progress"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -95,5 +95,34 @@ Example:
 	}
 	if len(saves) != 1 || len(saves[0].Files) != 1 || saves[0].Files[0].Path != savePath {
 		t.Fatalf("expected the macOS Application Support save, got %+v", saves)
+	}
+}
+
+func TestProfileResolvesAProspectiveDestinationBeforeItsPathsExist(t *testing.T) {
+	home := t.TempDir()
+	game := target.InstalledGame{
+		ID: "steam:123", TargetID: "steam",
+		Identity:    target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "123"}}},
+		Environment: target.Environment{HostOS: saveprofile.OSMacOS, Runtime: target.RuntimeNative, Home: home},
+	}
+	profile := saveprofile.Profile{
+		Provider: "ludusavi", ProviderID: "Example",
+		Rules: []saveprofile.Rule{
+			{ID: "save", Path: "<macAppSupport>/Example/Saves", OS: saveprofile.OSMacOS, Store: "steam"},
+			{ID: "config", Path: "<macPreferences>/com.example.game.plist", OS: saveprofile.OSMacOS, Store: "steam"},
+		},
+	}
+
+	destinations, err := saveprofile.ResolveDestinations(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(destinations) != 1 || len(destinations[0].Locations) != 2 {
+		t.Fatalf("expected one prospective profile save with both locations, got %+v", destinations)
+	}
+	if destinations[0].Locations[0].Kind != target.SaveLocationUnknown ||
+		destinations[0].Locations[0].Path != filepath.Join(home, "Library", "Application Support", "Example", "Saves") ||
+		destinations[0].Locations[1].Path != filepath.Join(home, "Library", "Preferences", "com.example.game.plist") {
+		t.Fatalf("unexpected prospective profile locations: %+v", destinations[0].Locations)
 	}
 }

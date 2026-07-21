@@ -56,6 +56,56 @@ func Resolve(game target.InstalledGame, profile Profile) ([]target.Save, error) 
 	}}, nil
 }
 
+// ResolveDestinations expands applicable profile rules into a prospective Local Save
+// even when none of its files exist yet.
+func ResolveDestinations(game target.InstalledGame, profile Profile) ([]target.SaveDestination, error) {
+	var locations []target.SaveLocation
+	seen := make(map[string]bool)
+	for _, rule := range profile.Rules {
+		if !applies(rule, game) || seen[rule.ID] {
+			continue
+		}
+		expanded := expand(rule.Path, game)
+		if expanded == "" {
+			continue
+		}
+		location := target.SaveLocation{ID: rule.ID, Path: expanded, Kind: target.SaveLocationUnknown}
+		if hasMeta(expanded) {
+			location.Path = globBase(expanded)
+			location.Kind = target.SaveLocationDirectory
+		} else if info, err := os.Lstat(expanded); err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				continue
+			}
+			if info.IsDir() {
+				location.Kind = target.SaveLocationDirectory
+			} else if info.Mode().IsRegular() {
+				location.Kind = target.SaveLocationFile
+			} else {
+				continue
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("inspect rule %s: %w", rule.ID, err)
+		}
+		seen[rule.ID] = true
+		locations = append(locations, location)
+	}
+	if len(locations) == 0 {
+		return nil, nil
+	}
+	return []target.SaveDestination{{
+		ID:        game.ID + ":profile:" + profile.Provider + ":" + profile.ProviderID,
+		TargetID:  game.TargetID,
+		GameID:    game.ID,
+		Kind:      "local",
+		Locations: locations,
+		Metadata: map[string]string{
+			"profile_provider":    profile.Provider,
+			"profile_provider_id": profile.ProviderID,
+		},
+	}}, nil
+}
+
 func applies(rule Rule, game target.InstalledGame) bool {
 	if rule.Store != "" {
 		if _, ok := game.Identity.Identifier(strings.ToLower(rule.Store) + ".app"); !ok {

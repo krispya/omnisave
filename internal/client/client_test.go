@@ -74,8 +74,23 @@ func TestManualScanFindsSNESSavesOnly(t *testing.T) {
 	if len(save.Files) != 1 || save.Files[0].Path != filepath.Join(saveDirectory, "Chrono Trigger.srm") {
 		t.Fatalf("unexpected save files: %+v", save.Files)
 	}
+	destinations := scans[0].Games[0].Destinations
+	if len(destinations) != 1 || destinations[0].ID != save.ID || len(destinations[0].Locations) != 1 ||
+		destinations[0].Locations[0].Path != saveDirectory {
+		t.Fatalf("expected the prospective RetroArch save location, got %+v", destinations)
+	}
 	if len(progress) != 2 || progress[0].Stage != client.ScanStarted || progress[1].Stage != client.ScanCompleted {
 		t.Fatalf("expected adapter start and completion progress, got %+v", progress)
+	}
+	if err := os.Remove(filepath.Join(saveDirectory, "Chrono Trigger.srm")); err != nil {
+		t.Fatal(err)
+	}
+	freshScans, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(freshScans[0].Games[0].Saves) != 0 || len(freshScans[0].Games[0].Destinations) != 1 {
+		t.Fatalf("expected the RetroArch destination before a save exists, got %+v", freshScans[0].Games[0])
 	}
 }
 
@@ -179,6 +194,15 @@ func TestManualScanFindsOneMultiFileSteamCloudSave(t *testing.T) {
 	if len(save.Files) != 2 || save.Files[0].RelativePath != "SaveGameInfo" || save.Files[1].RelativePath != filepath.Join("profile", "player.dat") {
 		t.Fatalf("expected the complete Cloud file set, got %+v", save.Files)
 	}
+	destinations := scans[0].Games[0].Destinations
+	canonicalRemoteDirectory, err := filepath.EvalSymlinks(remoteDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(destinations) != 1 || destinations[0].ID != save.ID || len(destinations[0].Locations) != 1 ||
+		destinations[0].Locations[0].Path != canonicalRemoteDirectory {
+		t.Fatalf("expected the prospective Steam Cloud location, got %+v", destinations)
+	}
 }
 
 func TestManualScanUsesLudusaviForANonCloudSteamGame(t *testing.T) {
@@ -188,7 +212,7 @@ func TestManualScanUsesLudusaviForANonCloudSteamGame(t *testing.T) {
 	if err := os.MkdirAll(saveDirectory, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(saveDirectory, "slot1.sav"), []byte("progress"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(saveDirectory, "progress.sav"), []byte("progress"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(installRoot, "settings.json"), []byte("configuration"), 0600); err != nil {
@@ -217,7 +241,7 @@ Local Save Game:
 		t.Fatalf("expected one profile-resolved local save, got %+v", scans)
 	}
 	save := scans[0].Games[0].Saves[0]
-	if save.Kind != "local" || len(save.Files) != 1 || save.Files[0].Path != filepath.Join(saveDirectory, "slot1.sav") {
+	if save.Kind != "local" || len(save.Files) != 1 || save.Files[0].Path != filepath.Join(saveDirectory, "progress.sav") {
 		t.Fatalf("unexpected local save: %+v", save)
 	}
 	if save.Metadata["profile_provider"] != "ludusavi" {

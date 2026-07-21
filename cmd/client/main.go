@@ -358,6 +358,12 @@ func runTrack(ctx context.Context, scanner *client.Scanner, arguments []string) 
 		// Prompts borrow the terminal from the activity line and hand it
 		// back, so one spinner spans the whole server phase.
 		prompts := &reconcilePrompts{
+			empty: func(gameTitle string, options []tui.SyncToDeviceOption) (choice tui.SyncToDeviceChoice, err error) {
+				session.Interact(func() {
+					choice, err = tui.PromptSyncToDevice(gameTitle, options)
+				})
+				return choice, err
+			},
 			stale: func(gameTitle, omnisaveName string) (choice tui.StaleBindingChoice, err error) {
 				session.Interact(func() {
 					choice, err = tui.PromptStaleBinding(gameTitle, omnisaveName)
@@ -541,6 +547,7 @@ func isNotFound(err error) bool {
 // set makes the pass headless — every prompt-shaped situation is reported
 // and left for an interactive track run (FDR-005).
 type reconcilePrompts struct {
+	empty     func(gameTitle string, options []tui.SyncToDeviceOption) (tui.SyncToDeviceChoice, error)
 	stale     func(gameTitle, omnisaveName string) (tui.StaleBindingChoice, error)
 	ambiguous func(gameTitle string, options []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error)
 	diverged  func(gameTitle, omnisaveName string) (tui.DivergedBindingChoice, error)
@@ -548,6 +555,7 @@ type reconcilePrompts struct {
 
 func interactivePrompts() *reconcilePrompts {
 	return &reconcilePrompts{
+		empty:     tui.PromptSyncToDevice,
 		stale:     tui.PromptStaleBinding,
 		ambiguous: tui.PromptAmbiguousBinding,
 		diverged:  tui.PromptDivergedBinding,
@@ -590,45 +598,38 @@ func reconcileSaves(
 		serverGameID string
 	}
 	var candidates []candidate
-	type scannedGame struct {
-		id    string
-		title string
+	type emptyCandidate struct {
+		scan         client.TargetScan
+		discovered   client.GameScan
+		serverGameID string
 	}
-	var scannedGames []scannedGame
-	seenGames := make(map[string]bool)
-	hasSave := make(map[string]bool)
+	var emptyCandidates []emptyCandidate
 	for _, scan := range scans {
 		for _, discovered := range scan.Games {
 			game := state.Games[discovered.Game.ID]
 			if !confirmed[discovered.Game.ID] || game.ServerGameID == "" {
 				continue
 			}
-			if !seenGames[discovered.Game.ID] {
-				seenGames[discovered.Game.ID] = true
-				scannedGames = append(scannedGames, scannedGame{
-					id:    discovered.Game.ID,
-					title: game.Title,
-				})
-			}
+			hasSave := false
 			for _, save := range discovered.Saves {
 				if len(save.Files) == 0 {
 					continue
 				}
-				hasSave[discovered.Game.ID] = true
+				hasSave = true
 				candidates = append(candidates, candidate{
 					local:        tracking.LocalSaveFrom(scan, discovered, save),
 					save:         save,
 					serverGameID: game.ServerGameID,
 				})
 			}
+			if !hasSave {
+				emptyCandidates = append(emptyCandidates, emptyCandidate{
+					scan: scan, discovered: discovered, serverGameID: game.ServerGameID,
+				})
+			}
 		}
 	}
-	for _, game := range scannedGames {
-		if !hasSave[game.id] {
-			report.NoSave(game.title)
-		}
-	}
-	if len(candidates) == 0 {
+	if len(candidates) == 0 && len(emptyCandidates) == 0 {
 		return nil
 	}
 
@@ -863,6 +864,117 @@ func reconcileSaves(
 			report.Unbound(candidate.local.GameTitle)
 		}
 	}
+	for _, candidate := range emptyCandidates {
+		if _, tracked := state.Games[candidate.discovered.Game.ID]; !tracked {
+			continue
+		}
+		gameSaves := savesByGame[candidate.serverGameID]
+		if len(gameSaves) == 0 {
+			report.NoSave(candidate.discovered.Game.Identity.DisplayTitle(candidate.discovered.Game.ID))
+			continue
+		}
+		if err := syncSaveToDevice(ctx, server, state, candidate.scan, candidate.discovered,
+			gameSaves, loadHistory, outcome, report, prompts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// syncSaveToDevice offers an existing server lineage to a Device with no
+// local content. Placement is always interactive and requires one unambiguous
+// adapter-provided destination.
+func syncSaveToDevice(
+	ctx context.Context,
+	server *remote.Client,
+	state *tracking.State,
+	scan client.TargetScan,
+	discovered client.GameScan,
+	gameSaves []omnisave.Omnisave,
+	loadHistory func(string) ([]omnisave.Revision, error),
+	outcome *tui.TrackOutcome,
+	report *tui.TrackReport,
+	prompts *reconcilePrompts,
+) error {
+	title := discovered.Game.Identity.DisplayTitle(discovered.Game.ID)
+	if len(discovered.Destinations) == 0 {
+		report.SaveLocationUnavailable(title)
+		return nil
+	}
+	type availableSave struct {
+		save        omnisave.Omnisave
+		head        omnisave.Revision
+		destination target.SaveDestination
+	}
+	options := make([]tui.SyncToDeviceOption, 0, len(gameSaves))
+	available := make(map[string]availableSave, len(gameSaves))
+	for _, save := range gameSaves {
+		if save.HeadRevisionID == nil {
+			continue
+		}
+		history, err := loadHistory(save.ID)
+		if err != nil {
+			outcome.Failed++
+			report.SaveFailed(title, err)
+			return nil
+		}
+		head, exists := revisionByID(history, save.HeadRevisionID)
+		if !exists {
+			outcome.Failed++
+			report.SaveFailed(title, errors.New("Omnisave has no readable head"))
+			return nil
+		}
+		var compatible []target.SaveDestination
+		for _, destination := range discovered.Destinations {
+			if binding.CanMaterialize(destination, head) == nil {
+				compatible = append(compatible, destination)
+			}
+		}
+		if len(compatible) != 1 {
+			continue
+		}
+		available[save.ID] = availableSave{save: save, head: head, destination: compatible[0]}
+		options = append(options, tui.SyncToDeviceOption{OmnisaveID: save.ID, Name: omnisaveDisplayName(save)})
+	}
+	if len(options) == 0 {
+		report.SaveLocationUnavailable(title)
+		return nil
+	}
+	if prompts == nil {
+		report.SaveAvailable(title)
+		return nil
+	}
+	choice, err := prompts.empty(title, options)
+	if err != nil {
+		return err
+	}
+	if choice.OmnisaveID == "" {
+		report.SaveAvailable(title)
+		return nil
+	}
+	selected, exists := available[choice.OmnisaveID]
+	if !exists {
+		return fmt.Errorf("unknown sync-to-device choice %q", choice.OmnisaveID)
+	}
+	materialized, err := binding.Materialize(ctx, server, selected.destination, selected.head)
+	if err != nil {
+		outcome.Failed++
+		report.SaveFailed(title, err)
+		return nil
+	}
+	local := tracking.LocalSaveFrom(scan, discovered, materialized)
+	if err := state.Bind(local, selected.save.ID); err != nil {
+		outcome.Failed++
+		report.SaveFailed(title, err)
+		return nil
+	}
+	if err := state.RecordSynced(local, selected.save.ID, selected.head.ID); err != nil {
+		outcome.Failed++
+		report.SaveFailed(title, err)
+		return nil
+	}
+	outcome.Pulled++
+	report.SyncedWith(title, omnisaveDisplayName(selected.save), time.Now())
 	return nil
 }
 
