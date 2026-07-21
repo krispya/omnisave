@@ -94,10 +94,48 @@ type Save struct {
 	Metadata map[string]string
 }
 
-// Adapter discovers application targets, their games, and adapter-native saves.
+// SaveLocationKind describes how revision paths map into a prospective
+// native save location.
+type SaveLocationKind string
+
+const (
+	// SaveLocationDirectory treats Path as the root for revision-relative files.
+	SaveLocationDirectory SaveLocationKind = "directory"
+	// SaveLocationFile treats Path as the only file the location can contain.
+	SaveLocationFile SaveLocationKind = "file"
+	// SaveLocationUnknown is resolved from the selected revision. It is used
+	// when profile knowledge names a path that does not exist yet.
+	SaveLocationUnknown SaveLocationKind = "unknown"
+)
+
+// SaveLocation identifies one machine-local destination for canonical
+// revision paths.
+type SaveLocation struct {
+	// ID is the canonical location prefix stored in revision file paths.
+	ID string
+	// Path is an absolute native directory, file, or not-yet-existing profile path.
+	Path string
+	Kind SaveLocationKind
+}
+
+// SaveDestination describes where an adapter-native save would live before any of
+// its files exist. Its ID is the Local Save identity used after placement.
+type SaveDestination struct {
+	// ID remains the Local Save identity after the head is materialized.
+	ID        string
+	TargetID  string
+	GameID    string
+	Kind      string
+	Locations []SaveLocation
+	Metadata  map[string]string
+}
+
+// Adapter discovers application targets, their games, current saves, and the
+// prospective native destinations where saves can be materialized.
 type Adapter interface {
 	Name() string
 	DiscoverTargets(context.Context) ([]Target, error)
 	DiscoverGames(context.Context, Target) ([]InstalledGame, error)
 	DiscoverSaves(context.Context, Target, InstalledGame) ([]Save, error)
+	DiscoverSaveDestinations(context.Context, Target, InstalledGame) ([]SaveDestination, error)
 }

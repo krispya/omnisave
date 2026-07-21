@@ -179,6 +179,38 @@ func (a *Adapter) DiscoverSaves(ctx context.Context, discovered target.Target, g
 	return saves, nil
 }
 
+// DiscoverSaveDestinations reports a Steam Cloud destination only when exactly one
+// local account makes the destination unambiguous.
+func (a *Adapter) DiscoverSaveDestinations(ctx context.Context, discovered target.Target, game target.InstalledGame) ([]target.SaveDestination, error) {
+	appID, hasAppID := game.Identity.Identifier("steam.app")
+	if discovered.Adapter != adapterName || discovered.Root == "" || game.TargetID != discovered.ID || !hasAppID {
+		return nil, fmt.Errorf("invalid Steam game")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	accounts, err := numericDirectories(filepath.Join(discovered.Root, "userdata"))
+	if err != nil {
+		return nil, err
+	}
+	if len(accounts) != 1 {
+		return nil, nil
+	}
+	accountID := accounts[0]
+	return []target.SaveDestination{{
+		ID:       game.ID + ":cloud:" + accountID,
+		TargetID: discovered.ID,
+		GameID:   game.ID,
+		Kind:     "cloud",
+		Locations: []target.SaveLocation{{
+			ID:   "remote",
+			Path: filepath.Join(discovered.Root, "userdata", accountID, appID, "remote"),
+			Kind: target.SaveLocationDirectory,
+		}},
+		Metadata: map[string]string{"account_id": accountID},
+	}}, nil
+}
+
 type appManifest struct {
 	ID               string
 	Title            string

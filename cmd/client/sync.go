@@ -101,6 +101,14 @@ func watchedFiles(state *tracking.State, scans []client.TargetScan) []string {
 					paths[filepath.Dir(file.Path)] = true
 				}
 			}
+			for _, destination := range discovered.Destinations {
+				for _, location := range destination.Locations {
+					// A missing prospective path changes from "missing" when the
+					// game creates its first save; a directory mtime also catches
+					// new files beneath an existing save root.
+					paths[location.Path] = true
+				}
+			}
 		}
 	}
 	sorted := make([]string, 0, len(paths))

@@ -339,6 +339,104 @@ func TestAnUnboundSaveStillSeedsWhenTheServerHasNoSaves(t *testing.T) {
 	}
 }
 
+func TestFreshDeviceCanChooseAndMaterializeAnExistingServerSave(t *testing.T) {
+	directory := t.TempDir()
+	destination := filepath.Join(directory, "saves", "Chrono Trigger.srm")
+	headID := "revision-2"
+	remoteSave := omnisave.Omnisave{
+		ID: "omnisave-1", GameID: "server-game-1", DisplayName: "Main Playthrough", HeadRevisionID: &headID,
+	}
+	head := testRevision(headID, remoteSave.ID, "server-progress")
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/omnisaves":
+			writeTestJSON(t, response, []omnisave.Omnisave{remoteSave})
+		case "/api/v1/omnisaves/omnisave-1/revisions":
+			writeTestJSON(t, response, []omnisave.Revision{head})
+		case "/api/v1/artifacts/" + head.Files[0].Artifact.SHA256:
+			_, _ = response.Write([]byte("server-progress"))
+		default:
+			t.Errorf("unexpected server call: %s %s", request.Method, request.URL.Path)
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	remoteClient, err := remote.New(server.URL, "secret", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scans := []client.TargetScan{{
+		Target: target.Target{ID: "target-1", Adapter: "retroarch"},
+		Games: []client.GameScan{{
+			Game: target.InstalledGame{
+				ID: "local-game-1", TargetID: "target-1",
+				Identity: target.GameIdentity{Title: "Chrono Trigger"},
+			},
+			Destinations: []target.SaveDestination{{
+				ID: "local-save-1", TargetID: "target-1", GameID: "local-game-1", Kind: "battery",
+				Locations: []target.SaveLocation{{
+					ID: "battery", Path: filepath.Dir(destination), Kind: target.SaveLocationDirectory,
+				}},
+			}},
+		}},
+	}}
+	state := tracking.NewState()
+	state.Games["local-game-1"] = tracking.Game{
+		ID: "local-game-1", Adapter: "retroarch", TargetID: "target-1",
+		Title: "Chrono Trigger", ServerGameID: "server-game-1",
+	}
+	confirmed := map[string]bool{"local-game-1": true}
+
+	// A headless pass sees the available save but never writes into the game.
+	outcome := tui.TrackOutcome{Tracked: 1, Synced: true}
+	if err := reconcileSaves(context.Background(), remoteClient, &state, scans, confirmed,
+		&outcome, &tui.TrackReport{}, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) || outcome.Pulled != 0 {
+		t.Fatalf("expected the headless pass to leave the destination empty, outcome=%+v err=%v", outcome, err)
+	}
+
+	// Deciding later is also non-destructive and leaves the offer repeatable.
+	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
+	prompts.empty = func(gameTitle string, options []tui.SyncToDeviceOption) (tui.SyncToDeviceChoice, error) {
+		if gameTitle != "Chrono Trigger" || len(options) != 1 || options[0].Name != "Main Playthrough" {
+			t.Fatalf("unexpected sync-to-device prompt: %q %+v", gameTitle, options)
+		}
+		return tui.SyncToDeviceChoice{}, nil
+	}
+	outcome = tui.TrackOutcome{Tracked: 1, Synced: true}
+	if err := reconcileSaves(context.Background(), remoteClient, &state, scans, confirmed,
+		&outcome, &tui.TrackReport{}, prompts, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("expected deciding later to leave the destination empty, got %v", err)
+	}
+
+	// Choosing the lineage verifies and places its head, then binds at it.
+	prompts.empty = func(string, []tui.SyncToDeviceOption) (tui.SyncToDeviceChoice, error) {
+		return tui.SyncToDeviceChoice{OmnisaveID: remoteSave.ID}, nil
+	}
+	outcome = tui.TrackOutcome{Tracked: 1, Synced: true}
+	if err := reconcileSaves(context.Background(), remoteClient, &state, scans, confirmed,
+		&outcome, &tui.TrackReport{}, prompts, 0); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(destination)
+	if err != nil || string(content) != "server-progress" {
+		t.Fatalf("expected the selected head on this Device, got %q (%v)", content, err)
+	}
+	local := tracking.LocalSave{ID: "local-save-1", Adapter: "retroarch", TargetID: "target-1"}
+	bound, ok := state.BindingFor(local)
+	if !ok || bound.OmnisaveID != remoteSave.ID || bound.LastSyncedRevisionID == nil || *bound.LastSyncedRevisionID != headID {
+		t.Fatalf("expected a binding at the selected head, got %+v", bound)
+	}
+	if outcome.Pulled != 1 || outcome.Failed != 0 {
+		t.Fatalf("expected one fresh-device sync, got %+v", outcome)
+	}
+}
+
 // TestDeletingAGameInTheDashUntracksItBeforeTheNextPrompt drives the real
 // server stack end to end: resolve and track a game, delete it through the
 // same API the Dash uses, and confirm the next track run untracks it before
@@ -416,7 +514,17 @@ func testPrompts(
 	ambiguous func(string, []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error),
 	t *testing.T,
 ) *reconcilePrompts {
-	return &reconcilePrompts{stale: stale, ambiguous: ambiguous, diverged: failingDivergedChooser(t)}
+	return &reconcilePrompts{
+		empty: failingSyncToDeviceChooser(t), stale: stale,
+		ambiguous: ambiguous, diverged: failingDivergedChooser(t),
+	}
+}
+
+func failingSyncToDeviceChooser(t *testing.T) func(string, []tui.SyncToDeviceOption) (tui.SyncToDeviceChoice, error) {
+	return func(gameTitle string, _ []tui.SyncToDeviceOption) (tui.SyncToDeviceChoice, error) {
+		t.Fatalf("unexpected sync-to-device prompt for %q", gameTitle)
+		return tui.SyncToDeviceChoice{}, nil
+	}
 }
 
 func failingDivergedChooser(t *testing.T) func(string, string) (tui.DivergedBindingChoice, error) {

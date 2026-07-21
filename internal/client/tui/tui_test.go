@@ -18,8 +18,8 @@ func TestCompletedScanStaysCompactUntilVerboseModeIsRequested(t *testing.T) {
 		Saves: []target.Save{
 			{Kind: "cloud", Files: []target.File{{Path: "/saves/cloud.dat", Size: 1024, Modified: modified}}},
 			{Kind: "local", Files: []target.File{
-				{Path: "/saves/slot1.dat", Size: 2048, Modified: modified},
-				{Path: "/saves/slot2.dat", Size: 1024, Modified: modified},
+				{Path: "/saves/save-a.dat", Size: 2048, Modified: modified},
+				{Path: "/saves/save-b.dat", Size: 1024, Modified: modified},
 			}},
 		},
 	}
@@ -39,12 +39,12 @@ func TestCompletedScanStaysCompactUntilVerboseModeIsRequested(t *testing.T) {
 	if !strings.Contains(compact, "└─ Example Game") {
 		t.Fatalf("expected games to be nested beneath their adapter, got %q", compact)
 	}
-	if strings.Contains(compact, "/saves/slot1.dat") {
+	if strings.Contains(compact, "/saves/save-a.dat") {
 		t.Fatalf("expected compact mode to omit individual files, got %q", compact)
 	}
 
 	verbose := renderAdapter(adapter, true, "")
-	if !strings.Contains(verbose, "Example Game") || !strings.Contains(verbose, "/saves/slot1.dat (2.0 KiB)") {
+	if !strings.Contains(verbose, "Example Game") || !strings.Contains(verbose, "/saves/save-a.dat (2.0 KiB)") {
 		t.Fatalf("expected verbose mode to include games and files, got %q", verbose)
 	}
 }

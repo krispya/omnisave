@@ -117,11 +117,17 @@ func syncOnce(t *testing.T, server *remote.Client, fixture *bindingFixture, prom
 
 func TestWatchedPathsIncludeParentDirectoriesSoNewFilesTrigger(t *testing.T) {
 	fixture := newBindingFixture(t, "saved-game-content")
+	prospective := filepath.Join(t.TempDir(), "future-save")
+	fixture.scans[0].Games[0].Destinations = []target.SaveDestination{{
+		ID: "future", Locations: []target.SaveLocation{{
+			ID: "battery", Path: prospective, Kind: target.SaveLocationDirectory,
+		}},
+	}}
 	paths := watchedFiles(&fixture.state, fixture.scans)
 
 	wantFile := fixture.localPath
 	wantDir := filepath.Dir(fixture.localPath)
-	foundFile, foundDir := false, false
+	foundFile, foundDir, foundProspective := false, false, false
 	for _, path := range paths {
 		if path == wantFile {
 			foundFile = true
@@ -129,9 +135,12 @@ func TestWatchedPathsIncludeParentDirectoriesSoNewFilesTrigger(t *testing.T) {
 		if path == wantDir {
 			foundDir = true
 		}
+		if path == prospective {
+			foundProspective = true
+		}
 	}
-	if !foundFile || !foundDir {
-		t.Fatalf("expected both the save file and its directory to be polled, got %q", paths)
+	if !foundFile || !foundDir || !foundProspective {
+		t.Fatalf("expected current and prospective save paths to be polled, got %q", paths)
 	}
 }
 

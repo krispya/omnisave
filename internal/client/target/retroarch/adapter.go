@@ -270,6 +270,42 @@ func (a *Adapter) DiscoverSaves(ctx context.Context, discovered target.Target, g
 	return saves, nil
 }
 
+// DiscoverSaveDestinations reports the native battery-save paths even before the
+// files exist, allowing a server head to be placed on a fresh Device.
+func (a *Adapter) DiscoverSaveDestinations(ctx context.Context, discovered target.Target, game target.InstalledGame) ([]target.SaveDestination, error) {
+	if discovered.Adapter != adapterName || game.TargetID != discovered.ID {
+		return nil, fmt.Errorf("invalid RetroArch game")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	profile, ok := a.platform(game.Identity.Platform)
+	if !ok {
+		return nil, nil
+	}
+	saveDirectory := game.Metadata["save_directory"]
+	if saveDirectory == "" {
+		saveDirectory = filepath.Dir(game.Identity.ContentPath)
+	}
+	base := filepath.Base(game.Identity.ContentPath)
+	name := strings.TrimSuffix(base, filepath.Ext(base))
+
+	destinations := make([]target.SaveDestination, 0, len(profile.SaveExtensions))
+	for _, extension := range profile.SaveExtensions {
+		savePath := filepath.Join(saveDirectory, name+extension)
+		destinations = append(destinations, target.SaveDestination{
+			ID:       game.ID + ":" + savePath,
+			TargetID: discovered.ID,
+			GameID:   game.ID,
+			Kind:     "battery",
+			Locations: []target.SaveLocation{{
+				ID: "battery", Path: saveDirectory, Kind: target.SaveLocationDirectory,
+			}},
+		})
+	}
+	return destinations, nil
+}
+
 func (a *Adapter) platform(id string) (platform.Profile, bool) {
 	for _, profile := range a.platforms {
 		if profile.ID == id {
