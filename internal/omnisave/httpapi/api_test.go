@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -184,6 +185,154 @@ func TestUpdateOmnisaveDisplayName(t *testing.T) {
 	if stored.DisplayName != "Before the final boss" {
 		t.Fatalf("display name was not persisted: %v", stored)
 	}
+}
+
+func TestDownloadSaveArchive(t *testing.T) {
+	handler := httpapi.New(omnisaveservice.New(storagetest.NewMemoryRepository()))
+
+	createBody := bytes.NewBufferString(
+		`{"game_id":"pokemon-emerald-usa","display_name":"Before the final boss"}`)
+	response := request(t, handler, http.MethodPost, "/api/v1/omnisaves", "application/json", createBody)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create returned %d: %s", response.Code, response.Body.String())
+	}
+	var save omnisave.Omnisave
+	decodeResponse(t, response, &save)
+
+	response = request(t, handler, http.MethodGet, "/api/v1/omnisaves/"+save.ID+"/archive", "", nil)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("archive of a save without revisions returned %d: %s", response.Code, response.Body.String())
+	}
+
+	progress := uploadArtifact(t, handler, "game-save contents")
+	settings := uploadArtifact(t, handler, "shared settings")
+	revisionBody, err := json.Marshal(omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{
+			{Path: "pokemon.sav", Artifact: progress},
+			{Path: "config/settings.json", Artifact: settings},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = request(t, handler, http.MethodPost,
+		"/api/v1/omnisaves/"+save.ID+"/revisions", "application/json", bytes.NewReader(revisionBody))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("add revision returned %d: %s", response.Code, response.Body.String())
+	}
+
+	response = request(t, handler, http.MethodGet, "/api/v1/omnisaves/"+save.ID+"/archive", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("archive returned %d: %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "application/zip" {
+		t.Fatalf("unexpected archive content type: %q", got)
+	}
+	if got := response.Header().Get("Content-Disposition"); got != `attachment; filename="Before the final boss.zip"` {
+		t.Fatalf("unexpected content disposition: %q", got)
+	}
+	archive, err := zip.NewReader(bytes.NewReader(response.Body.Bytes()), int64(response.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := archiveContents(t, archive)
+	if len(contents) != 2 || contents["pokemon.sav"] != "game-save contents" ||
+		contents["config/settings.json"] != "shared settings" {
+		t.Fatalf("unexpected archive contents: %v", contents)
+	}
+}
+
+func TestDownloadRevisionArchive(t *testing.T) {
+	handler := httpapi.New(omnisaveservice.New(storagetest.NewMemoryRepository()))
+
+	createBody := bytes.NewBufferString(
+		`{"game_id":"pokemon-emerald-usa","display_name":"Before the final boss"}`)
+	response := request(t, handler, http.MethodPost, "/api/v1/omnisaves", "application/json", createBody)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create returned %d: %s", response.Code, response.Body.String())
+	}
+	var save omnisave.Omnisave
+	decodeResponse(t, response, &save)
+
+	early := commitTestRevision(t, handler, save.ID, nil, "early progress")
+	head := commitTestRevision(t, handler, save.ID, &early.ID, "late progress")
+
+	response = request(t, handler, http.MethodGet,
+		"/api/v1/omnisaves/"+save.ID+"/revisions/"+early.ID+"/archive", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("revision archive returned %d: %s", response.Code, response.Body.String())
+	}
+	wantDisposition := `attachment; filename="Before the final boss ` +
+		early.CreatedAt.UTC().Format("2006-01-02 150405") + `.zip"`
+	if got := response.Header().Get("Content-Disposition"); got != wantDisposition {
+		t.Fatalf("unexpected content disposition: %q, want %q", got, wantDisposition)
+	}
+	archive, err := zip.NewReader(bytes.NewReader(response.Body.Bytes()), int64(response.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := archiveContents(t, archive)
+	if len(contents) != 1 || contents["pokemon.sav"] != "early progress" {
+		t.Fatalf("unexpected early revision contents: %v", contents)
+	}
+
+	response = request(t, handler, http.MethodGet,
+		"/api/v1/omnisaves/"+save.ID+"/revisions/"+head.ID+"/archive", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("head revision archive returned %d: %s", response.Code, response.Body.String())
+	}
+	archive, err = zip.NewReader(bytes.NewReader(response.Body.Bytes()), int64(response.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents = archiveContents(t, archive)
+	if len(contents) != 1 || contents["pokemon.sav"] != "late progress" {
+		t.Fatalf("unexpected head revision contents: %v", contents)
+	}
+
+	response = request(t, handler, http.MethodGet,
+		"/api/v1/omnisaves/"+save.ID+"/revisions/unknown/archive", "", nil)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("unknown revision archive returned %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func commitTestRevision(t *testing.T, handler http.Handler, saveID string, parentID *string, contents string) omnisave.Revision {
+	t.Helper()
+	artifact := uploadArtifact(t, handler, contents)
+	body, err := json.Marshal(omnisave.CreateRevision{
+		ExpectedHeadID: parentID,
+		Upserts:        []omnisave.RevisionFile{{Path: "pokemon.sav", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := request(t, handler, http.MethodPost,
+		"/api/v1/omnisaves/"+saveID+"/revisions", "application/json", bytes.NewReader(body))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("add revision returned %d: %s", response.Code, response.Body.String())
+	}
+	var revision omnisave.Revision
+	decodeResponse(t, response, &revision)
+	return revision
+}
+
+func archiveContents(t *testing.T, archive *zip.Reader) map[string]string {
+	t.Helper()
+	contents := make(map[string]string)
+	for _, file := range archive.File {
+		reader, err := file.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(reader)
+		reader.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		contents[file.Name] = string(data)
+	}
+	return contents
 }
 
 func TestBearerAuth(t *testing.T) {
