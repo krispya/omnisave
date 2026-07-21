@@ -2,10 +2,13 @@
 package httpapi
 
 import (
+	"archive/zip"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -43,6 +46,8 @@ func New(saves omnisave.Service, catalogs ...catalog.Service) http.Handler {
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions", api.listRevisions)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/{revisionID}", api.getRevision)
 	mux.HandleFunc("POST /api/v1/omnisaves/{id}/forks", api.fork)
+	mux.HandleFunc("GET /api/v1/omnisaves/{id}/archive", api.archive)
+	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/{revisionID}/archive", api.archiveRevision)
 	mux.HandleFunc("PUT /api/v1/artifacts/{sha256}", api.putArtifact)
 	mux.HandleFunc("HEAD /api/v1/artifacts/{sha256}", api.headArtifact)
 	mux.HandleFunc("GET /api/v1/artifacts/{sha256}", api.getArtifact)
@@ -173,6 +178,96 @@ func (a *API) fork(w http.ResponseWriter, r *http.Request) {
 	a.publishLibraryChanged()
 	w.Header().Set("Location", "/api/v1/omnisaves/"+result.Omnisave.ID)
 	writeJSON(w, http.StatusCreated, result)
+}
+
+func (a *API) archive(w http.ResponseWriter, r *http.Request) {
+	save, err := a.saves.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if save.HeadRevisionID == nil {
+		writeError(w, omnisave.ErrNotFound)
+		return
+	}
+	revision, err := a.saves.GetRevision(r.Context(), save.ID, *save.HeadRevisionID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	a.serveArchive(w, r, revision, archiveFilename(save.DisplayName))
+}
+
+func (a *API) archiveRevision(w http.ResponseWriter, r *http.Request) {
+	save, err := a.saves.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	revision, err := a.saves.GetRevision(r.Context(), save.ID, r.PathValue("revisionID"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	// Downloads of several revisions of one save should not collide on
+	// disk, so the snapshot's commit time joins the name.
+	name := save.DisplayName + " " + revision.CreatedAt.UTC().Format(archiveStampLayout)
+	a.serveArchive(w, r, revision, archiveFilename(name))
+}
+
+func (a *API) serveArchive(w http.ResponseWriter, r *http.Request, revision *omnisave.Revision, filename string) {
+	// Confirm every artifact before the first body byte; after that an
+	// error can only truncate the stream.
+	for _, file := range revision.Files {
+		if _, err := a.saves.StatArtifact(r.Context(), file.Artifact.SHA256); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment",
+		map[string]string{"filename": filename}))
+	archive := zip.NewWriter(w)
+	defer archive.Close()
+	for _, file := range revision.Files {
+		if err := a.archiveFile(r.Context(), archive, revision.CreatedAt, file); err != nil {
+			return
+		}
+	}
+}
+
+const archiveStampLayout = "2006-01-02 150405"
+
+func (a *API) archiveFile(ctx context.Context, archive *zip.Writer, modified time.Time, file omnisave.RevisionFile) error {
+	payload, err := a.saves.OpenArtifact(ctx, file.Artifact.SHA256)
+	if err != nil {
+		return err
+	}
+	defer payload.Close()
+	writer, err := archive.CreateHeader(&zip.FileHeader{
+		Name:     file.Path,
+		Method:   zip.Deflate,
+		Modified: modified,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(writer, payload)
+	return err
+}
+
+func archiveFilename(displayName string) string {
+	name := strings.TrimSpace(strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r < 0x20 {
+			return -1
+		}
+		return r
+	}, displayName))
+	if name == "" {
+		name = "omnisave"
+	}
+	return name + ".zip"
 }
 
 func (a *API) putArtifact(w http.ResponseWriter, r *http.Request) {

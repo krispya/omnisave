@@ -1,4 +1,4 @@
-import { DeleteOptions } from '../../components/delete-options.js';
+import { OptionsMenu } from '../../components/options-menu.js';
 import { GameArtwork } from '../game/game-artwork.js';
 import type { GameSummary } from '../game/game-summary.js';
 
@@ -80,7 +80,7 @@ function GameCard({
             {saveCount}
           </span>
         ) : null}
-        <DeleteOptions
+        <OptionsMenu
           label={game.label}
           className="absolute right-2 bottom-2 z-10 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
           onFixMatch={game.inLibrary ? () => onRequestFixMatch(game) : undefined}
