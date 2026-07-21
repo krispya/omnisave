@@ -1,5 +1,5 @@
 import type { Omnisave } from '../../lib/omnisave-api.js';
-import { DeleteOptions } from '../../components/delete-options.js';
+import { OptionsMenu } from '../../components/options-menu.js';
 import { defaultSaveName, displaySaveName } from './save-name.js';
 import { formatDate } from '../../lib/format.js';
 import { SaveNameEditor } from './save-name-editor.js';
@@ -47,12 +47,14 @@ export function SaveList({
   saves,
   selectedSave,
   onSelectSave,
+  onDownloadSave,
   onRequestDelete,
   onRenameSave,
 }: {
   saves: Omnisave[];
   selectedSave?: Omnisave;
   onSelectSave: (save: Omnisave) => void;
+  onDownloadSave: (save: Omnisave, name: string) => void;
   onRequestDelete: (save: Omnisave, name: string) => void;
   onRenameSave: (save: Omnisave, displayName: string) => Promise<void>;
 }) {
@@ -117,9 +119,10 @@ export function SaveList({
                   </p>
                 ) : null}
               </div>
-              <DeleteOptions
+              <OptionsMenu
                 label={name}
                 className="pointer-events-auto relative z-20 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
+                onDownload={save.head_revision_id ? () => onDownloadSave(save, name) : undefined}
                 onDelete={() => onRequestDelete(save, name)}
               />
             </div>

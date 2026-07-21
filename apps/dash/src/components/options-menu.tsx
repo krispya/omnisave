@@ -1,25 +1,32 @@
 import { useDismissibleDetails } from '../lib/use-dismissible-details.js';
 
-type DeleteOptionsProps = {
+type OptionsMenuProps = {
   label: string;
   className: string;
+  onDownload?: () => void;
   onFixMatch?: () => void;
   deleteLabel?: string;
   onDelete?: () => void;
   onDeleteGame?: () => void;
 };
 
-export function DeleteOptions({
+export function OptionsMenu({
   label,
   className,
+  onDownload,
   onFixMatch,
   deleteLabel = 'Delete',
   onDelete,
   onDeleteGame,
-}: DeleteOptionsProps) {
+}: OptionsMenuProps) {
   const menu = useDismissibleDetails();
 
-  if (!onFixMatch && !onDelete && !onDeleteGame) return null;
+  if (!onDownload && !onFixMatch && !onDelete && !onDeleteGame) return null;
+
+  function requestDownload() {
+    menu.current?.removeAttribute('open');
+    onDownload?.();
+  }
 
   function requestDelete() {
     menu.current?.removeAttribute('open');
@@ -47,6 +54,15 @@ export function DeleteOptions({
         </svg>
       </summary>
       <div className="absolute right-0 bottom-full mb-2 w-36 rounded-md border border-white/10 bg-[#202020] p-1 shadow-xl">
+        {onDownload ? (
+          <button
+            type="button"
+            onClick={requestDownload}
+            className="w-full rounded px-3 py-2 text-left text-sm text-neutral-200 hover:bg-white/5"
+          >
+            Download
+          </button>
+        ) : null}
         {onFixMatch ? (
           <button
             type="button"

@@ -324,6 +324,14 @@ export function fixGameMatch(token: string, gameID: string, selectionToken: stri
   });
 }
 
+export function downloadOmnisaveArchive(token: string, omnisaveID: string) {
+  return requestBlob(`/api/v1/omnisaves/${omnisaveID}/archive`, token);
+}
+
+export function downloadRevisionArchive(token: string, omnisaveID: string, revisionID: string) {
+  return requestBlob(`/api/v1/omnisaves/${omnisaveID}/revisions/${revisionID}/archive`, token);
+}
+
 export function deleteOmnisave(token: string, omnisaveID: string) {
   return request<void>(`/api/v1/omnisaves/${omnisaveID}`, token, { method: 'DELETE' });
 }

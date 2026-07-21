@@ -38,7 +38,11 @@ export function SaveNameEditor({ save, fallbackName, onSave }: SaveNameEditorPro
     const displayName = value.trim();
     const currentName = save.display_name?.trim() ?? '';
     // A save always has a name, so clearing the field cancels the rename.
-    if (!displayName || displayName === currentName || (!currentName && displayName === fallbackName)) {
+    if (
+      !displayName ||
+      displayName === currentName ||
+      (!currentName && displayName === fallbackName)
+    ) {
       setEditing(false);
       return;
     }

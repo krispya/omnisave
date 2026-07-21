@@ -6,6 +6,7 @@ type RevisionPanelProps = {
   revisions: Revision[];
   loading: boolean;
   error: string;
+  onDownloadRevision: (revision: Revision) => void;
 };
 
 function displayName(save: Omnisave) {
@@ -31,7 +32,33 @@ function shortID(id: string) {
   return id.slice(0, 8);
 }
 
-export function RevisionPanel({ save, name, revisions, loading, error }: RevisionPanelProps) {
+function DownloadIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="size-3.5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 4v11" />
+      <path d="m7 11 5 5 5-5" />
+      <path d="M4.5 19.5h15" />
+    </svg>
+  );
+}
+
+export function RevisionPanel({
+  save,
+  name,
+  revisions,
+  loading,
+  error,
+  onDownloadRevision,
+}: RevisionPanelProps) {
   return (
     <aside className="rounded-lg border border-white/5 bg-[#181818] p-5 xl:sticky xl:top-6 xl:self-start">
       <div className="flex items-start justify-between gap-4 border-b border-white/5 pb-4">
@@ -98,6 +125,15 @@ export function RevisionPanel({ save, name, revisions, loading, error }: Revisio
                       <span className="truncate font-mono text-xs text-slate-300" title={revision.id}>
                         {shortID(revision.id)}
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => onDownloadRevision(revision)}
+                        title="Download this revision"
+                        className="shrink-0 rounded p-0.5 text-slate-500 transition hover:text-white"
+                      >
+                        <span className="sr-only">Download revision {shortID(revision.id)}</span>
+                        <DownloadIcon />
+                      </button>
                     </div>
                     <time className="shrink-0 text-[10px] text-slate-600">
                       {formatDate(revision.created_at)}

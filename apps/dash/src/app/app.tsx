@@ -12,6 +12,8 @@ import {
 import {
   deleteGame,
   deleteOmnisave,
+  downloadOmnisaveArchive,
+  downloadRevisionArchive,
   listGames,
   listOmnisaves,
   listRevisions,
@@ -29,10 +31,7 @@ import {
   forkTestSave,
 } from '../features/debug/debug-actions.js';
 import { DebugMenu } from '../features/debug/debug-menu.js';
-import {
-  DeleteGameDialog,
-  DeleteGameSavesDialog,
-} from '../features/game/delete-game-dialog.js';
+import { DeleteGameDialog, DeleteGameSavesDialog } from '../features/game/delete-game-dialog.js';
 import { preloadGameArtwork } from '../features/game/game-artwork.js';
 import { GameDetail } from '../features/game/game-detail.js';
 import type { GameSummary } from '../features/game/game-summary.js';
@@ -40,10 +39,7 @@ import { buildLibrary } from '../features/library/build-library.js';
 import { FixMatchDialog } from '../features/library/fix-match-dialog.js';
 import { DeleteSaveDialog } from '../features/omnisave/delete-save-dialog.js';
 import { GameLibrary, GameLibraryLoading } from '../features/library/game-library.js';
-import {
-  useLibraryEvents,
-  type LibraryEventStatus,
-} from '../features/library/use-library-events.js';
+import { useLibraryEvents, type LibraryEventStatus } from '../features/library/use-library-events.js';
 
 const tokenStorageKey = 'omnisave.api-token';
 
@@ -51,6 +47,26 @@ type DeleteTarget =
   | { type: 'game'; game: GameSummary }
   | { type: 'game-saves'; game: GameSummary }
   | { type: 'save'; game: GameSummary; save: Omnisave; name: string };
+
+function saveArchiveToDisk(archive: Blob, filename: string) {
+  const url = URL.createObjectURL(archive);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+// Mirrors the server's Content-Disposition stamp so browser and curl
+// downloads of one revision land under the same name.
+function archiveStamp(createdAt: string) {
+  const date = new Date(createdAt);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return (
+    `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ` +
+    `${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}`
+  );
+}
 
 function upsertCatalogGame(catalog: CatalogGame[], game: CatalogGame) {
   return catalog.some((candidate) => candidate.id === game.id)
@@ -323,6 +339,33 @@ function LibraryDashboard({
     }
   }
 
+  async function downloadSave(save: Omnisave, name: string) {
+    if (!token) return;
+    setError('');
+    try {
+      saveArchiveToDisk(await downloadOmnisaveArchive(token, save.id), `${name}.zip`);
+    } catch (downloadError) {
+      setError(
+        downloadError instanceof Error ? downloadError.message : 'Could not download this save.'
+      );
+    }
+  }
+
+  async function downloadRevision(save: Omnisave, name: string, revision: Revision) {
+    if (!token) return;
+    setRevisionError('');
+    try {
+      saveArchiveToDisk(
+        await downloadRevisionArchive(token, save.id, revision.id),
+        `${name} ${archiveStamp(revision.created_at)}.zip`
+      );
+    } catch (downloadError) {
+      setRevisionError(
+        downloadError instanceof Error ? downloadError.message : 'Could not download this revision.'
+      );
+    }
+  }
+
   async function renameSave(save: Omnisave, displayName: string) {
     if (!token) return;
     const updated = await updateOmnisaveDisplayName(token, save.id, displayName);
@@ -451,6 +494,8 @@ function LibraryDashboard({
           loadingRevisions={loadingRevisions}
           revisionError={revisionError}
           onSelectSave={(save) => onSelectSaveID(save.id)}
+          onDownloadSave={(save, name) => void downloadSave(save, name)}
+          onDownloadRevision={(save, name, revision) => void downloadRevision(save, name, revision)}
           onRequestDelete={requestDeleteSave}
           onRenameSave={renameSave}
         />

@@ -30,6 +30,8 @@ type GameDetailProps = {
   loadingRevisions: boolean;
   revisionError: string;
   onSelectSave: (save: Omnisave) => void;
+  onDownloadSave: (save: Omnisave, name: string) => void;
+  onDownloadRevision: (save: Omnisave, name: string, revision: Revision) => void;
   onRequestDelete: (save: Omnisave, name: string) => void;
   onRenameSave: (save: Omnisave, displayName: string) => Promise<void>;
 };
@@ -42,6 +44,8 @@ export function GameDetail({
   loadingRevisions,
   revisionError,
   onSelectSave,
+  onDownloadSave,
+  onDownloadRevision,
   onRequestDelete,
   onRenameSave,
 }: GameDetailProps) {
@@ -163,6 +167,7 @@ export function GameDetail({
               saves={game.saves}
               selectedSave={selectedSave}
               onSelectSave={onSelectSave}
+              onDownloadSave={onDownloadSave}
               onRequestDelete={onRequestDelete}
               onRenameSave={onRenameSave}
             />
@@ -176,6 +181,9 @@ export function GameDetail({
             revisions={revisions}
             loading={loadingRevisions}
             error={revisionError}
+            onDownloadRevision={(revision) =>
+              onDownloadRevision(selectedSave, selectedSaveName, revision)
+            }
           />
         ) : null}
       </div>
