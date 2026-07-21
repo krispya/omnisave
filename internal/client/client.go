@@ -20,6 +20,8 @@ type Scanner struct {
 type GameScan struct {
 	Game  target.InstalledGame
 	Saves []target.Save
+	// Destinations describe native save destinations whether or not files exist.
+	Destinations []target.SaveDestination
 }
 
 // TargetScan reports the installed games found through one application target.
@@ -98,6 +100,10 @@ func (s *Scanner) scanAdapter(ctx context.Context, adapter target.Adapter) ([]Ta
 			if err != nil {
 				return nil, fmt.Errorf("discover saves for %s: %w", game.ID, err)
 			}
+			destinations, err := adapter.DiscoverSaveDestinations(ctx, discovered, game)
+			if err != nil {
+				return nil, fmt.Errorf("discover save locations for %s: %w", game.ID, err)
+			}
 			if s.profiles != nil {
 				profile, err := s.profiles.Find(ctx, game.Identity)
 				if err != nil && !errors.Is(err, saveprofile.ErrNotFound) {
@@ -109,9 +115,14 @@ func (s *Scanner) scanAdapter(ctx context.Context, adapter target.Adapter) ([]Ta
 						return nil, fmt.Errorf("resolve save profile for %s: %w", game.ID, err)
 					}
 					saves = append(saves, resolved...)
+					resolvedDestinations, err := saveprofile.ResolveDestinations(game, *profile)
+					if err != nil {
+						return nil, fmt.Errorf("resolve save profile locations for %s: %w", game.ID, err)
+					}
+					destinations = append(destinations, resolvedDestinations...)
 				}
 			}
-			scan.Games = append(scan.Games, GameScan{Game: game, Saves: saves})
+			scan.Games = append(scan.Games, GameScan{Game: game, Saves: saves, Destinations: destinations})
 		}
 		scans = append(scans, scan)
 	}

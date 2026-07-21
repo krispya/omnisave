@@ -48,7 +48,7 @@ path, syncing-down built the read path; sync makes both routine.
 - A sync pass also completes the binding decisions that need no question:
   a tracked game's first save seeds, and a save matching an Omnisave's
   head rebinds. Anything that would prompt — a stale match, an ambiguous
-  match, an empty slot's offer ([FDR-004](FDR-004-sync-to-device.md)), a
+  match, a fresh Device's offer ([FDR-004](FDR-004-sync-to-device.md)), a
   divergence — is reported and waits for track.
 - Syncing down uses the staging policy of
   [FDR-004](FDR-004-sync-to-device.md): download, verify, place
@@ -185,6 +185,6 @@ them.
 - **FDRs:** [FDR-003](FDR-003-automatic-save-binding.md) — the binding
   pass whose automatic half sync re-runs and whose lineage philosophy
   divergence inherits; [FDR-004](FDR-004-sync-to-device.md) — joining a
-  lineage on an empty slot, and the staging policy this feature's pull
+  lineage on a Device with no local save, and the staging policy this feature's pull
   reuses; [FDR-002](FDR-002-game-lifecycle.md) — Device identity and
   liveness, which sync events update.

@@ -115,6 +115,24 @@ func (r *TrackReport) NoSave(title string) {
 	r.event(title, "no save available")
 }
 
+// SaveAvailable records a Device with no local save whose server save awaits an
+// interactive choice.
+func (r *TrackReport) SaveAvailable(title string) {
+	if entry := r.game(title); entry.glyph == "" {
+		entry.glyph = mutedStyle.Render("○")
+	}
+	r.event(title, "server save available; run omnisave-client track to choose")
+}
+
+// SaveLocationUnavailable records that this Device cannot safely determine
+// where a server save belongs.
+func (r *TrackReport) SaveLocationUnavailable(title string) {
+	if entry := r.game(title); entry.glyph == "" {
+		entry.glyph = mutedStyle.Render("·")
+	}
+	r.event(title, "waiting for a local save location")
+}
+
 // Forked records a stale local save continued as a new named lineage.
 func (r *TrackReport) Forked(title, omnisaveName string) {
 	r.event(title, "save forked as "+omnisaveName)

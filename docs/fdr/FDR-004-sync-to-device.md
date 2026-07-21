@@ -1,7 +1,7 @@
 # FDR-004: Syncing Saves to a Device
 
-**Status:** Planned
-**Last reviewed:** 2026-07-19
+**Status:** Experimental
+**Last reviewed:** 2026-07-20
 
 ## Overview
 
@@ -18,8 +18,7 @@ onto a new machine.
 ## Behavior
 
 - During the binding pass, a tracked and confirmed game with no local save
-  whose server has Omnisaves triggers the offer. Today that case reports
-  "no save available" and stops; with this feature it asks instead.
+  whose server has Omnisaves triggers the offer.
 - The offer lists the game's Omnisaves by name, plus "decide later". It is
   always asked, even when exactly one Omnisave exists.
 - Choosing an Omnisave syncs it immediately: its head revision's files are
@@ -27,15 +26,18 @@ onto a new machine.
   this Device. The binding records the head as the sync baseline, so the
   Device is up to date the moment the pass finishes — launch the game and
   continue the playthrough.
-- The result names what happened ("save synced from …"), and the closing
-  tally counts it. Nothing changes on the server: syncing down reads
-  content and records a machine-local binding.
+- The result names the selected omnisave and shows it synced just now; the
+  closing tally counts it. Nothing changes on the server: syncing down
+  reads content and records a machine-local binding.
 - Deciding later changes nothing; the offer repeats on the next track run
   while the game still has no local save.
 - The game's native save location is determined by its adapter even though
   no save exists there yet. When the adapter cannot determine it, nothing
   downloads and the result says the game is waiting for its first local
   save.
+- A server save is offered only when its head maps to exactly one prospective
+  native destination. An absent or ambiguous destination is reported honestly
+  and nothing downloads.
 - Placement never overwrites: the flow only runs when the Device has no
   local save, and files that appeared in the location since the scan abort
   the placement untouched — the offer returns on a later run.
@@ -99,7 +101,7 @@ overwrite-safety policy should be decided once before shipping twice; this
 decision is that single home, and synchronization's pull path inherits it.
 **Tradeoff:** Content briefly exists twice on disk while staging.
 
-### 5. Only an empty slot syncs down
+### 5. Only a Device with no local save syncs down
 
 **Decision:** The offer requires that the Device has no local save for the
 game. Any local content routes through content matching instead.
