@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/catalog/hasheous"
@@ -17,94 +20,47 @@ import (
 	sqlitestorage "github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
 )
 
-type Config struct {
-	ListenAddr  string `yaml:"listen_addr"`
-	Token       string `yaml:"token"`
-	DBPath      string `yaml:"db_path"`
-	ArtifactDir string `yaml:"artifact_dir"`
-	WebDir      string `yaml:"web_dir"`
-	Hasheous    struct {
-		BaseURL string `yaml:"base_url"`
-		Timeout string `yaml:"timeout"`
-	} `yaml:"hasheous"`
-	IGDB struct {
-		ClientID          string `yaml:"client_id"`
-		ClientSecret      string `yaml:"client_secret"`
-		BaseURL           string `yaml:"base_url"`
-		TokenURL          string `yaml:"token_url"`
-		ImageBaseURL      string `yaml:"image_base_url"`
-		Timeout           string `yaml:"timeout"`
-		RequestsPerSecond int    `yaml:"requests_per_second"`
-		SearchCacheTTL    string `yaml:"search_cache_ttl"`
-	} `yaml:"igdb"`
+func main() {
+	config, err := loadConfig(os.Args[1:])
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := runServer(ctx, config); err != nil {
+		log.Fatal(err)
+	}
 }
 
-func main() {
-	configPath := "config/server.local.yaml"
-	if len(os.Args) > 1 {
-		configPath = os.Args[1]
-	}
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		log.Fatalf("read config: %v", err)
-	}
-	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		log.Fatalf("parse config: %v", err)
-	}
-	if config.Token == "" {
-		log.Fatal("token must be set in config")
-	}
-	if config.ListenAddr == "" {
-		config.ListenAddr = ":8080"
-	}
-	if config.DBPath == "" {
-		config.DBPath = "./omnisave.db"
-	}
-	if config.ArtifactDir == "" {
-		config.ArtifactDir = "./artifacts"
-	}
-	if config.WebDir == "" {
-		config.WebDir = "./apps/dash/dist"
-	}
-	if config.Hasheous.BaseURL == "" {
-		config.Hasheous.BaseURL = "https://hasheous.org"
-	}
+func runServer(ctx context.Context, config serverConfig) error {
 	hasheousTimeout := 15 * time.Second
 	if config.Hasheous.Timeout != "" {
+		var err error
 		hasheousTimeout, err = time.ParseDuration(config.Hasheous.Timeout)
 		if err != nil || hasheousTimeout <= 0 {
-			log.Fatal("hasheous timeout must be a positive duration")
+			return errors.New("hasheous timeout must be a positive duration")
 		}
-	}
-	if value := os.Getenv("OMNISAVE_IGDB_CLIENT_ID"); value != "" {
-		config.IGDB.ClientID = value
-	}
-	if value := os.Getenv("OMNISAVE_IGDB_CLIENT_SECRET"); value != "" {
-		config.IGDB.ClientSecret = value
-	}
-	if (config.IGDB.ClientID == "") != (config.IGDB.ClientSecret == "") {
-		log.Fatal("both IGDB client_id and client_secret must be set")
 	}
 	igdbTimeout := 15 * time.Second
 	if config.IGDB.Timeout != "" {
+		var err error
 		igdbTimeout, err = time.ParseDuration(config.IGDB.Timeout)
 		if err != nil || igdbTimeout <= 0 {
-			log.Fatal("IGDB timeout must be a positive duration")
+			return errors.New("IGDB timeout must be a positive duration")
 		}
 	}
 	igdbCacheTTL := 5 * time.Minute
 	if config.IGDB.SearchCacheTTL != "" {
+		var err error
 		igdbCacheTTL, err = time.ParseDuration(config.IGDB.SearchCacheTTL)
 		if err != nil || igdbCacheTTL < 0 {
-			log.Fatal("IGDB search cache TTL must not be negative")
+			return errors.New("IGDB search cache TTL must not be negative")
 		}
 	}
 
 	repository, err := sqlitestorage.Open(config.DBPath, config.ArtifactDir)
 	if err != nil {
-		log.Fatalf("open storage: %v", err)
+		return fmt.Errorf("open storage: %w", err)
 	}
 	defer repository.Close()
 
@@ -123,13 +79,14 @@ func main() {
 			SearchCacheTTL:    igdbCacheTTL,
 		}, &http.Client{Timeout: igdbTimeout})
 		if providerErr != nil {
-			log.Fatalf("configure IGDB: %v", providerErr)
+			return fmt.Errorf("configure IGDB: %w", providerErr)
 		}
 		resolutionProviders = append(resolutionProviders, igdbProvider)
 		searchProviders = []catalog.Provider{igdbProvider, hasheousProvider}
 	}
 	games := catalogservice.NewWithProviders(repository, repository, resolutionProviders, searchProviders)
 	mux := http.NewServeMux()
+	registerHealthRoutes(mux)
 	mux.Handle("/api/v1/", httpapi.BearerAuth(config.Token, httpapi.New(saves, games)))
 	mux.Handle("/", http.FileServer(http.Dir(config.WebDir)))
 	server := &http.Server{
@@ -139,7 +96,46 @@ func main() {
 	}
 
 	log.Printf("Omnisave API listening on %s", config.ListenAddr)
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatalf("server: %v", err)
+	err = serveUntilStopped(ctx, server)
+	if err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
+	return nil
+}
+
+func registerHealthRoutes(mux *http.ServeMux) {
+	health := func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		response.WriteHeader(http.StatusOK)
+		_, _ = response.Write([]byte("ok\n"))
+	}
+	mux.HandleFunc("GET /healthz", health)
+	mux.HandleFunc("GET /readyz", health)
+}
+
+func serveUntilStopped(ctx context.Context, server *http.Server) error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+			return err
+		}
+		err := <-errCh
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
 	}
 }
