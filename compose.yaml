@@ -1,0 +1,34 @@
+name: omnisave
+
+services:
+  server:
+    image: ghcr.io/krisbaumgartner/omnisave:${OMNISAVE_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      OMNISAVE_TOKEN: ${OMNISAVE_TOKEN:?Set OMNISAVE_TOKEN in .env}
+      # Unset values fall back to the server's own defaults.
+      OMNISAVE_HASHEOUS_BASE_URL: ${OMNISAVE_HASHEOUS_BASE_URL:-}
+      OMNISAVE_HASHEOUS_TIMEOUT: ${OMNISAVE_HASHEOUS_TIMEOUT:-}
+      OMNISAVE_IGDB_CLIENT_ID: ${OMNISAVE_IGDB_CLIENT_ID:-}
+      OMNISAVE_IGDB_CLIENT_SECRET: ${OMNISAVE_IGDB_CLIENT_SECRET:-}
+      OMNISAVE_IGDB_BASE_URL: ${OMNISAVE_IGDB_BASE_URL:-}
+      OMNISAVE_IGDB_TOKEN_URL: ${OMNISAVE_IGDB_TOKEN_URL:-}
+      OMNISAVE_IGDB_IMAGE_BASE_URL: ${OMNISAVE_IGDB_IMAGE_BASE_URL:-}
+      OMNISAVE_IGDB_TIMEOUT: ${OMNISAVE_IGDB_TIMEOUT:-}
+      OMNISAVE_IGDB_REQUESTS_PER_SECOND: ${OMNISAVE_IGDB_REQUESTS_PER_SECOND:-}
+      OMNISAVE_IGDB_SEARCH_CACHE_TTL: ${OMNISAVE_IGDB_SEARCH_CACHE_TTL:-}
+    ports:
+      - '${OMNISAVE_BIND_ADDRESS:-0.0.0.0}:${OMNISAVE_PORT:-8080}:8080'
+    volumes:
+      - data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+
+volumes:
+  data:

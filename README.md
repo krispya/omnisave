@@ -1,6 +1,60 @@
-# omnisave
+# Omnisave
 
-This monorepo workspace was generated with create-krispya.
+Omnisave is a self-hosted, versioned game-save synchronization service. The
+server owns the Library and save history; clients discover native saves and
+keep them synchronized across devices.
+
+## Self-host with Compose
+
+The supported generic deployment is the multi-architecture OCI image and the
+included `compose.yaml`.
+
+```sh
+cp .env.example .env
+openssl rand -hex 32
+# Replace OMNISAVE_TOKEN in .env with the generated value.
+docker compose up -d
+```
+
+Open `http://your-server:8080`. The Compose project stores the database and
+artifacts in its `data` volume, runs the server without root privileges, and
+restarts it unless explicitly stopped.
+
+Upgrade in place:
+
+```sh
+docker compose pull
+docker compose up -d
+```
+
+Back up the complete Compose data volume while the service is stopped. The
+SQLite database and `artifacts/` directory form one backup unit; neither alone
+is a complete server backup.
+
+The image accepts these deployment environment variables:
+
+| Variable                      | Purpose                                                    | Image default       |
+| ----------------------------- | ---------------------------------------------------------- | ------------------- |
+| `OMNISAVE_TOKEN`              | API bearer token; must be at least 32 characters           | Required            |
+| `OMNISAVE_TOKEN_FILE`         | File containing the token; use instead of `OMNISAVE_TOKEN` | —                   |
+| `OMNISAVE_LISTEN_ADDR`        | HTTP listen address                                        | `:8080`             |
+| `OMNISAVE_DB_PATH`            | SQLite database path                                       | `/data/omnisave.db` |
+| `OMNISAVE_ARTIFACT_DIR`       | Content-addressed artifact directory                       | `/data/artifacts`   |
+| `OMNISAVE_WEB_DIR`            | Built Dashboard directory                                  | `/app/web`          |
+| `OMNISAVE_IGDB_CLIENT_ID`     | Optional IGDB client ID                                    | —                   |
+| `OMNISAVE_IGDB_CLIENT_SECRET` | Optional IGDB client secret                                | —                   |
+
+`.env.example` documents the complete environment contract, including the
+catalog provider settings `compose.yaml` passes through.
+
+Publish a release image with Docker Buildx:
+
+```sh
+make oci-push VERSION=0.1.0
+```
+
+This publishes `linux/amd64` and `linux/arm64` manifests by default. Override
+`OCI_IMAGE` to publish under another registry name.
 
 ## Structure
 

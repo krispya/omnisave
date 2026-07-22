@@ -1,5 +1,13 @@
 .git
-bin
-dist
+.github
+.codex
+.agents
 node_modules
-web/dist
+dist
+bin
+artifacts
+omnisave.db
+omnisave.db-*
+.env
+coverage.out
+*.test
