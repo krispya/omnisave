@@ -1,4 +1,6 @@
-VERSION ?= 1.0.0
+VERSION ?= 0.1.0
+OCI_IMAGE ?= ghcr.io/krisbaumgartner/omnisave
+OCI_PLATFORMS ?= linux/amd64,linux/arm64
 TEST_GOALS = $(filter-out test,$(MAKECMDGOALS))
 TEST_FILTER_PACKAGES = $(addsuffix /...,$(shell find . -type d -name '$(F)' 2>/dev/null))
 TEST_GOAL_PACKAGES = $(addprefix ./,$(TEST_GOALS))
@@ -8,15 +10,16 @@ install:
 	pnpm install
 
 build-web:
-	pnpm run web:build
+	pnpm --filter @omnisave/dash run build
 
 build-server:
-	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/omnisave-server ./cmd/server
+	mkdir -p bin
+	go build -trimpath -o bin/omnisave-server ./cmd/server
 
 build-client:
 	go build -o bin/omnisave-client ./cmd/client
 
-build-all: web-build build-server
+build-all: build-web build-server
 
 test:
 	@if [ -n "$(F)" ] && [ -z "$(TEST_FILTER_PACKAGES)" ]; then \
@@ -30,21 +33,25 @@ test:
 	@:
 
 
-# ── Docker ────────────────────────────────────────────────────────────────────
+# ── OCI image ─────────────────────────────────────────────────────────────────
 
-docker-build:
-	docker build --platform linux/amd64 -t omnisave-server:$(VERSION) -t omnisave-server:latest .
+oci-build docker-build:
+	docker build -f Containerfile -t $(OCI_IMAGE):$(VERSION) -t $(OCI_IMAGE):latest .
+
+oci-push:
+	docker buildx build -f Containerfile --platform $(OCI_PLATFORMS) \
+		-t $(OCI_IMAGE):$(VERSION) -t $(OCI_IMAGE):latest --push .
 
 # Export image as a .tar file for manual import into Synology Container Manager.
-docker-export: docker-build
+docker-export: oci-build
 	mkdir -p dist
-	docker save omnisave-server:$(VERSION) | gzip > dist/omnisave-server-$(VERSION).tar.gz
-	@echo "Image saved to dist/omnisave-server-$(VERSION).tar.gz"
-	@echo "Import in DSM: Container Manager → Registry → Import"
+	docker save $(OCI_IMAGE):$(VERSION) | gzip > dist/omnisave-$(VERSION)-oci.tar.gz
+	@echo "Image saved to dist/omnisave-$(VERSION)-oci.tar.gz"
+	@echo "Import it with Synology Container Manager's image import flow"
 
 # ── Synology SPK ──────────────────────────────────────────────────────────────
 
-package-spk: web-build build-server
+package-spk: build-web build-server
 	$(eval SPK_STAGE := $(shell mktemp -d))
 	$(eval SPK_TARGET := $(SPK_STAGE)/target/bin)
 	mkdir -p $(SPK_TARGET)
@@ -71,5 +78,5 @@ package-spk: web-build build-server
 	@echo "SPK written to dist/omnisave-$(VERSION)-x86_64.spk"
 	@echo "Install in DSM: Package Center → Manual Install"
 
-.PHONY: web-install web-build build-server build-client build-all test \
-        docker-build docker-export package-spk
+.PHONY: install build-web build-server build-client build-all test \
+		oci-build oci-push docker-build docker-export package-spk
