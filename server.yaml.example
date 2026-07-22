@@ -1,5 +1,3 @@
-# Environment variables override matching deployment fields. The server can
-# also run without this file when its token and paths come from the environment.
 listen_addr: :8080
 token: ""
 db_path: ./omnisave.db
