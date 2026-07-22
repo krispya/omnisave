@@ -9,3 +9,4 @@ in [FDRs](../fdr/INDEX.md), which cite ADRs; citations flow FDR → ADR only.
 | [ADR-001](ADR-001-server-authority.md)                 | The server is the only authority                 | 2026-07-18 |
 | [ADR-002](ADR-002-sse-view-invalidation.md)            | Use SSE to invalidate server-authoritative views | 2026-07-18 |
 | [ADR-003](ADR-003-environment-server-configuration.md) | Configure the server through the environment     | 2026-07-22 |
+| [ADR-004](ADR-004-oci-image-distribution.md)           | Ship the server as an OCI image                  | 2026-07-21 |
