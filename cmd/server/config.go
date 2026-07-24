@@ -1,67 +1,58 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 type serverConfig struct {
-	ListenAddr  string `yaml:"listen_addr"`
-	Token       string `yaml:"token"`
-	DBPath      string `yaml:"db_path"`
-	ArtifactDir string `yaml:"artifact_dir"`
-	WebDir      string `yaml:"web_dir"`
+	ListenAddr  string
+	Token       string
+	DBPath      string
+	ArtifactDir string
+	WebDir      string
 	Hasheous    struct {
-		BaseURL string `yaml:"base_url"`
-		Timeout string `yaml:"timeout"`
-	} `yaml:"hasheous"`
+		BaseURL string
+		Timeout string
+	}
 	IGDB struct {
-		ClientID          string `yaml:"client_id"`
-		ClientSecret      string `yaml:"client_secret"`
-		BaseURL           string `yaml:"base_url"`
-		TokenURL          string `yaml:"token_url"`
-		ImageBaseURL      string `yaml:"image_base_url"`
-		Timeout           string `yaml:"timeout"`
-		RequestsPerSecond int    `yaml:"requests_per_second"`
-		SearchCacheTTL    string `yaml:"search_cache_ttl"`
-	} `yaml:"igdb"`
+		ClientID          string
+		ClientSecret      string
+		BaseURL           string
+		TokenURL          string
+		ImageBaseURL      string
+		Timeout           string
+		RequestsPerSecond int
+		SearchCacheTTL    string
+	}
 }
 
-func loadConfig(arguments []string) (serverConfig, error) {
-	if len(arguments) > 1 {
-		return serverConfig{}, errors.New("usage: omnisave-server [config.yaml]")
-	}
+// loadConfig reads the server's complete runtime contract from the environment.
+func loadConfig() (serverConfig, error) {
 	config := defaultConfig()
-	configPath := os.Getenv("OMNISAVE_CONFIG")
-	if len(arguments) == 1 {
-		configPath = arguments[0]
-	}
-	if configPath != "" {
-		data, err := os.ReadFile(configPath)
+	applyEnvironment(&config)
+	requestsPerSecond := os.Getenv("OMNISAVE_IGDB_REQUESTS_PER_SECOND")
+	if requestsPerSecond != "" {
+		value, err := strconv.Atoi(requestsPerSecond)
 		if err != nil {
-			return serverConfig{}, fmt.Errorf("read config: %w", err)
+			return serverConfig{}, errors.New("OMNISAVE_IGDB_REQUESTS_PER_SECOND must be an integer")
 		}
-		decoder := yaml.NewDecoder(bytes.NewReader(data))
-		decoder.KnownFields(true)
-		if err := decoder.Decode(&config); err != nil {
-			return serverConfig{}, fmt.Errorf("parse config: %w", err)
+		if value < 1 || value > 4 {
+			return serverConfig{}, errors.New("OMNISAVE_IGDB_REQUESTS_PER_SECOND must be between 1 and 4")
 		}
+		config.IGDB.RequestsPerSecond = value
 	}
 
-	applyEnvironment(&config)
-	applyDefaults(&config)
-	token, err := configuredToken(config.Token)
+	token, err := configuredToken()
 	if err != nil {
 		return serverConfig{}, err
 	}
 	config.Token = token
 	if config.Token == "" {
-		return serverConfig{}, errors.New("token must be set with token, OMNISAVE_TOKEN, or OMNISAVE_TOKEN_FILE")
+		return serverConfig{}, errors.New("token must be set with OMNISAVE_TOKEN or OMNISAVE_TOKEN_FILE")
 	}
 	if len(config.Token) < 32 {
 		return serverConfig{}, errors.New("token must contain at least 32 characters")
@@ -70,25 +61,6 @@ func loadConfig(arguments []string) (serverConfig, error) {
 		return serverConfig{}, errors.New("both IGDB client_id and client_secret must be set")
 	}
 	return config, nil
-}
-
-func applyDefaults(config *serverConfig) {
-	defaults := defaultConfig()
-	if config.ListenAddr == "" {
-		config.ListenAddr = defaults.ListenAddr
-	}
-	if config.DBPath == "" {
-		config.DBPath = defaults.DBPath
-	}
-	if config.ArtifactDir == "" {
-		config.ArtifactDir = defaults.ArtifactDir
-	}
-	if config.WebDir == "" {
-		config.WebDir = defaults.WebDir
-	}
-	if config.Hasheous.BaseURL == "" {
-		config.Hasheous.BaseURL = defaults.Hasheous.BaseURL
-	}
 }
 
 func defaultConfig() serverConfig {
@@ -104,12 +76,18 @@ func defaultConfig() serverConfig {
 
 func applyEnvironment(config *serverConfig) {
 	setFromEnvironment(&config.ListenAddr, "OMNISAVE_LISTEN_ADDR")
-	setFromEnvironment(&config.Token, "OMNISAVE_TOKEN")
 	setFromEnvironment(&config.DBPath, "OMNISAVE_DB_PATH")
 	setFromEnvironment(&config.ArtifactDir, "OMNISAVE_ARTIFACT_DIR")
 	setFromEnvironment(&config.WebDir, "OMNISAVE_WEB_DIR")
+	setFromEnvironment(&config.Hasheous.BaseURL, "OMNISAVE_HASHEOUS_BASE_URL")
+	setFromEnvironment(&config.Hasheous.Timeout, "OMNISAVE_HASHEOUS_TIMEOUT")
 	setFromEnvironment(&config.IGDB.ClientID, "OMNISAVE_IGDB_CLIENT_ID")
 	setFromEnvironment(&config.IGDB.ClientSecret, "OMNISAVE_IGDB_CLIENT_SECRET")
+	setFromEnvironment(&config.IGDB.BaseURL, "OMNISAVE_IGDB_BASE_URL")
+	setFromEnvironment(&config.IGDB.TokenURL, "OMNISAVE_IGDB_TOKEN_URL")
+	setFromEnvironment(&config.IGDB.ImageBaseURL, "OMNISAVE_IGDB_IMAGE_BASE_URL")
+	setFromEnvironment(&config.IGDB.Timeout, "OMNISAVE_IGDB_TIMEOUT")
+	setFromEnvironment(&config.IGDB.SearchCacheTTL, "OMNISAVE_IGDB_SEARCH_CACHE_TTL")
 }
 
 func setFromEnvironment(destination *string, name string) {
@@ -118,19 +96,20 @@ func setFromEnvironment(destination *string, name string) {
 	}
 }
 
-func configuredToken(fallback string) (string, error) {
+func configuredToken() (string, error) {
+	token := strings.TrimSpace(os.Getenv("OMNISAVE_TOKEN"))
 	path := os.Getenv("OMNISAVE_TOKEN_FILE")
 	if path == "" {
-		return strings.TrimSpace(fallback), nil
+		return token, nil
 	}
-	if os.Getenv("OMNISAVE_TOKEN") != "" {
+	if token != "" {
 		return "", errors.New("set only one of OMNISAVE_TOKEN and OMNISAVE_TOKEN_FILE")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read token file: %w", err)
 	}
-	token := strings.TrimSpace(string(data))
+	token = strings.TrimSpace(string(data))
 	if token == "" {
 		return "", errors.New("token file must not be empty")
 	}
