@@ -21,7 +21,10 @@ import (
 )
 
 func main() {
-	config, err := loadConfig(os.Args[1:])
+	if len(os.Args) > 1 {
+		log.Fatal("usage: omnisave-server")
+	}
+	config, err := loadConfig()
 	if err != nil {
 		log.Fatal(err)
 	}
