@@ -22,7 +22,7 @@ WORKDIR /app
 COPY --from=server-builder /omnisave-server .
 COPY --from=web-builder /src/web/dist /app/web
 
-VOLUME ["/config", "/data"]
+VOLUME ["/data"]
 EXPOSE 8080
 
-ENTRYPOINT ["/app/omnisave-server", "/config/server.yaml"]
+ENTRYPOINT ["/app/omnisave-server"]

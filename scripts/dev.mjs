@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Self-configuring dev entry: `pnpm dev` works in any checkout, including a
 // fresh git worktree running beside the main tree. Missing dependencies are
-// installed, a missing server.yaml is derived from the main checkout's config
+// installed, a missing .env is derived from the main checkout's environment
 // on a free port (fresh empty database, inherited token and credentials), and
 // the dash proxy follows the server port automatically.
 import { execFileSync, spawn } from 'node:child_process';
@@ -37,48 +37,59 @@ async function nextFreePort(from) {
   throw new Error(`no free port found between ${from} and ${from + 99}`);
 }
 
-function configField(yaml, field) {
-  return yaml.match(new RegExp(`^${field}:\\s*(\\S+)`, 'm'))?.[1] ?? '';
+function environmentField(environment, name) {
+  const value = environment.match(new RegExp(`^${name}=(.*)$`, 'm'))?.[1].trim() ?? '';
+  return value.replace(/^(['"])(.*)\1$/, '$2');
 }
 
-function configPort(yaml) {
-  const address = configField(yaml, 'listen_addr');
+function environmentPort(environment) {
+  const address = environmentField(environment, 'OMNISAVE_LISTEN_ADDR');
   const port = Number(address.split(':').pop());
   return Number.isInteger(port) ? port : 8080;
 }
 
-async function ensureServerConfig() {
-  const configPath = path.join(root, 'server.yaml');
-  if (existsSync(configPath)) return;
+function setEnvironmentField(environment, name, value) {
+  const assignment = `${name}=${value}`;
+  const pattern = new RegExp(`^${name}=.*$`, 'm');
+  if (pattern.test(environment)) return environment.replace(pattern, assignment);
+  return `${environment.trimEnd()}\n${assignment}\n`;
+}
+
+async function ensureServerEnvironment() {
+  const environmentPath = path.join(root, '.env');
+  if (existsSync(environmentPath)) return environmentPath;
 
   const mainDir = mainCheckoutDir();
-  const mainConfig = path.join(mainDir, 'server.yaml');
-  const source = mainDir !== root && existsSync(mainConfig) ? mainConfig : 'server.yaml.example';
-  let yaml = readFileSync(path.resolve(root, source), 'utf8');
+  const mainEnvironment = path.join(mainDir, '.env');
+  const exampleEnvironment = path.join(root, '.env.example');
+  const source =
+    mainDir !== root && existsSync(mainEnvironment) ? mainEnvironment : exampleEnvironment;
+  let environment = readFileSync(source, 'utf8');
 
-  const port = await nextFreePort(configPort(yaml) + (source === 'server.yaml.example' ? 0 : 1));
-  yaml = yaml.replace(/^listen_addr:.*$/m, `listen_addr: :${port}`);
-  if (configField(yaml, 'token') === 'replace-with-a-secure-token') {
-    yaml = yaml.replace(/^token:.*$/m, `token: ${randomBytes(32).toString('hex')}`);
+  const inherited = source === mainEnvironment;
+  const port = await nextFreePort(environmentPort(environment) + (inherited ? 1 : 0));
+  environment = setEnvironmentField(environment, 'OMNISAVE_LISTEN_ADDR', `:${port}`);
+  if (environmentField(environment, 'OMNISAVE_TOKEN') === '') {
+    environment = setEnvironmentField(environment, 'OMNISAVE_TOKEN', randomBytes(32).toString('hex'));
   }
-  writeFileSync(configPath, yaml);
-  console.log(`created server.yaml from ${source} on port ${port}`);
+  writeFileSync(environmentPath, environment);
+  console.log(`created .env from ${path.basename(source)} on port ${port}`);
+  return environmentPath;
 }
 
 if (!existsSync(path.join(root, 'node_modules', 'concurrently'))) {
   console.log('installing dependencies…');
   execFileSync('pnpm', ['install'], { cwd: root, stdio: 'inherit' });
 }
-await ensureServerConfig();
+const environmentPath = await ensureServerEnvironment();
+process.loadEnvFile(environmentPath);
 
-const config = readFileSync(path.join(root, 'server.yaml'), 'utf8');
-const port = configPort(config);
+const port = Number(process.env.OMNISAVE_LISTEN_ADDR?.split(':').pop()) || 8080;
 const serverURL = `http://localhost:${port}`;
 
 const dim = (text) => `\x1b[2m${text}\x1b[0m`;
 console.log(`omnisave dev — ${path.basename(root)}`);
 console.log(dim(`  server  ${serverURL}`));
-console.log(dim(`  token   ${configField(config, 'token')}`));
 console.log(dim('  dash    URL printed by vite below'));
 console.log();
 

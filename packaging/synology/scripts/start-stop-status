@@ -2,7 +2,7 @@
 
 PACKAGE="Omnisave"
 BINARY="/var/packages/${PACKAGE}/target/bin/omnisave-server"
-CONFIG="/var/packages/${PACKAGE}/etc/server.yaml"
+ENVIRONMENT="/var/packages/${PACKAGE}/etc/server.env"
 PIDFILE="/var/packages/${PACKAGE}/var/omnisave.pid"
 LOGFILE="/var/log/${PACKAGE}.log"
 
@@ -12,13 +12,17 @@ start() {
         exit 0
     fi
 
-    if [ ! -f "${CONFIG}" ]; then
-        echo "Config not found at ${CONFIG}. Please create it before starting."
+    if [ ! -f "${ENVIRONMENT}" ]; then
+        echo "Environment not found at ${ENVIRONMENT}. Please create it before starting."
         exit 1
     fi
 
     mkdir -p "$(dirname "${PIDFILE}")"
-    "${BINARY}" "${CONFIG}" >> "${LOGFILE}" 2>&1 &
+    set -a
+    # The package owns this file; exporting it gives the server its only config contract.
+    . "${ENVIRONMENT}"
+    set +a
+    "${BINARY}" >> "${LOGFILE}" 2>&1 &
     echo $! > "${PIDFILE}"
     echo "${PACKAGE} started (PID $(cat "${PIDFILE}"))."
 }
