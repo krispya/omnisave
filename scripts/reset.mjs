@@ -3,19 +3,15 @@
 // client's local state so the next `pnpm dev` and client run start from
 // nothing. Refuses to run while the dev server is listening — deleting the
 // database under a live server corrupts it.
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
 const root = process.cwd();
 
-function configField(yaml, field) {
-  return yaml.match(new RegExp(`^${field}:\\s*(\\S+)`, 'm'))?.[1] ?? '';
-}
-
-function configPort(yaml) {
-  const address = configField(yaml, 'listen_addr');
+function environmentPort() {
+  const address = process.env.OMNISAVE_LISTEN_ADDR ?? '';
   const port = Number(address.split(':').pop());
   return Number.isInteger(port) ? port : 8080;
 }
@@ -50,13 +46,15 @@ function remove(target, label) {
 
 const dim = (text) => `\x1b[2m${text}\x1b[0m`;
 
-const configPath = path.join(root, 'server.yaml');
-const yaml = existsSync(configPath) ? readFileSync(configPath, 'utf8') : '';
-const dbPath = path.resolve(root, configField(yaml, 'db_path') || './omnisave.db');
-const artifactDir = path.resolve(root, configField(yaml, 'artifact_dir') || './artifacts');
+const environmentPath = path.join(root, '.env');
+if (existsSync(environmentPath)) {
+  process.loadEnvFile(environmentPath);
+}
+const dbPath = path.resolve(root, process.env.OMNISAVE_DB_PATH || './omnisave.db');
+const artifactDir = path.resolve(root, process.env.OMNISAVE_ARTIFACT_DIR || './artifacts');
 
-if (yaml && (await portInUse(configPort(yaml)))) {
-  console.error(`the dev server is running on port ${configPort(yaml)} — stop it first (pnpm dev)`);
+if (await portInUse(environmentPort())) {
+  console.error(`the dev server is running on port ${environmentPort()} — stop it first (pnpm dev)`);
   process.exit(1);
 }
 

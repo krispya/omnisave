@@ -4,7 +4,22 @@ services:
     container_name: omnisave
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - '${OMNISAVE_PORT:-8080}:8080'
+    environment:
+      OMNISAVE_LISTEN_ADDR: :8080
+      OMNISAVE_TOKEN: ${OMNISAVE_TOKEN:?set OMNISAVE_TOKEN in .env}
+      OMNISAVE_DB_PATH: /data/omnisave.db
+      OMNISAVE_ARTIFACT_DIR: /data/artifacts
+      OMNISAVE_WEB_DIR: /app/web
+      OMNISAVE_HASHEOUS_BASE_URL: ${OMNISAVE_HASHEOUS_BASE_URL:-https://hasheous.org}
+      OMNISAVE_HASHEOUS_TIMEOUT: ${OMNISAVE_HASHEOUS_TIMEOUT:-15s}
+      OMNISAVE_IGDB_CLIENT_ID: ${OMNISAVE_IGDB_CLIENT_ID:-}
+      OMNISAVE_IGDB_CLIENT_SECRET: ${OMNISAVE_IGDB_CLIENT_SECRET:-}
+      OMNISAVE_IGDB_BASE_URL: ${OMNISAVE_IGDB_BASE_URL:-https://api.igdb.com/v4}
+      OMNISAVE_IGDB_TOKEN_URL: ${OMNISAVE_IGDB_TOKEN_URL:-https://id.twitch.tv/oauth2/token}
+      OMNISAVE_IGDB_IMAGE_BASE_URL: ${OMNISAVE_IGDB_IMAGE_BASE_URL:-https://images.igdb.com/igdb/image/upload}
+      OMNISAVE_IGDB_TIMEOUT: ${OMNISAVE_IGDB_TIMEOUT:-15s}
+      OMNISAVE_IGDB_REQUESTS_PER_SECOND: ${OMNISAVE_IGDB_REQUESTS_PER_SECOND:-4}
+      OMNISAVE_IGDB_SEARCH_CACHE_TTL: ${OMNISAVE_IGDB_SEARCH_CACHE_TTL:-5m}
     volumes:
-      - /volume1/omnisave/config:/config
       - /volume1/omnisave/data:/data

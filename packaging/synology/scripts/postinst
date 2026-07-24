@@ -3,26 +3,26 @@
 
 PACKAGE="Omnisave"
 ETC_DIR="/var/packages/${PACKAGE}/etc"
-CONFIG="${ETC_DIR}/server.yaml"
+ENVIRONMENT="${ETC_DIR}/server.env"
 
 mkdir -p "${ETC_DIR}"
 mkdir -p "/volume1/omnisave/data/artifacts"
 
-# Write a default config if one doesn't already exist.
-if [ ! -f "${CONFIG}" ]; then
-    cat > "${CONFIG}" << 'EOF'
-listen_addr: :8080
-token: CHANGE_ME
-db_path: /volume1/omnisave/data/omnisave.db
-artifact_dir: /volume1/omnisave/data/artifacts
-web_dir: /var/packages/Omnisave/target/web
+# Write the package's exported environment if it does not already exist.
+if [ ! -f "${ENVIRONMENT}" ]; then
+    TOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+    umask 077
+    cat > "${ENVIRONMENT}" << EOF
+OMNISAVE_LISTEN_ADDR=:8080
+OMNISAVE_TOKEN=${TOKEN}
+OMNISAVE_DB_PATH=/volume1/omnisave/data/omnisave.db
+OMNISAVE_ARTIFACT_DIR=/volume1/omnisave/data/artifacts
+OMNISAVE_WEB_DIR=/var/packages/Omnisave/target/web
 EOF
     echo ""
     echo "================================================"
-    echo " Omnisave: default config written to:"
-    echo "   ${CONFIG}"
-    echo ""
-    echo " Edit it and set a strong 'token' before starting."
+    echo " Omnisave environment written to:"
+    echo "   ${ENVIRONMENT}"
     echo "================================================"
 fi
 

@@ -12,10 +12,8 @@ dist
 # Go test and coverage outputs
 *.test
 coverage.out
-server.yaml
 
 # Local server data and secrets
-/config/server.local.yaml
 /omnisave.db
 /omnisave.db-*
 /artifacts/
