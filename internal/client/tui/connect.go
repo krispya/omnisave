@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -50,8 +51,53 @@ func connectSuccessLines(url, deviceName string) []string {
 	}
 }
 
-// ConnectFailed reports a connection attempt that changed nothing.
+// ConnectFailed reports a connection attempt that changed nothing, in the
+// shape its success prints: the glyph, the state, then the cause.
 func ConnectFailed(err error) {
-	fmt.Println(errorStyle.Render("✗") + " could not connect  " +
-		mutedStyle.Render(strings.TrimSpace(err.Error())))
+	fmt.Println(errorStyle.Render("✗") + " Could not connect  " + mutedStyle.Render(Cause(err)))
+}
+
+// ServerUnreachable reports a command that stopped before doing any work
+// because its server never answered.
+func ServerUnreachable(serverURL string, err error) {
+	fmt.Println(serverUnreachableLine(serverURL, err))
+}
+
+func serverUnreachableLine(serverURL string, err error) string {
+	return FailureLine("cannot reach the Omnisave server at " + serverURL + " — " + Cause(err))
+}
+
+// ServerRejectedToken reports a saved connection the server no longer
+// accepts — the one connection failure waiting will not fix.
+func ServerRejectedToken(serverURL string) {
+	fmt.Println(serverRejectedTokenLine(serverURL))
+}
+
+func serverRejectedTokenLine(serverURL string) string {
+	return FailureLine("the Omnisave server at " + serverURL +
+		" rejected this token; run omnisave-client connect")
+}
+
+// Cause reduces a failed request to the part worth reading: the line already
+// names the server, so "connection refused" is the rest.
+func Cause(err error) string {
+	if err == nil {
+		return "no response"
+	}
+	var timeout net.Error
+	if errors.As(err, &timeout) && timeout.Timeout() {
+		return "the request timed out"
+	}
+	deepest := err
+	for {
+		unwrapped := errors.Unwrap(deepest)
+		if unwrapped == nil {
+			break
+		}
+		deepest = unwrapped
+	}
+	if cause := strings.TrimSpace(deepest.Error()); cause != "" {
+		return cause
+	}
+	return strings.TrimSpace(err.Error())
 }

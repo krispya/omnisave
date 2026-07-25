@@ -260,7 +260,7 @@ func (r *TrackReport) Snapshot() ReportSnapshot {
 func ComposeReport(snapshot ReportSnapshot, now time.Time) []string {
 	var lines []string
 	for _, sentence := range snapshot.General {
-		lines = append(lines, "  "+errorStyle.Render("✗")+" "+mutedStyle.Render(sentence))
+		lines = append(lines, FailureLine(sentence))
 	}
 	width := 0
 	for _, game := range snapshot.Games {
@@ -375,6 +375,13 @@ func SummaryLine(outcome TrackOutcome) string {
 	}
 	segments = append(segments, mutedStyle.Render(tracked))
 	return "  " + strings.Join(segments, mutedStyle.Render(" · "))
+}
+
+// FailureLine renders a run-wide failure: one glyph and one dim sentence,
+// indented to the report's column so a failure before the pass and one
+// during it read alike.
+func FailureLine(sentence string) string {
+	return "  " + errorStyle.Render("✗") + " " + mutedStyle.Render(capitalized(sentence))
 }
 
 func withCanonical(sentence, title, canonical string) string {
