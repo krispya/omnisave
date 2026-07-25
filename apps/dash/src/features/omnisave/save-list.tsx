@@ -100,11 +100,16 @@ export function SaveList({
         return (
           <div
             key={save.id}
-            className={`group overflow-hidden rounded-md border bg-[#1a1a1a] transition ${
+            // Never clip the card: the options menu opens upward, past its top edge.
+            className={`group rounded-md border bg-[#1a1a1a] transition ${
               selected ? 'border-[#e5a00d]' : 'border-white/5'
             }`}
           >
-            <div className="relative transition hover:bg-[#202020]">
+            <div
+              className={`relative transition hover:bg-[#202020] ${
+                expanded ? 'rounded-t-md' : 'rounded-md'
+              }`}
+            >
               <button
                 type="button"
                 aria-expanded={expanded}
@@ -112,7 +117,9 @@ export function SaveList({
                 onPointerEnter={() => onPrefetchSave(save)}
                 onFocus={() => onPrefetchSave(save)}
                 onClick={() => onToggleSave(save)}
-                className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-[#e5a00d]"
+                className={`absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-[#e5a00d] ${
+                  expanded ? 'rounded-t-md' : 'rounded-md'
+                }`}
               />
               <div className="pointer-events-none relative z-10 grid grid-cols-[2.25rem_minmax(0,1fr)_auto_1rem_2rem] items-center gap-4 p-3.5">
                 <div className="grid size-9 shrink-0 place-items-center rounded bg-white/5 text-[#e5a00d]">
@@ -156,7 +163,7 @@ export function SaveList({
             </div>
 
             {expanded ? (
-              <div className="border-t border-white/5 bg-[#151515] px-3.5 py-3">
+              <div className="rounded-b-md border-t border-white/5 bg-[#151515] px-3.5 py-3">
                 <RevisionLog
                   save={save}
                   saves={saves}
