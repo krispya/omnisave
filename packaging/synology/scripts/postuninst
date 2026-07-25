@@ -1,0 +1,6 @@
+#!/bin/sh
+
+# DSM removes only target and tmp on uninstall, so the package's etc and var
+# directories survive and uninstalling does not destroy the user's save
+# history. Removing them here would make that destruction silent instead.
+exit 0
