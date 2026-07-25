@@ -29,7 +29,8 @@ type GameDetailProps = {
   selectedSave?: Omnisave;
   /** Reports what the last revision action did, alongside anything loading turns up. */
   revisionError: string;
-  onSelectSave: (save: Omnisave) => void;
+  /** Selecting a save opens its history; selecting none closes it. */
+  onSelectSave: (save?: Omnisave) => void;
   onDownloadSave: (save: Omnisave, name: string) => void;
   onDownloadRevision: (save: Omnisave, name: string, revision: Revision) => void;
   onRequestDelete: (save: Omnisave, name: string) => void;
@@ -50,9 +51,6 @@ export function GameDetail({
   // Flat lists the save slots, one opening its own history; tree graphs them all.
   const [view, setView] = useState<'flat' | 'tree'>('flat');
   const [detailsOpen, setDetailsOpen] = useState(false);
-  // Saves start closed, so the list stays a list until someone asks for a history. Only
-  // the selected save may be open, since its history is the one the dashboard loads.
-  const [expandedSaveID, setExpandedSaveID] = useState('');
   // Set only when a fork edge was followed, so the log can reveal where it landed.
   const [focus, setFocus] = useState<RevisionFocus>();
   const history = useSaveRevisions(token, selectedSave);
@@ -65,18 +63,16 @@ export function GameDetail({
     genres.length > 0 ? genres.join(', ') : undefined,
   ].filter((fact): fact is string => Boolean(fact));
 
-  // Opening a save closes whichever was open, and always makes it the save that the
-  // Debug menu and the revision fetch are pointed at.
+  // The open save is the selected one, so opening a save closes whichever was open and
+  // becomes what the Debug menu and the revision fetch are pointed at.
   function toggleSave(save: Omnisave) {
     setFocus(undefined);
-    setExpandedSaveID(save.id === expandedSaveID ? '' : save.id);
-    onSelectSave(save);
+    onSelectSave(save.id === selectedSave?.id ? undefined : save);
   }
 
   // Following a fork edge, from either view, opens the save it leads to on that revision.
   function openSaveAtRevision(save: Omnisave, revisionID?: string) {
     setFocus({ saveID: save.id, revisionID });
-    setExpandedSaveID(save.id);
     onSelectSave(save);
   }
 
@@ -188,7 +184,7 @@ export function GameDetail({
           <SaveList
             saves={game.saves}
             selectedSave={selectedSave}
-            expandedSaveID={expandedSaveID === selectedSave?.id ? expandedSaveID : ''}
+            expandedSaveID={selectedSave?.id ?? ''}
             revisions={history.revisions}
             loadingRevisions={history.loading}
             revisionError={revisionError || history.error}

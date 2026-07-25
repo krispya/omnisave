@@ -1,18 +1,17 @@
 import { OptionsMenu } from '../../components/options-menu.js';
+import { RouteLink } from '../../components/route-link.js';
 import { GameArtwork } from '../game/game-artwork.js';
 import type { GameSummary } from '../game/game-summary.js';
 
 export function GameLibrary({
   games,
   token,
-  onOpenGame,
   onRequestFixMatch,
   onRequestDeleteSaves,
   onRequestDeleteGame,
 }: {
   games: GameSummary[];
   token: string;
-  onOpenGame: (game: GameSummary) => void;
   onRequestFixMatch: (game: GameSummary) => void;
   onRequestDeleteSaves: (game: GameSummary) => void;
   onRequestDeleteGame: (game: GameSummary) => void;
@@ -35,7 +34,6 @@ export function GameLibrary({
           key={game.id}
           game={game}
           token={token}
-          onOpenGame={onOpenGame}
           onRequestFixMatch={onRequestFixMatch}
           onRequestDeleteSaves={onRequestDeleteSaves}
           onRequestDeleteGame={onRequestDeleteGame}
@@ -48,30 +46,30 @@ export function GameLibrary({
 function GameCard({
   game,
   token,
-  onOpenGame,
   onRequestFixMatch,
   onRequestDeleteSaves,
   onRequestDeleteGame,
 }: {
   game: GameSummary;
   token: string;
-  onOpenGame: (game: GameSummary) => void;
   onRequestFixMatch: (game: GameSummary) => void;
   onRequestDeleteSaves: (game: GameSummary) => void;
   onRequestDeleteGame: (game: GameSummary) => void;
 }) {
   const saveCount = game.saves.length;
+  const gameRoute = { name: 'game', gameID: game.id } as const;
 
   return (
     <article className="group min-w-0">
       <div className="relative">
-        <button type="button" onClick={() => onOpenGame(game)} className="block w-full">
+        {/* The title below is the same link, named; this one is here for the pointer. */}
+        <RouteLink to={gameRoute} aria-hidden="true" tabIndex={-1} className="block w-full">
           <GameArtwork
             game={game}
             token={token}
             className="aspect-[3/4] w-full shadow-md shadow-black/30 ring-1 ring-white/10 transition duration-150 group-hover:scale-[1.02] group-hover:shadow-xl group-hover:shadow-black/50 group-hover:ring-[#e5a00d]"
           />
-        </button>
+        </RouteLink>
         {saveCount > 0 ? (
           <span
             className="absolute -top-1.5 -right-1.5 z-10 grid h-6 min-w-6 place-items-center rounded-md bg-[#e5a00d] px-1.5 text-xs font-bold text-black shadow-lg shadow-black/40"
@@ -89,14 +87,14 @@ function GameCard({
           onDeleteGame={game.inLibrary ? () => onRequestDeleteGame(game) : undefined}
         />
       </div>
-      <button type="button" onClick={() => onOpenGame(game)} className="block w-full text-left">
+      <RouteLink to={gameRoute} className="block w-full text-left">
         <h2 className="mt-2.5 truncate text-[13px] font-medium text-neutral-200 group-hover:text-white">
           {game.label}
         </h2>
         <p className="mt-1 text-xs text-slate-500">
           {saveCount === 0 ? 'No saves yet' : `${saveCount} ${saveCount === 1 ? 'save' : 'saves'}`}
         </p>
-      </button>
+      </RouteLink>
     </article>
   );
 }
