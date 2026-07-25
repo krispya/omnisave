@@ -36,15 +36,15 @@ test:
 
 # ── OCI image ─────────────────────────────────────────────────────────────────
 
-oci-build docker-build:
+build-oci:
 	docker build -f Containerfile -t $(OCI_IMAGE):$(VERSION) -t $(OCI_IMAGE):latest .
 
-oci-push:
+push-oci:
 	docker buildx build -f Containerfile --platform $(OCI_PLATFORMS) \
 		-t $(OCI_IMAGE):$(VERSION) -t $(OCI_IMAGE):latest --push .
 
 # Export image as a .tar file for manual import into Synology Container Manager.
-docker-export: oci-build
+export-oci: build-oci
 	mkdir -p dist
 	docker save $(OCI_IMAGE):$(VERSION) | gzip > dist/omnisave-$(VERSION)-oci.tar.gz
 	@echo "Image saved to dist/omnisave-$(VERSION)-oci.tar.gz"
@@ -52,17 +52,16 @@ docker-export: oci-build
 
 # ── Synology SPK ──────────────────────────────────────────────────────────────
 
-package-spk: build-web package-spk-x86_64 package-spk-armv8
+build-spk: build-web build-spk-x86_64 build-spk-armv8
 	./scripts/verify-synology-spk.sh \
 		dist/omnisave-$(VERSION)-$(SPK_BUILD)-x86_64.spk \
 		dist/omnisave-$(VERSION)-$(SPK_BUILD)-armv8.spk
 
-package-spk-x86_64: build-web
+build-spk-x86_64: build-web
 	VERSION=$(VERSION) SPK_BUILD=$(SPK_BUILD) SPK_ARCH=x86_64 ./scripts/package-synology.sh
 
-package-spk-armv8: build-web
+build-spk-armv8: build-web
 	VERSION=$(VERSION) SPK_BUILD=$(SPK_BUILD) SPK_ARCH=armv8 ./scripts/package-synology.sh
 
 .PHONY: install build-web build-server build-client build-all test \
-		oci-build oci-push docker-build docker-export package-spk \
-		package-spk-x86_64 package-spk-armv8
+		build-oci push-oci export-oci build-spk build-spk-x86_64 build-spk-armv8
