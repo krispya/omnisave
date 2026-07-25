@@ -1,10 +1,16 @@
 #!/bin/sh
 
-PACKAGE="Omnisave"
-BINARY="/var/packages/${PACKAGE}/target/bin/omnisave-server"
-ENVIRONMENT="/var/packages/${PACKAGE}/etc/server.env"
-PIDFILE="/var/packages/${PACKAGE}/var/omnisave.pid"
-LOGFILE="/var/log/${PACKAGE}.log"
+PACKAGE="${SYNOPKG_PKGNAME:-omnisave}"
+PACKAGE_ROOT="/var/packages/${PACKAGE}"
+
+# The /var/packages symlinks stay correct after the package is moved to another
+# volume; SYNOPKG_PKGVAR and SYNOPKG_PKGDEST resolve to the volume-specific
+# @appdata and @appstore paths, which do not.
+VAR_DIR="${PACKAGE_ROOT}/var"
+BINARY="${PACKAGE_ROOT}/target/bin/omnisave-server"
+ENVIRONMENT="${PACKAGE_ROOT}/etc/server.env"
+PIDFILE="${VAR_DIR}/omnisave.pid"
+LOGFILE="${VAR_DIR}/omnisave.log"
 
 start() {
     if [ -f "${PIDFILE}" ] && kill -0 "$(cat "${PIDFILE}")" 2>/dev/null; then
@@ -17,14 +23,29 @@ start() {
         exit 1
     fi
 
-    mkdir -p "$(dirname "${PIDFILE}")"
+    mkdir -p "${VAR_DIR}"
     set -a
     # The package owns this file; exporting it gives the server its only config contract.
     . "${ENVIRONMENT}"
     set +a
     "${BINARY}" >> "${LOGFILE}" 2>&1 &
-    echo $! > "${PIDFILE}"
-    echo "${PACKAGE} started (PID $(cat "${PIDFILE}"))."
+    PID=$!
+    echo "${PID}" > "${PIDFILE}"
+
+    # The server reads its configuration, opens the database, runs migrations,
+    # and only then binds its listener, exiting non-zero if any step fails.
+    # Watch for a few seconds so those failures are reported instead of leaving
+    # a PID file that makes a dead package look started.
+    elapsed=0
+    while [ "${elapsed}" -lt 3 ]; do
+        sleep 1
+        if ! kill -0 "${PID}" 2>/dev/null; then
+            rm -f "${PIDFILE}"
+            echo "${PACKAGE} failed to start. See ${LOGFILE}." > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
+            exit 1
+        fi
+        elapsed=$((elapsed + 1))
+    done
 }
 
 stop() {
@@ -33,8 +54,20 @@ stop() {
         exit 0
     fi
     PID="$(cat "${PIDFILE}")"
-    kill "${PID}" 2>/dev/null && rm -f "${PIDFILE}"
-    echo "${PACKAGE} stopped."
+    if ! kill -0 "${PID}" 2>/dev/null; then
+        rm -f "${PIDFILE}"
+        exit 0
+    fi
+    kill "${PID}" 2>/dev/null || true
+    elapsed=0
+    while kill -0 "${PID}" 2>/dev/null && [ "${elapsed}" -lt 15 ]; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    if kill -0 "${PID}" 2>/dev/null; then
+        kill -9 "${PID}" 2>/dev/null || true
+    fi
+    rm -f "${PIDFILE}"
 }
 
 status() {
@@ -42,8 +75,10 @@ status() {
         echo "${PACKAGE} is running (PID $(cat "${PIDFILE}"))."
         exit 0
     else
-        echo "${PACKAGE} is not running."
-        exit 1
+        if [ -f "${PIDFILE}" ]; then
+            exit 1
+        fi
+        exit 3
     fi
 }
 

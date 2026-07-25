@@ -1,29 +1,38 @@
 #!/bin/sh
 # postinst — runs after package files are extracted.
 
-PACKAGE="Omnisave"
-ETC_DIR="/var/packages/${PACKAGE}/etc"
+PACKAGE="${SYNOPKG_PKGNAME:-omnisave}"
+PACKAGE_ROOT="/var/packages/${PACKAGE}"
+
+# Paths below are written into a file the server reads on every later start, so
+# they use the stable /var/packages symlinks rather than SYNOPKG_PKGVAR and
+# SYNOPKG_PKGDEST. Those variables resolve to volume-specific @appdata and
+# @appstore paths, which change when the package is moved to another volume.
+ETC_DIR="${PACKAGE_ROOT}/etc"
+VAR_DIR="${PACKAGE_ROOT}/var"
 ENVIRONMENT="${ETC_DIR}/server.env"
 
-mkdir -p "${ETC_DIR}"
-mkdir -p "/volume1/omnisave/data/artifacts"
+mkdir -p "${ETC_DIR}" "${VAR_DIR}/artifacts"
 
-# Write the package's exported environment if it does not already exist.
+# preinst has already validated the wizard's token.
 if [ ! -f "${ENVIRONMENT}" ]; then
-    TOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
     umask 077
     cat > "${ENVIRONMENT}" << EOF
 OMNISAVE_LISTEN_ADDR=:8080
-OMNISAVE_TOKEN=${TOKEN}
-OMNISAVE_DB_PATH=/volume1/omnisave/data/omnisave.db
-OMNISAVE_ARTIFACT_DIR=/volume1/omnisave/data/artifacts
-OMNISAVE_WEB_DIR=/var/packages/Omnisave/target/web
+OMNISAVE_TOKEN=${wizard_token}
+OMNISAVE_DB_PATH=${VAR_DIR}/omnisave.db
+OMNISAVE_ARTIFACT_DIR=${VAR_DIR}/artifacts
+OMNISAVE_WEB_DIR=${PACKAGE_ROOT}/target/web
 EOF
-    echo ""
-    echo "================================================"
-    echo " Omnisave environment written to:"
-    echo "   ${ENVIRONMENT}"
-    echo "================================================"
+elif [ "${SYNOPKG_PKG_STATUS:-}" = "INSTALL" ] && [ -n "${wizard_token:-}" ]; then
+    # DSM keeps etc across an uninstall, so a reinstall finds the previous
+    # installation's file. Apply the token the wizard just collected instead of
+    # discarding it, and keep every other setting the operator may have edited.
+    umask 077
+    grep -v '^OMNISAVE_TOKEN=' "${ENVIRONMENT}" > "${ENVIRONMENT}.new"
+    echo "OMNISAVE_TOKEN=${wizard_token}" >> "${ENVIRONMENT}.new"
+    mv "${ENVIRONMENT}.new" "${ENVIRONMENT}"
+    echo "Omnisave kept the configuration from a previous installation and applied the new API token." > "${SYNOPKG_TEMP_LOGFILE}"
 fi
 
 exit 0
