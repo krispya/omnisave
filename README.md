@@ -50,7 +50,7 @@ catalog provider settings `compose.yaml` passes through.
 Publish a release image with Docker Buildx:
 
 ```sh
-make oci-push VERSION=0.1.0
+make push-oci VERSION=0.1.0
 ```
 
 This publishes `linux/amd64` and `linux/arm64` manifests by default. Override
