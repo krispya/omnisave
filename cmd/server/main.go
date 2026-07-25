@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -91,7 +94,7 @@ func runServer(ctx context.Context, config serverConfig) error {
 	mux := http.NewServeMux()
 	registerHealthRoutes(mux)
 	mux.Handle("/api/v1/", httpapi.BearerAuth(config.Token, httpapi.New(saves, games)))
-	mux.Handle("/", http.FileServer(http.Dir(config.WebDir)))
+	mux.Handle("/", dashHandler(config.WebDir))
 	server := &http.Server{
 		Addr:              config.ListenAddr,
 		Handler:           mux,
@@ -104,6 +107,35 @@ func runServer(ctx context.Context, config serverConfig) error {
 		return fmt.Errorf("server: %w", err)
 	}
 	return nil
+}
+
+// dashHandler serves the built Dash, answering its own routes with index.html so a
+// link to one of them survives a reload. Only extensionless paths fall back: a missing
+// asset must stay a 404 rather than become an HTML document with the wrong media type.
+func dashHandler(webDir string) http.Handler {
+	files := http.FileServer(http.Dir(webDir))
+	index := filepath.Join(webDir, "index.html")
+
+	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if dashRouteRequest(webDir, request) {
+			http.ServeFile(response, request, index)
+			return
+		}
+		files.ServeHTTP(response, request)
+	})
+}
+
+func dashRouteRequest(webDir string, request *http.Request) bool {
+	if request.Method != http.MethodGet && request.Method != http.MethodHead {
+		return false
+	}
+	path := path.Clean(request.URL.Path)
+	if path == "/" || filepath.Ext(path) != "" {
+		return false
+	}
+	// A path that names something on disk is that thing, not a route.
+	_, err := os.Stat(filepath.Join(webDir, filepath.FromSlash(path)))
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 func registerHealthRoutes(mux *http.ServeMux) {

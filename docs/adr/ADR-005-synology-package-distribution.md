@@ -6,8 +6,8 @@
 
 Synology NAS owners can run the OCI image through Container Manager, but some
 expect Package Center to own installation, service lifecycle, upgrades, and
-access to the Dashboard. Omnisave's server is one statically linked Go process
-serving one Dashboard, so a native package does not need a language runtime,
+access to the Dash. Omnisave's server is one statically linked Go process
+serving one Dash, so a native package does not need a language runtime,
 an external database, or a separate web server on the NAS.
 
 Native packaging must preserve the same server behavior as other deployments
@@ -15,7 +15,7 @@ while respecting DSM's package lifecycle and persistent-directory conventions.
 
 ## Decision
 
-Ship native DSM 7 SPKs containing the server and Dashboard for Synology
+Ship native DSM 7 SPKs containing the server and Dash for Synology
 `x86_64` and `armv8` package families.
 
 The package runs the server as DSM's unprivileged package user and registers
@@ -39,7 +39,7 @@ volumes.
 
 The package lifecycle scripts start, stop, and report the status of one server
 process. Stopping sends SIGTERM and allows up to 15 seconds for graceful HTTP
-shutdown before forcing termination. Upgrades replace the server and Dashboard
+shutdown before forcing termination. Upgrades replace the server and Dash
 payload without replacing configuration or durable state.
 
 ## Consequences
@@ -47,7 +47,7 @@ payload without replacing configuration or durable state.
 Easier:
 
 - Synology users get native installation, start, stop, upgrade, port
-  registration, and access to the Dashboard.
+  registration, and access to the Dash.
 - Configuration and durable state survive payload upgrades.
 - The pure-Go SQLite implementation cross-compiles without a Synology C
   toolchain.
