@@ -1,4 +1,5 @@
 VERSION ?= 0.1.0
+SPK_BUILD ?= 0001
 OCI_IMAGE ?= ghcr.io/krisbaumgartner/omnisave
 OCI_PLATFORMS ?= linux/amd64,linux/arm64
 TEST_GOALS = $(filter-out test,$(MAKECMDGOALS))
@@ -51,32 +52,17 @@ docker-export: oci-build
 
 # ── Synology SPK ──────────────────────────────────────────────────────────────
 
-package-spk: build-web build-server
-	$(eval SPK_STAGE := $(shell mktemp -d))
-	$(eval SPK_TARGET := $(SPK_STAGE)/target/bin)
-	mkdir -p $(SPK_TARGET)
+package-spk: build-web package-spk-x86_64 package-spk-armv8
+	./scripts/verify-synology-spk.sh \
+		dist/omnisave-$(VERSION)-$(SPK_BUILD)-x86_64.spk \
+		dist/omnisave-$(VERSION)-$(SPK_BUILD)-armv8.spk
 
-	# Binary
-	cp bin/omnisave-server $(SPK_TARGET)/omnisave-server
-	chmod +x $(SPK_TARGET)/omnisave-server
-	cp -r web/dist $(SPK_STAGE)/target/web
+package-spk-x86_64: build-web
+	VERSION=$(VERSION) SPK_BUILD=$(SPK_BUILD) SPK_ARCH=x86_64 ./scripts/package-synology.sh
 
-	# Inner package.tgz
-	tar -czf $(SPK_STAGE)/package.tgz -C $(SPK_STAGE) target
-
-	# INFO + scripts
-	cp packaging/synology/INFO $(SPK_STAGE)/INFO
-	cp -r packaging/synology/scripts $(SPK_STAGE)/scripts
-	chmod +x $(SPK_STAGE)/scripts/*
-
-	# Assemble .spk (uncompressed tar)
-	mkdir -p dist
-	tar -cf dist/omnisave-$(VERSION)-x86_64.spk \
-	    -C $(SPK_STAGE) INFO package.tgz scripts
-
-	rm -rf $(SPK_STAGE)
-	@echo "SPK written to dist/omnisave-$(VERSION)-x86_64.spk"
-	@echo "Install in DSM: Package Center → Manual Install"
+package-spk-armv8: build-web
+	VERSION=$(VERSION) SPK_BUILD=$(SPK_BUILD) SPK_ARCH=armv8 ./scripts/package-synology.sh
 
 .PHONY: install build-web build-server build-client build-all test \
-		oci-build oci-push docker-build docker-export package-spk
+		oci-build oci-push docker-build docker-export package-spk \
+		package-spk-x86_64 package-spk-armv8

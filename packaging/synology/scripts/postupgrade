@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# Configuration and save history live outside target and survive upgrades.
+exit 0
