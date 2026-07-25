@@ -16,7 +16,6 @@ import {
   downloadRevisionArchive,
   listGames,
   listOmnisaves,
-  listRevisions,
   HeadConflictError,
   updateOmnisaveDisplayName,
   type CatalogGame,
@@ -171,10 +170,8 @@ function LibraryDashboard({
 }: LibraryDashboardProps) {
   const snapshot = use(resource.promise);
   const { catalog, saves } = snapshot;
-  const [revisions, setRevisions] = useState<Revision[]>([]);
   const [error, setError] = useState('');
   const [revisionError, setRevisionError] = useState('');
-  const [loadingRevisions, setLoadingRevisions] = useState(false);
   const [debugAction, setDebugAction] = useState<'game' | 'save' | 'revision' | 'fork' | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
   const [deleting, setDeleting] = useState(false);
@@ -193,35 +190,8 @@ function LibraryDashboard({
 
   useEffect(() => onSnapshot(snapshot), [onSnapshot, snapshot]);
 
-  const loadRevisionHistory = useCallback(
-    async (activeToken: string, saveID: string, signal?: AbortSignal) => {
-      if (!activeToken || !saveID) return;
-
-      setLoadingRevisions(true);
-      setRevisionError('');
-      try {
-        setRevisions(await listRevisions(activeToken, saveID, signal));
-      } catch (loadError) {
-        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
-        setRevisionError(
-          loadError instanceof Error ? loadError.message : 'Could not load revisions.'
-        );
-      } finally {
-        setLoadingRevisions(false);
-      }
-    },
-    []
-  );
-
-  useEffect(() => {
-    setRevisions([]);
-    setRevisionError('');
-    if (!selectedSaveID) return;
-
-    const controller = new AbortController();
-    void loadRevisionHistory(token, selectedSaveID, controller.signal);
-    return () => controller.abort();
-  }, [loadRevisionHistory, selectedSaveID, token]);
+  // The save's history follows its head, so reloading the library is enough to refresh it.
+  useEffect(() => setRevisionError(''), [selectedSaveID]);
 
   useEffect(() => {
     if (selectedGameID && !games.some((game) => game.id === selectedGameID)) onCloseGame();
@@ -236,8 +206,7 @@ function LibraryDashboard({
   const refresh = useCallback(async () => {
     setError('');
     await onReload();
-    if (selectedSaveID) await loadRevisionHistory(token, selectedSaveID);
-  }, [loadRevisionHistory, onReload, selectedSaveID, token]);
+  }, [onReload]);
 
   useLibraryEvents({ token, onRefresh: refresh, onStatusChange: onEventStatusChange });
 
@@ -298,12 +267,8 @@ function LibraryDashboard({
     try {
       await createTestRevision(token, selectedSave.id, selectedSave.head_revision_id);
       await onReload();
-      await loadRevisionHistory(token, selectedSave.id);
     } catch (createError) {
-      if (createError instanceof HeadConflictError) {
-        await onReload();
-        await loadRevisionHistory(token, selectedSave.id);
-      }
+      if (createError instanceof HeadConflictError) await onReload();
       setRevisionError(
         createError instanceof HeadConflictError
           ? 'This save changed elsewhere. History was refreshed; fork it to preserve both versions.'
@@ -467,7 +432,6 @@ function LibraryDashboard({
           game={selectedGame}
           selectedSave={selectedSave}
           action={debugAction}
-          revisionHistoryAvailable={!loadingRevisions}
           canFork={Boolean(selectedSave?.head_revision_id)}
           onAddRandomGame={() => void addRandomGame()}
           onAddSave={() => void addSave()}
@@ -490,8 +454,6 @@ function LibraryDashboard({
           game={selectedGame}
           token={token}
           selectedSave={selectedSave}
-          revisions={revisions}
-          loadingRevisions={loadingRevisions}
           revisionError={revisionError}
           onSelectSave={(save) => onSelectSaveID(save.id)}
           onDownloadSave={(save, name) => void downloadSave(save, name)}

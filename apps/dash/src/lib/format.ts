@@ -4,6 +4,28 @@ export function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
 }
 
+/** Revisions minutes apart are common, so history needs the clock time as well. */
+export function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Unknown date';
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
+
+/** Compact stamp for history rows: the clock today, the day this year, the year before that. */
+export function formatHistoryStamp(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'unknown';
+
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) {
+    return new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(date);
+  }
+  if (date.getFullYear() === now.getFullYear()) {
+    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
+  }
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
+}
+
 export function formatBytes(size: number) {
   const units = ['B', 'KB', 'MB', 'GB'];
   let value = size;
