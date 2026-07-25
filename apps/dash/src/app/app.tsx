@@ -39,6 +39,8 @@ import { FixMatchDialog } from '../features/library/fix-match-dialog.js';
 import { DeleteSaveDialog } from '../features/omnisave/delete-save-dialog.js';
 import { GameLibrary, GameLibraryLoading } from '../features/library/game-library.js';
 import { useLibraryEvents, type LibraryEventStatus } from '../features/library/use-library-events.js';
+import { navigate, useRoute } from '../lib/route.js';
+import { RouteLink } from '../components/route-link.js';
 
 const tokenStorageKey = 'omnisave.api-token';
 
@@ -144,9 +146,6 @@ type LibraryDashboardProps = {
   resource: LibraryResource;
   libraryPending: boolean;
   selectedGameID: string;
-  selectedSaveID: string;
-  onSelectGameID: (id: string) => void;
-  onSelectSaveID: (id: string) => void;
   onCloseGame: () => void;
   onReload: () => Promise<LibrarySnapshot>;
   onReplace: (snapshot: LibrarySnapshot) => void;
@@ -159,9 +158,6 @@ function LibraryDashboard({
   resource,
   libraryPending,
   selectedGameID,
-  selectedSaveID,
-  onSelectGameID,
-  onSelectSaveID,
   onCloseGame,
   onReload,
   onReplace,
@@ -170,6 +166,8 @@ function LibraryDashboard({
 }: LibraryDashboardProps) {
   const snapshot = use(resource.promise);
   const { catalog, saves } = snapshot;
+  // The open save belongs to the game being read, not to the address bar.
+  const [selectedSaveID, setSelectedSaveID] = useState('');
   const [error, setError] = useState('');
   const [revisionError, setRevisionError] = useState('');
   const [debugAction, setDebugAction] = useState<'game' | 'save' | 'revision' | 'fork' | null>(null);
@@ -193,15 +191,13 @@ function LibraryDashboard({
   // The save's history follows its head, so reloading the library is enough to refresh it.
   useEffect(() => setRevisionError(''), [selectedSaveID]);
 
+  // A link can name a game that is gone, and a save can be deleted while it is open.
   useEffect(() => {
     if (selectedGameID && !games.some((game) => game.id === selectedGameID)) onCloseGame();
-    if (selectedSaveID && !saves.some((save) => save.id === selectedSaveID)) onSelectSaveID('');
-  }, [games, onCloseGame, onSelectSaveID, saves, selectedGameID, selectedSaveID]);
-
-  function openGame(game: GameSummary) {
-    onSelectGameID(game.id);
-    onSelectSaveID(game.saves[0]?.id ?? '');
-  }
+    else if (selectedSaveID && !saves.some((save) => save.id === selectedSaveID)) {
+      setSelectedSaveID('');
+    }
+  }, [games, onCloseGame, saves, selectedGameID, selectedSaveID]);
 
   const refresh = useCallback(async () => {
     setError('');
@@ -251,7 +247,7 @@ function LibraryDashboard({
         platform: selectedGame.platform,
       });
       await onReload();
-      onSelectSaveID(created.id);
+      setSelectedSaveID(created.id);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : 'Could not create a save.');
     } finally {
@@ -294,7 +290,7 @@ function LibraryDashboard({
         selectedSave.display_name || 'Save'
       );
       await onReload();
-      onSelectSaveID(result.omnisave.id);
+      setSelectedSaveID(result.omnisave.id);
     } catch (createError) {
       setRevisionError(
         createError instanceof Error ? createError.message : 'Could not fork this save.'
@@ -381,7 +377,7 @@ function LibraryDashboard({
 
         if (deleteTarget.type === 'save' && selectedSaveID === deleteTarget.save.id) {
           const nextSave = deleteTarget.game.saves.find((save) => save.id !== deleteTarget.save.id);
-          onSelectSaveID(nextSave?.id ?? '');
+          setSelectedSaveID(nextSave?.id ?? '');
         }
       }
       setDeleteTarget(undefined);
@@ -414,13 +410,12 @@ function LibraryDashboard({
         className={`flex justify-between gap-5 ${selectedGame ? 'items-center' : 'items-end'}`}
       >
         {selectedGame ? (
-          <button
-            type="button"
-            onClick={onCloseGame}
+          <RouteLink
+            to={{ name: 'library' }}
             className="text-sm font-medium text-slate-400 transition hover:text-white"
           >
             ← All games
-          </button>
+          </RouteLink>
         ) : (
           <div>
             <h1 className="text-2xl font-medium tracking-tight text-white">Games</h1>
@@ -455,7 +450,7 @@ function LibraryDashboard({
           token={token}
           selectedSave={selectedSave}
           revisionError={revisionError}
-          onSelectSave={(save) => onSelectSaveID(save.id)}
+          onSelectSave={(save) => setSelectedSaveID(save?.id ?? '')}
           onDownloadSave={(save, name) => void downloadSave(save, name)}
           onDownloadRevision={(save, name, revision) => void downloadRevision(save, name, revision)}
           onRequestDelete={requestDeleteSave}
@@ -466,7 +461,6 @@ function LibraryDashboard({
           <GameLibrary
             games={games}
             token={token}
-            onOpenGame={openGame}
             onRequestFixMatch={setFixMatchTarget}
             onRequestDeleteSaves={requestDeleteGameSaves}
             onRequestDeleteGame={requestDeleteGame}
@@ -524,8 +518,8 @@ export function App() {
   const [resource, setResource] = useState<LibraryResource | null>(() =>
     token ? initialLibraryResource(token) : null
   );
-  const [selectedGameID, setSelectedGameID] = useState('');
-  const [selectedSaveID, setSelectedSaveID] = useState('');
+  const route = useRoute();
+  const selectedGameID = route.name === 'game' ? route.gameID : '';
   const activeResource = useRef(resource);
   const latestSnapshot = useRef<LibrarySnapshot | undefined>(undefined);
   const [libraryPending, startLibraryTransition] = useTransition();
@@ -559,10 +553,9 @@ export function App() {
     latestSnapshot.current = snapshot;
   }, []);
 
-  function closeGame() {
-    setSelectedGameID('');
-    setSelectedSaveID('');
-  }
+  // Only corrections close a game on the reader's behalf — a stale link, a disconnect —
+  // so this replaces rather than pushes. The visible way back is a link.
+  const closeGame = useCallback(() => navigate({ name: 'library' }, { replace: true }), []);
 
   function connect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -613,12 +606,12 @@ export function App() {
     <div className="min-h-screen bg-[#111111] text-[#e5e5e5]">
       <header className="border-b border-white/5 bg-[#181818]">
         <div className="flex items-center justify-between px-5 py-3 sm:px-8">
-          <button type="button" onClick={closeGame} className="flex items-center gap-3 text-left">
+          <RouteLink to={{ name: 'library' }} className="flex items-center gap-3 text-left">
             <span className="grid size-8 place-items-center rounded-md bg-[#e5a00d] text-sm font-black text-black">
               O
             </span>
             <span className="text-sm font-semibold text-white">Omnisave</span>
-          </button>
+          </RouteLink>
 
           <div className="flex items-center gap-3">
             <span className="hidden items-center gap-2 text-xs text-slate-400 sm:flex">
@@ -648,9 +641,6 @@ export function App() {
               resource={resource}
               libraryPending={libraryPending}
               selectedGameID={selectedGameID}
-              selectedSaveID={selectedSaveID}
-              onSelectGameID={setSelectedGameID}
-              onSelectSaveID={setSelectedSaveID}
               onCloseGame={closeGame}
               onReload={reloadLibrary}
               onReplace={replaceLibrary}

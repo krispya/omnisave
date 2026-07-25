@@ -6,7 +6,7 @@
 
 Omnisave's server is the only durable authority for save history, so running it
 reliably and backing it up must be approachable for a home-server owner. The
-server is one Go process serving one Dashboard, with SQLite metadata and
+server is one Go process serving one Dash, with SQLite metadata and
 content-addressed artifacts on local storage. It does not need a cluster, an
 external database, or a language runtime on the host.
 

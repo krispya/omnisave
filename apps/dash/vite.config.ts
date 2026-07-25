@@ -4,7 +4,9 @@ import babel from '@rolldown/plugin-babel';
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
-  base: './',
+  // Dash routes are real paths, so assets must resolve from the root rather than from
+  // whatever route the browser happens to be on.
+  base: '/',
   plugins: [react(), babel({ presets: [reactCompilerPreset()] }), tailwindcss()],
   server: {
     proxy: {
