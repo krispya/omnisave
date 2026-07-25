@@ -1,9 +1,30 @@
-import type { Omnisave } from '../../lib/omnisave-api.js';
+import type { Omnisave, Revision } from '../../lib/omnisave-api.js';
 import { OptionsMenu } from '../../components/options-menu.js';
 import { defaultSaveName, displaySaveName } from './save-name.js';
 import { ForkIcon } from './fork-icon.js';
 import { formatDate } from '../../lib/format.js';
+import { RevisionLog, type RevisionFocus } from './revision-log.js';
 import { SaveNameEditor } from './save-name-editor.js';
+
+type SaveListProps = {
+  saves: Omnisave[];
+  selectedSave?: Omnisave;
+  /** Only one save shows its history at a time, and none does until asked. */
+  expandedSaveID: string;
+  /** Revisions of the expanded save; the list loads no history it does not show. */
+  revisions: Revision[];
+  loadingRevisions: boolean;
+  revisionError: string;
+  focus?: RevisionFocus;
+  onToggleSave: (save: Omnisave) => void;
+  /** Pointing at a save is enough intent to start loading it. */
+  onPrefetchSave: (save: Omnisave) => void;
+  onDownloadSave: (save: Omnisave, name: string) => void;
+  onDownloadRevision: (save: Omnisave, name: string, revision: Revision) => void;
+  onRequestDelete: (save: Omnisave, name: string) => void;
+  onRenameSave: (save: Omnisave, displayName: string) => Promise<void>;
+  onOpenSave: (save: Omnisave, revisionID?: string) => void;
+};
 
 function SaveFileIcon() {
   return (
@@ -24,25 +45,44 @@ function SaveFileIcon() {
   );
 }
 
+function DisclosureIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={`size-4 transition ${open ? 'rotate-180' : ''}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
 export function SaveList({
   saves,
   selectedSave,
-  onSelectSave,
+  expandedSaveID,
+  revisions,
+  loadingRevisions,
+  revisionError,
+  focus,
+  onToggleSave,
+  onPrefetchSave,
   onDownloadSave,
+  onDownloadRevision,
   onRequestDelete,
   onRenameSave,
-}: {
-  saves: Omnisave[];
-  selectedSave?: Omnisave;
-  onSelectSave: (save: Omnisave) => void;
-  onDownloadSave: (save: Omnisave, name: string) => void;
-  onRequestDelete: (save: Omnisave, name: string) => void;
-  onRenameSave: (save: Omnisave, displayName: string) => Promise<void>;
-}) {
+  onOpenSave,
+}: SaveListProps) {
   return (
     <div className="space-y-3">
       {saves.map((save, index) => {
         const selected = save.id === selectedSave?.id;
+        const expanded = save.id === expandedSaveID;
         const fallbackName = defaultSaveName(index);
         const name = displaySaveName(save, fallbackName);
         const sourceIndex = save.forked_from
@@ -60,53 +100,75 @@ export function SaveList({
         return (
           <div
             key={save.id}
-            className={`group relative rounded-md border bg-[#1a1a1a] transition hover:bg-[#202020] ${
+            className={`group overflow-hidden rounded-md border bg-[#1a1a1a] transition ${
               selected ? 'border-[#e5a00d]' : 'border-white/5'
             }`}
           >
-            <button
-              type="button"
-              aria-pressed={selected}
-              aria-label={`Select ${name}`}
-              onClick={() => onSelectSave(save)}
-              className="absolute inset-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-[#e5a00d]"
-            />
-            <div className="pointer-events-none relative z-10 grid grid-cols-[2.25rem_minmax(0,1fr)_auto_2rem] items-center gap-4 p-3.5">
-              <div className="grid size-9 shrink-0 place-items-center rounded bg-white/5 text-[#e5a00d]">
-                <SaveFileIcon />
-              </div>
-              <div className="min-w-0">
-                <div className="h-5">
-                  <SaveNameEditor save={save} fallbackName={fallbackName} onSave={onRenameSave} />
-                </div>
-                <p className="mt-1 text-xs text-slate-500">Updated {formatDate(save.updated_at)}</p>
-              </div>
-              <div className="max-w-36 min-w-0 text-right text-[11px] text-[#e5a00d]/80">
-                {sourceName ? (
-                  <p
-                    className="flex items-center justify-end gap-1.5"
-                    title={`Forked from ${sourceName}`}
-                  >
-                    <ForkIcon className="size-3 shrink-0" />
-                    <span className="truncate">{sourceName}</span>
-                  </p>
-                ) : null}
-                {forkCount > 0 ? (
-                  <p className="flex items-center justify-end gap-1.5">
-                    <ForkIcon className="size-3 shrink-0" />
-                    <span className="truncate">
-                      {forkCount} {forkCount === 1 ? 'fork' : 'forks'}
-                    </span>
-                  </p>
-                ) : null}
-              </div>
-              <OptionsMenu
-                label={name}
-                className="pointer-events-auto relative z-20 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
-                onDownload={save.head_revision_id ? () => onDownloadSave(save, name) : undefined}
-                onDelete={() => onRequestDelete(save, name)}
+            <div className="relative transition hover:bg-[#202020]">
+              <button
+                type="button"
+                aria-expanded={expanded}
+                aria-label={`${expanded ? 'Collapse' : 'Expand'} ${name}`}
+                onPointerEnter={() => onPrefetchSave(save)}
+                onFocus={() => onPrefetchSave(save)}
+                onClick={() => onToggleSave(save)}
+                className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-[#e5a00d]"
               />
+              <div className="pointer-events-none relative z-10 grid grid-cols-[2.25rem_minmax(0,1fr)_auto_1rem_2rem] items-center gap-4 p-3.5">
+                <div className="grid size-9 shrink-0 place-items-center rounded bg-white/5 text-[#e5a00d]">
+                  <SaveFileIcon />
+                </div>
+                <div className="min-w-0">
+                  <div className="h-5">
+                    <SaveNameEditor save={save} fallbackName={fallbackName} onSave={onRenameSave} />
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">Updated {formatDate(save.updated_at)}</p>
+                </div>
+                <div className="max-w-36 min-w-0 text-right text-[11px] text-[#e5a00d]/80">
+                  {sourceName ? (
+                    <p
+                      className="flex items-center justify-end gap-1.5"
+                      title={`Forked from ${sourceName}`}
+                    >
+                      <ForkIcon className="size-3 shrink-0" />
+                      <span className="truncate">{sourceName}</span>
+                    </p>
+                  ) : null}
+                  {forkCount > 0 ? (
+                    <p className="flex items-center justify-end gap-1.5">
+                      <ForkIcon className="size-3 shrink-0" />
+                      <span className="truncate">
+                        {forkCount} {forkCount === 1 ? 'fork' : 'forks'}
+                      </span>
+                    </p>
+                  ) : null}
+                </div>
+                <span className={expanded ? 'text-[#e5a00d]' : 'text-slate-500'}>
+                  <DisclosureIcon open={expanded} />
+                </span>
+                <OptionsMenu
+                  label={name}
+                  className="pointer-events-auto relative z-20 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
+                  onDownload={save.head_revision_id ? () => onDownloadSave(save, name) : undefined}
+                  onDelete={() => onRequestDelete(save, name)}
+                />
+              </div>
             </div>
+
+            {expanded ? (
+              <div className="border-t border-white/5 bg-[#151515] px-3.5 py-3">
+                <RevisionLog
+                  save={save}
+                  saves={saves}
+                  revisions={revisions}
+                  loading={loadingRevisions}
+                  error={revisionError}
+                  focus={focus}
+                  onDownloadRevision={(revision) => onDownloadRevision(save, name, revision)}
+                  onOpenSave={onOpenSave}
+                />
+              </div>
+            ) : null}
           </div>
         );
       })}
