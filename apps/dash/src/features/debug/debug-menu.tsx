@@ -9,7 +9,6 @@ type DebugMenuProps = {
   game?: GameSummary;
   selectedSave?: Omnisave;
   action: DebugAction;
-  revisionHistoryAvailable: boolean;
   canFork: boolean;
   onAddRandomGame: () => void;
   onAddSave: () => void;
@@ -21,7 +20,6 @@ export function DebugMenu({
   game,
   selectedSave,
   action,
-  revisionHistoryAvailable,
   canFork,
   onAddRandomGame,
   onAddSave,
@@ -58,13 +56,13 @@ export function DebugMenu({
             <DebugItem
               label={action === 'revision' ? 'Committing…' : 'Commit revision'}
               description={selectedSave ? `Advance ${selectedSaveName}` : 'Select a save first'}
-              disabled={!selectedSave || !revisionHistoryAvailable || action !== null}
+              disabled={!selectedSave || action !== null}
               onClick={() => run(onAddRevision)}
             />
             <DebugItem
               label={action === 'fork' ? 'Forking save…' : 'Fork save'}
               description="Create another playable save from this head"
-              disabled={!selectedSave || !canFork || !revisionHistoryAvailable || action !== null}
+              disabled={!selectedSave || !canFork || action !== null}
               onClick={() => run(onForkSave)}
             />
           </>

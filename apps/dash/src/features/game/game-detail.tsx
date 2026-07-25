@@ -2,11 +2,12 @@ import { useState } from 'react';
 import type { Omnisave, Revision } from '../../lib/omnisave-api.js';
 import { GameArtwork, GameMediaImage } from './game-artwork.js';
 import type { GameSummary } from './game-summary.js';
-import { defaultSaveName, displaySaveName } from '../omnisave/save-name.js';
 import { GameDetailsDialog } from './details-dialog.js';
-import { RevisionPanel, type RevisionFocus } from '../omnisave/revision-panel.js';
+import { RevisionGraph } from '../omnisave/revision-graph.js';
+import type { RevisionFocus } from '../omnisave/revision-log.js';
 import { SaveList } from '../omnisave/save-list.js';
-import { SaveTree } from '../omnisave/save-tree.js';
+import { useGameRevisions } from '../omnisave/use-game-revisions.js';
+import { prefetchSaveRevisions, useSaveRevisions } from '../omnisave/use-save-revisions.js';
 import { TrackedDevices } from './tracked-devices.js';
 
 function gameReleaseYear(game: GameSummary) {
@@ -26,8 +27,7 @@ type GameDetailProps = {
   game: GameSummary;
   token: string;
   selectedSave?: Omnisave;
-  revisions: Revision[];
-  loadingRevisions: boolean;
+  /** Reports what the last revision action did, alongside anything loading turns up. */
   revisionError: string;
   onSelectSave: (save: Omnisave) => void;
   onDownloadSave: (save: Omnisave, name: string) => void;
@@ -40,8 +40,6 @@ export function GameDetail({
   game,
   token,
   selectedSave,
-  revisions,
-  loadingRevisions,
   revisionError,
   onSelectSave,
   onDownloadSave,
@@ -49,16 +47,16 @@ export function GameDetail({
   onRequestDelete,
   onRenameSave,
 }: GameDetailProps) {
-  const [saveView, setSaveView] = useState<'cards' | 'tree'>('cards');
+  // Flat lists the save slots, one opening its own history; tree graphs them all.
+  const [view, setView] = useState<'flat' | 'tree'>('flat');
   const [detailsOpen, setDetailsOpen] = useState(false);
-  // Set only when a fork edge was followed, so the panel can reveal where it landed.
+  // Saves start closed, so the list stays a list until someone asks for a history. Only
+  // the selected save may be open, since its history is the one the dashboard loads.
+  const [expandedSaveID, setExpandedSaveID] = useState('');
+  // Set only when a fork edge was followed, so the log can reveal where it landed.
   const [focus, setFocus] = useState<RevisionFocus>();
-  const selectedSaveIndex = selectedSave
-    ? game.saves.findIndex((save) => save.id === selectedSave.id)
-    : -1;
-  const selectedSaveName = selectedSave
-    ? displaySaveName(selectedSave, defaultSaveName(Math.max(selectedSaveIndex, 0)))
-    : '';
+  const history = useSaveRevisions(token, selectedSave);
+  const gameRevisions = useGameRevisions(token, game.saves, view === 'tree');
   const releaseYear = gameReleaseYear(game);
   const genres = gameGenres(game);
   const facts = [
@@ -67,13 +65,18 @@ export function GameDetail({
     genres.length > 0 ? genres.join(', ') : undefined,
   ].filter((fact): fact is string => Boolean(fact));
 
-  function selectSave(save: Omnisave) {
+  // Opening a save closes whichever was open, and always makes it the save that the
+  // Debug menu and the revision fetch are pointed at.
+  function toggleSave(save: Omnisave) {
     setFocus(undefined);
+    setExpandedSaveID(save.id === expandedSaveID ? '' : save.id);
     onSelectSave(save);
   }
 
+  // Following a fork edge, from either view, opens the save it leads to on that revision.
   function openSaveAtRevision(save: Omnisave, revisionID?: string) {
     setFocus({ saveID: save.id, revisionID });
+    setExpandedSaveID(save.id);
     onSelectSave(save);
   }
 
@@ -142,66 +145,64 @@ export function GameDetail({
 
       <TrackedDevices provenance={game.provenance} />
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,0.8fr)]">
-        <section aria-label={`Saves for ${game.label}`}>
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-white">Saves</h3>
-            {game.saves.length > 0 ? (
-              <div className="flex rounded-md bg-white/5 p-0.5 text-xs">
-                {(['cards', 'tree'] as const).map((view) => (
-                  <button
-                    key={view}
-                    type="button"
-                    aria-pressed={saveView === view}
-                    onClick={() => setSaveView(view)}
-                    className={`rounded px-2.5 py-1.5 capitalize transition ${
-                      saveView === view ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white'
-                    }`}
-                  >
-                    {view}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-          {game.saves.length === 0 ? (
-            <div className="rounded-md border border-dashed border-white/10 bg-white/[0.02] px-6 py-14 text-center">
-              <p className="text-sm font-medium text-white">This game has no saves</p>
-              <p className="mx-auto mt-2 max-w-xs text-xs leading-5 text-slate-500">
-                It stays in your library either way. Add one with Debug → New save, or bind a local
-                save from a client.
-              </p>
+      <section className="mt-6" aria-label={`Saves for ${game.label}`}>
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-white">Saves</h3>
+          {game.saves.length > 0 ? (
+            <div className="flex rounded-md bg-white/5 p-0.5 text-xs">
+              {(['flat', 'tree'] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={view === option}
+                  onClick={() => setView(option)}
+                  className={`rounded px-2.5 py-1.5 capitalize transition ${
+                    view === option ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white'
+                  }`}
+                >
+                  {option}
+                </button>
+              ))}
             </div>
-          ) : saveView === 'tree' ? (
-            <SaveTree saves={game.saves} selectedSave={selectedSave} onSelectSave={selectSave} />
-          ) : (
-            <SaveList
-              saves={game.saves}
-              selectedSave={selectedSave}
-              onSelectSave={selectSave}
-              onDownloadSave={onDownloadSave}
-              onRequestDelete={onRequestDelete}
-              onRenameSave={onRenameSave}
-            />
-          )}
-        </section>
+          ) : null}
+        </div>
 
-        {selectedSave ? (
-          <RevisionPanel
-            save={selectedSave}
-            name={selectedSaveName}
+        {game.saves.length === 0 ? (
+          <div className="rounded-md border border-dashed border-white/10 bg-white/[0.02] px-6 py-14 text-center">
+            <p className="text-sm font-medium text-white">This game has no saves</p>
+            <p className="mx-auto mt-2 max-w-xs text-xs leading-5 text-slate-500">
+              It stays in your library either way. Add one with Debug → New save, or bind a local save
+              from a client.
+            </p>
+          </div>
+        ) : view === 'tree' ? (
+          <RevisionGraph
             saves={game.saves}
-            revisions={revisions}
-            loading={loadingRevisions}
-            error={revisionError}
-            focus={focus}
-            onDownloadRevision={(revision) =>
-              onDownloadRevision(selectedSave, selectedSaveName, revision)
-            }
+            revisionsBySave={gameRevisions.revisions}
+            selectedSave={selectedSave}
+            loading={gameRevisions.loading}
+            error={gameRevisions.error}
             onOpenSave={openSaveAtRevision}
           />
-        ) : null}
-      </div>
+        ) : (
+          <SaveList
+            saves={game.saves}
+            selectedSave={selectedSave}
+            expandedSaveID={expandedSaveID === selectedSave?.id ? expandedSaveID : ''}
+            revisions={history.revisions}
+            loadingRevisions={history.loading}
+            revisionError={revisionError || history.error}
+            focus={focus}
+            onToggleSave={toggleSave}
+            onPrefetchSave={(save) => prefetchSaveRevisions(token, save)}
+            onDownloadSave={onDownloadSave}
+            onDownloadRevision={onDownloadRevision}
+            onRequestDelete={onRequestDelete}
+            onRenameSave={onRenameSave}
+            onOpenSave={openSaveAtRevision}
+          />
+        )}
+      </section>
 
       {detailsOpen ? <GameDetailsDialog game={game} onClose={() => setDetailsOpen(false)} /> : null}
     </div>
