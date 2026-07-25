@@ -1,28 +1,9 @@
 import type { Omnisave } from '../../lib/omnisave-api.js';
 import { OptionsMenu } from '../../components/options-menu.js';
 import { defaultSaveName, displaySaveName } from './save-name.js';
+import { ForkIcon } from './fork-icon.js';
 import { formatDate } from '../../lib/format.js';
 import { SaveNameEditor } from './save-name-editor.js';
-
-function ForkIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      className="size-3 shrink-0"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="6" cy="4" r="2" />
-      <circle cx="18" cy="6" r="2" />
-      <circle cx="6" cy="20" r="2" />
-      <path d="M6 6v12M18 8v2a4 4 0 0 1-4 4H6" />
-    </svg>
-  );
-}
 
 function SaveFileIcon() {
   return (
@@ -106,13 +87,13 @@ export function SaveList({
                     className="flex items-center justify-end gap-1.5"
                     title={`Forked from ${sourceName}`}
                   >
-                    <ForkIcon />
+                    <ForkIcon className="size-3 shrink-0" />
                     <span className="truncate">{sourceName}</span>
                   </p>
                 ) : null}
                 {forkCount > 0 ? (
                   <p className="flex items-center justify-end gap-1.5">
-                    <ForkIcon />
+                    <ForkIcon className="size-3 shrink-0" />
                     <span className="truncate">
                       {forkCount} {forkCount === 1 ? 'fork' : 'forks'}
                     </span>

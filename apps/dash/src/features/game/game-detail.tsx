@@ -4,7 +4,7 @@ import { GameArtwork, GameMediaImage } from './game-artwork.js';
 import type { GameSummary } from './game-summary.js';
 import { defaultSaveName, displaySaveName } from '../omnisave/save-name.js';
 import { GameDetailsDialog } from './details-dialog.js';
-import { RevisionPanel } from '../omnisave/revision-panel.js';
+import { RevisionPanel, type RevisionFocus } from '../omnisave/revision-panel.js';
 import { SaveList } from '../omnisave/save-list.js';
 import { SaveTree } from '../omnisave/save-tree.js';
 import { TrackedDevices } from './tracked-devices.js';
@@ -51,6 +51,8 @@ export function GameDetail({
 }: GameDetailProps) {
   const [saveView, setSaveView] = useState<'cards' | 'tree'>('cards');
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // Set only when a fork edge was followed, so the panel can reveal where it landed.
+  const [focus, setFocus] = useState<RevisionFocus>();
   const selectedSaveIndex = selectedSave
     ? game.saves.findIndex((save) => save.id === selectedSave.id)
     : -1;
@@ -64,6 +66,16 @@ export function GameDetail({
     game.publisher,
     genres.length > 0 ? genres.join(', ') : undefined,
   ].filter((fact): fact is string => Boolean(fact));
+
+  function selectSave(save: Omnisave) {
+    setFocus(undefined);
+    onSelectSave(save);
+  }
+
+  function openSaveAtRevision(save: Omnisave, revisionID?: string) {
+    setFocus({ saveID: save.id, revisionID });
+    onSelectSave(save);
+  }
 
   return (
     <div className="mt-8">
@@ -161,12 +173,12 @@ export function GameDetail({
               </p>
             </div>
           ) : saveView === 'tree' ? (
-            <SaveTree saves={game.saves} selectedSave={selectedSave} onSelectSave={onSelectSave} />
+            <SaveTree saves={game.saves} selectedSave={selectedSave} onSelectSave={selectSave} />
           ) : (
             <SaveList
               saves={game.saves}
               selectedSave={selectedSave}
-              onSelectSave={onSelectSave}
+              onSelectSave={selectSave}
               onDownloadSave={onDownloadSave}
               onRequestDelete={onRequestDelete}
               onRenameSave={onRenameSave}
@@ -178,12 +190,15 @@ export function GameDetail({
           <RevisionPanel
             save={selectedSave}
             name={selectedSaveName}
+            saves={game.saves}
             revisions={revisions}
             loading={loadingRevisions}
             error={revisionError}
+            focus={focus}
             onDownloadRevision={(revision) =>
               onDownloadRevision(selectedSave, selectedSaveName, revision)
             }
+            onOpenSave={openSaveAtRevision}
           />
         ) : null}
       </div>
