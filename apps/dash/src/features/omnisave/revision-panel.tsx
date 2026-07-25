@@ -1,13 +1,35 @@
+import { useEffect, useRef } from 'react';
 import type { Omnisave, Revision } from '../../lib/omnisave-api.js';
+import { ForkIcon } from './fork-icon.js';
+import { forkLineage, type ForkLink, type ForkOrigin } from './fork-lineage.js';
+
+/**
+ * The revision to reveal after following a fork edge. `revisionID` is omitted when the
+ * target is the save's own fork point, whose id the panel linking to it cannot know.
+ */
+export type RevisionFocus = {
+  saveID: string;
+  revisionID?: string;
+};
 
 type RevisionPanelProps = {
   save: Omnisave;
   name: string;
+  /** The save's siblings, which is where its fork edges are read from. */
+  saves: Omnisave[];
   revisions: Revision[];
   loading: boolean;
   error: string;
+  focus?: RevisionFocus;
   onDownloadRevision: (revision: Revision) => void;
+  onOpenSave: (save: Omnisave, revisionID?: string) => void;
 };
+
+/** One entry on the timeline: a revision of this save, or a fork edge leaving it. */
+type TimelineRow =
+  | { kind: 'revision'; revision: Revision }
+  | { kind: 'fork'; link: ForkLink }
+  | { kind: 'origin'; origin: ForkOrigin };
 
 function displayName(save: Omnisave) {
   return save.metadata?.label ?? save.game_id;
@@ -51,14 +73,79 @@ function DownloadIcon() {
   );
 }
 
+/**
+ * A save on the other side of a fork edge. It is drawn like a revision node but dashed,
+ * because the revision it stands for lives in another save's history.
+ */
+function GhostNode({
+  label,
+  name,
+  detail,
+  onOpen,
+}: {
+  label: string;
+  name: string;
+  detail: string;
+  onOpen?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={!onOpen}
+      onClick={onOpen}
+      aria-label={onOpen ? `Open ${name}` : undefined}
+      title={onOpen ? `Open ${name}` : undefined}
+      className="flex w-full items-center gap-2.5 rounded-md border border-dashed border-[#e5a00d]/25 bg-[#e5a00d]/[0.04] px-2.5 py-2 text-left transition enabled:hover:border-[#e5a00d]/50 enabled:hover:bg-[#e5a00d]/10 disabled:cursor-default disabled:opacity-60"
+    >
+      <span className="shrink-0 text-[#e5a00d]/70">
+        <ForkIcon className="size-3.5" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-xs text-[#e5a00d]/90">{name}</span>
+        <span className="mt-0.5 block truncate font-mono text-[10px] text-[#e5a00d]/50">
+          {label} · {detail}
+        </span>
+      </span>
+      {onOpen ? (
+        <span className="shrink-0 text-xs text-[#e5a00d]/60" aria-hidden="true">
+          ›
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
 export function RevisionPanel({
   save,
   name,
+  saves,
   revisions,
   loading,
   error,
+  focus,
   onDownloadRevision,
+  onOpenSave,
 }: RevisionPanelProps) {
+  const lineage = forkLineage(save, saves);
+  // A fork's first revision is the one it was created with, so it is the fork point
+  // other panels aim at when they link here without a revision id.
+  const forkPointID = revisions.find((revision) => !revision.parent_id)?.id;
+  const focusedID = focus?.saveID === save.id ? (focus.revisionID ?? forkPointID) : undefined;
+  const focusedRow = useRef<HTMLLIElement>(null);
+
+  useEffect(() => {
+    focusedRow.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [focusedID, revisions]);
+
+  // Newest first, with each fork branching off directly under the revision it came from
+  // and the save's own origin closing out the oldest end of the history.
+  const rows: TimelineRow[] = [];
+  for (const revision of [...revisions].reverse()) {
+    rows.push({ kind: 'revision', revision });
+    for (const link of lineage.forks.get(revision.id) ?? []) rows.push({ kind: 'fork', link });
+  }
+  if (lineage.origin && revisions.length > 0) rows.push({ kind: 'origin', origin: lineage.origin });
+
   return (
     <aside className="rounded-lg border border-white/5 bg-[#181818] p-5 xl:sticky xl:top-6 xl:self-start">
       <div className="flex items-start justify-between gap-4 border-b border-white/5 pb-4">
@@ -68,11 +155,21 @@ export function RevisionPanel({
           <p className="mt-1 truncate font-mono text-xs text-slate-500">
             {name} · {shortID(save.id)}
           </p>
-          {save.forked_from ? (
-            <p className="mt-1 truncate font-mono text-[10px] text-[#e5a00d]/70">
-              forked from {shortID(save.forked_from.omnisave_id)} ·{' '}
-              {shortID(save.forked_from.revision_id)}
-            </p>
+          {lineage.origin ? (
+            <button
+              type="button"
+              disabled={!lineage.origin.save}
+              onClick={() => {
+                const origin = lineage.origin;
+                if (origin?.save) onOpenSave(origin.save, origin.revisionID);
+              }}
+              className="mt-1 flex max-w-full items-center gap-1.5 font-mono text-[10px] text-[#e5a00d]/70 transition enabled:hover:text-[#e5a00d] disabled:cursor-default"
+            >
+              <ForkIcon />
+              <span className="truncate">
+                forked from {lineage.origin.name} · {shortID(lineage.origin.revisionID)}
+              </span>
+            </button>
           ) : null}
         </div>
         <span className="shrink-0 text-xs text-neutral-500">
@@ -104,22 +201,88 @@ export function RevisionPanel({
         </div>
       ) : (
         <ol className="mt-4">
-          {[...revisions].reverse().map((revision, index) => {
+          {rows.map((row, index) => {
+            const last = index === rows.length - 1;
+            const separator = last ? '' : 'border-b border-white/5';
+            // Branches hang off the trunk, so the next node on the trunk itself is the
+            // next row that is not a fork. The last leg of a fork's history is dashed:
+            // it leads out of this save and into the one it was forked from.
+            const trunkTarget = rows.slice(index + 1).find((next) => next.kind !== 'fork');
+            const trunkStyle =
+              trunkTarget?.kind === 'origin'
+                ? 'border-l border-dashed border-[#e5a00d]/25'
+                : 'w-px bg-white/10';
+
+            if (row.kind === 'fork') {
+              return (
+                <li
+                  key={`fork-${row.link.save.id}`}
+                  className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-3"
+                >
+                  <div className="relative flex justify-center" aria-hidden="true">
+                    {trunkTarget ? <span className={`absolute inset-y-0 ${trunkStyle}`} /> : null}
+                  </div>
+                  <div className={`relative min-w-0 pb-5 pl-6 ${separator}`}>
+                    <span
+                      aria-hidden="true"
+                      className="absolute top-0 -left-[1.375rem] h-5 w-[2.875rem] rounded-bl-md border-b border-l border-dashed border-[#e5a00d]/30"
+                    />
+                    <GhostNode
+                      label="fork"
+                      name={row.link.name}
+                      detail={shortID(row.link.save.id)}
+                      onOpen={() => onOpenSave(row.link.save)}
+                    />
+                  </div>
+                </li>
+              );
+            }
+
+            if (row.kind === 'origin') {
+              const origin = row.origin;
+              const source = origin.save;
+              return (
+                <li key="origin" className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-3">
+                  <div className="relative flex justify-center" aria-hidden="true">
+                    <span className="relative mt-2 size-2.5 rounded-full border-2 border-dashed border-[#e5a00d]/40 bg-[#181818]" />
+                  </div>
+                  <div className={`min-w-0 pb-5 ${separator}`}>
+                    <GhostNode
+                      label="forked from"
+                      name={origin.name}
+                      detail={shortID(origin.revisionID)}
+                      onOpen={source ? () => onOpenSave(source, origin.revisionID) : undefined}
+                    />
+                  </div>
+                </li>
+              );
+            }
+
+            const revision = row.revision;
             const isHead = revision.id === save.head_revision_id;
+            const focused = revision.id === focusedID;
             const totalSize = revision.files.reduce((total, file) => total + file.artifact.size, 0);
             return (
-              <li key={revision.id} className="relative grid grid-cols-[1.25rem_minmax(0,1fr)] gap-3">
+              <li
+                key={revision.id}
+                ref={focused ? focusedRow : undefined}
+                className="relative grid grid-cols-[1.25rem_minmax(0,1fr)] gap-3"
+              >
                 <div className="relative flex justify-center" aria-hidden="true">
-                  {index < revisions.length - 1 ? (
-                    <span className="absolute top-3 bottom-0 w-px bg-white/10" />
-                  ) : null}
+                  {last ? null : <span className={`absolute top-3 bottom-0 ${trunkStyle}`} />}
                   <span
                     className={`relative mt-2 size-2.5 rounded-full border-2 bg-[#181818] ${
                       isHead ? 'border-[#e5a00d]' : 'border-neutral-600'
                     }`}
                   />
                 </div>
-                <article className="min-w-0 border-b border-white/5 pb-5 last:border-0">
+                <article
+                  className={`min-w-0 pb-5 ${separator} ${
+                    focused
+                      ? '-mx-2 rounded-md bg-[#e5a00d]/[0.06] px-2 pt-2 ring-1 ring-[#e5a00d]/25'
+                      : ''
+                  }`}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-2">
                       <span className="truncate font-mono text-xs text-slate-300" title={revision.id}>
