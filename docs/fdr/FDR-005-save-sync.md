@@ -1,7 +1,7 @@
 # FDR-005: Save Sync
 
 **Status:** Experimental
-**Last reviewed:** 2026-07-19
+**Last reviewed:** 2026-07-25
 
 ## Overview
 
@@ -10,7 +10,9 @@ pass over this Device's bindings: local progress commits to the server as
 new revisions, server progress applies to the local files, and the sync
 baseline arbitrates which direction is safe. It runs one-shot as
 `omnisave-client sync` and continuously as `omnisave-client watch`, which
-commits a quiet moment after the game writes its save. This completes what
+commits a quiet moment after the game writes its save — and continuous is
+where a bare `omnisave-client` run ends up, because running Omnisave is
+running the watcher. This completes what
 [FDR-003](FDR-003-automatic-save-binding.md) and
 [FDR-004](FDR-004-sync-to-device.md) started: seeding built the write
 path, syncing-down built the read path; sync makes both routine.
@@ -65,13 +67,36 @@ path, syncing-down built the read path; sync makes both routine.
   uploaded, never travels twice.
 - Failures leave both sides valid: an interrupted upload leaves the head
   where it was; an interrupted download leaves the local save untouched.
-- In a terminal, watch presents a live view: every tracked game's line
-  updating as passes run, a footer proving liveness (files watched, last
-  sync, server), and two keys — sync now and quit. A diverged save simply
-  shows its conflict status; resolution still belongs to an interactive
-  track run. When output is not a terminal — piped, or under a service
-  manager — watch logs plainly instead, printing only passes that changed
-  something.
+- `omnisave-client` with no command is the whole app, and it skips whatever
+  this Device already did: no saved connection asks for one, no tracked
+  games asks which to track, and then every run reconciles once — the pass
+  that may ask — and watches until it is quit. `track`, `bind`, `sync`,
+  `watch`, `scan`, and `connect` stay as the explicit commands.
+- `omnisave-client track` is that run's selection step on its own: it always
+  asks which games this Device protects, so a game installed since the last
+  run can join, then reconciles once, reports what happened, and exits.
+  Protecting those saves from then on is the commandless run's job.
+- A run that does not ask keeps the standing selection: the scan refreshes
+  the tracked games it found and leaves the ones it missed tracked and
+  untouched.
+- The run that asked is the run that answers: a run that put a question on
+  screen prints its report, and a run that asked nothing prints nothing.
+  For the commandless run that means the report — when there is one —
+  becomes ordinary scrollback above the live view, which opens on what the
+  pass found with a footer already proving the run reached the server.
+  Quitting the view ends the run.
+- In a terminal, watch presents a live view: one line per tracked game
+  carrying only what is true now — the save's standing state, or its
+  unresolved condition — a footer proving liveness (files watched, last
+  sync, server), and two keys, sync now and quit. The block never grows.
+- What happens is written once, above the live view, into the terminal's
+  scrollback: one line per event, carrying the clock time that makes it
+  readable later. A condition announces when it appears and again only if
+  it clears and comes back, so an idle watcher stays silent. When output
+  is not a terminal — piped, or under a service manager — those same event
+  lines are the log.
+- A diverged save simply shows its conflict status; resolution still
+  belongs to an interactive track run.
 - Watch is a plain foreground process. Keeping it alive across reboots
   belongs to the OS service manager; the service unit is deployment work,
   not part of this feature.
@@ -147,7 +172,46 @@ track, where a human is present.
 **Tradeoff:** Prompt-shaped work queues up invisibly until an interactive
 run; the report is the only nudge.
 
-### 6. Watch is a foreground process; the OS owns its lifetime
+### 6. The bare command is the app, and it skips what is already done
+
+**Decision:** `omnisave-client` with no command is a state machine over this
+Device's own state — connect if there is no saved connection, choose games
+if none are tracked, then always one reconcile pass and the watch loop. It
+is the only run that keeps watching; the named commands each do one of those
+steps deliberately and end.
+**Why:** Every step the bare command owns is answered once and then true
+forever, so a run that re-asks them is charging rent on a decision already
+made; the second run has work to do — sync and watch — and should get to it.
+One entry point that always ends in the running app is also the shortest
+honest answer to "how do I use this": you run it. Keeping the continuous
+behavior in that one place is what lets every other command stay a command:
+you can change a selection, bind a save, or take one pass without signing up
+for a process that never returns.
+**Tradeoff:** A game installed after the first run is invisible to the bare
+command until an explicit `track` run adds it — the state machine cannot
+distinguish "not chosen" from "not there yet", and re-asking every run is
+the thing this decision refuses. The run that protects saves also never
+terminates, so anything scripted uses `sync`.
+
+### 7. The live view holds standing state; the terminal keeps the history
+
+**Decision:** The live view holds only what is true now, and each event is
+printed once above it rather than held in the view. A run prints a report
+only when it asked something; a run that asked nothing is the view alone.
+**Why:** Keeping a pass's events inside a live view means either stale text
+sitting there for the fifteen minutes until the next pass, or history that
+vanishes; printing them into scrollback gives both a readable record and an
+idle view that stays clean, because the terminal does the remembering. A
+report above the view when nothing was asked is that same text twice — the
+view already says what is true, so the scrollback copy is noise the user
+scrolls past forever.
+**Tradeoff:** Events are announced when a condition appears and stay quiet
+while it holds, so a long-standing problem is easy to scroll past — the
+live view's line is what keeps it visible. And the pass a silent run does
+at startup leaves no record of itself; only what happens next is written
+down.
+
+### 8. Watch is a foreground process; the OS owns its lifetime
 
 **Decision:** Watch runs in the foreground until stopped. Restarts,
 boot-time start, and logging belong to the service manager
@@ -158,7 +222,7 @@ process is trivially debuggable.
 **Tradeoff:** Until packaging lands, "install the watcher" is a second
 manual step after installing the binary.
 
-### 7. Artifacts are compressed at rest and in transit
+### 9. Artifacts are compressed at rest and in transit
 
 **Decision:** Artifact content is gzip-compressed on the server's disk and
 on the wire in both directions. Identity never changes: an artifact is

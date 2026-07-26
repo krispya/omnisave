@@ -89,7 +89,18 @@ The default view reports adapter totals followed by compact save statistics for
 each discovered game. Use `./bin/omnisave-client scan --verbose` to include
 target locations, save sets, and individual files.
 
-Choose which discovered games this machine should synchronize:
+Run Omnisave:
+
+```sh
+./bin/omnisave-client
+```
+
+The commandless run is the whole app. It asks for a server connection only if
+this machine has none, asks which games to track only if none are tracked,
+syncs everything once, and then keeps watching those saves until you quit it.
+
+Change the selection later with an explicit run, which always asks and then
+exits:
 
 ```sh
 ./bin/omnisave-client track
