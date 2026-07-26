@@ -9,4 +9,4 @@ feature-specific decisions behind it.
 | [FDR-002](FDR-002-game-lifecycle.md) | Game Lifecycle | Active | 2026-07-18 |
 | [FDR-003](FDR-003-automatic-save-binding.md) | Automatic Save Binding | Experimental | 2026-07-18 |
 | [FDR-004](FDR-004-sync-to-device.md) | Syncing Saves to a Device | Experimental | 2026-07-20 |
-| [FDR-005](FDR-005-save-sync.md) | Save Sync | Experimental | 2026-07-19 |
+| [FDR-005](FDR-005-save-sync.md) | Save Sync | Experimental | 2026-07-25 |

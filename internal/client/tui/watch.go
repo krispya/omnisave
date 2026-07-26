@@ -14,6 +14,14 @@ type WatchConfig struct {
 	ServerURL string
 	Poll      time.Duration
 	PullEvery time.Duration
+	// Initial is the table the view opens with, so a hand-off from a run
+	// that already reconciled shows what that pass established instead of an
+	// empty block while the first pass waits for its poll.
+	Initial ReportSnapshot
+	// Synced is when that hand-off pass reached the server, so the footer
+	// proves liveness from the first frame. Zero means this view owns its
+	// first pass and has nothing to claim yet.
+	Synced time.Time
 }
 
 // WatchRequest is a keyboard request from the watch view to its loop.
@@ -22,9 +30,22 @@ type WatchRequest int
 // WatchSyncNow asks the loop to run a pass immediately.
 const WatchSyncNow WatchRequest = iota
 
+// PassResult is one completed pass as its sink shows it: what is true
+// afterwards, and what changed on the way there.
+type PassResult struct {
+	Snapshot ReportSnapshot
+	Events   []Event
+	Summary  string
+	Changed  bool
+	Err      error
+	At       time.Time
+}
+
 // WatchDisplay is the live watch view (FDR-005): every tracked game on its
-// line, a footer that proves liveness, and s/q keys. The watch loop feeds
-// it snapshots; it never prompts.
+// line, a footer that proves liveness, and s/q keys. Events scroll past
+// above the view as they happen, so the block itself never grows and an
+// idle watcher reads as one clean table. The watch loop feeds it passes; it
+// never prompts.
 type WatchDisplay struct {
 	program  *tea.Program
 	requests chan WatchRequest
@@ -33,13 +54,23 @@ type WatchDisplay struct {
 // NewWatchDisplay builds the live view. Run blocks until the user quits.
 func NewWatchDisplay(config WatchConfig) *WatchDisplay {
 	requests := make(chan WatchRequest, 1)
+	return &WatchDisplay{
+		program:  tea.NewProgram(newWatchModel(config, requests)),
+		requests: requests,
+	}
+}
+
+// newWatchModel opens the view on what its caller already established.
+func newWatchModel(config WatchConfig, requests chan<- WatchRequest) watchModel {
 	indicator := spinner.New()
 	indicator.Spinner = spinner.MiniDot
 	indicator.Style = accentStyle
-	model := watchModel{config: config, requests: requests, spinner: indicator}
-	return &WatchDisplay{
-		program:  tea.NewProgram(model),
+	return watchModel{
+		config:   config,
 		requests: requests,
+		spinner:  indicator,
+		snapshot: config.Initial,
+		synced:   config.Synced,
 	}
 }
 
@@ -69,26 +100,20 @@ func (d *WatchDisplay) PassStarted() {
 	d.program.Send(watchPassStartedMsg{at: time.Now()})
 }
 
-// PassFinished settles the view with a pass's final table and tally. The
-// table swaps in whole only when a pass completes — mid-pass the previous
-// settled table stays put and the footer spinner is the activity signal,
-// so running a pass never reflows the layout. The live view always
-// repaints, so the changed flag is only for log sinks.
-func (d *WatchDisplay) PassFinished(snapshot ReportSnapshot, summary string, changed bool, err error) {
-	d.program.Send(watchPassFinishedMsg{snapshot: snapshot, summary: summary, err: err, at: time.Now()})
+// PassFinished settles the view with a pass's final table and prints its
+// events above it. The table swaps in whole only when a pass completes —
+// mid-pass the previous settled table stays put and the footer spinner is
+// the activity signal, so running a pass never reflows the layout.
+func (d *WatchDisplay) PassFinished(result PassResult) {
+	d.program.Send(watchPassFinishedMsg{result: result})
 }
 
 type (
 	watchWatchingMsg     struct{ files int }
 	watchPassStartedMsg  struct{ at time.Time }
-	watchPassFinishedMsg struct {
-		snapshot ReportSnapshot
-		summary  string
-		err      error
-		at       time.Time
-	}
-	watchSpinDoneMsg struct{ generation int }
-	watchClockMsg    time.Time
+	watchPassFinishedMsg struct{ result PassResult }
+	watchSpinDoneMsg     struct{ generation int }
+	watchClockMsg        time.Time
 )
 
 // spinnerMinimum keeps the header spinner visible for at least one full
@@ -105,7 +130,6 @@ type watchModel struct {
 	spinner        spinner.Model
 	files          int
 	snapshot       ReportSnapshot
-	summary        string
 	failure        string
 	syncing        bool
 	syncStarted    time.Time
@@ -146,21 +170,32 @@ func (m watchModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncStarted = message.at
 		m.spinGeneration++
 	case watchPassFinishedMsg:
-		m.synced = message.at
-		m.snapshot = message.snapshot
-		m.summary = message.summary
-		m.failure = ""
-		if message.err != nil {
-			m.failure = message.err.Error()
+		result := message.result
+		m.failure = passFailure(result)
+		if m.failure == "" {
+			// Only a pass that reached the server can claim the table and
+			// the clock; an outage leaves both showing the last truth.
+			m.snapshot = result.Snapshot
+			m.synced = result.At
+		} else if len(result.Snapshot.Games) > 0 {
+			m.snapshot = result.Snapshot
+		}
+		// The pass's events leave the view for the terminal's scrollback,
+		// in order, above the block that stays.
+		commands := make([]tea.Cmd, 0, len(result.Events)+1)
+		for _, event := range result.Events {
+			commands = append(commands, tea.Println(EventLine(event)))
 		}
 		// Results land immediately; the spinner finishes its rotation.
-		if remaining := spinnerMinimum - message.at.Sub(m.syncStarted); remaining > 0 {
+		if remaining := spinnerMinimum - result.At.Sub(m.syncStarted); remaining > 0 {
 			generation := m.spinGeneration
-			return m, tea.Tick(remaining, func(time.Time) tea.Msg {
+			commands = append(commands, tea.Tick(remaining, func(time.Time) tea.Msg {
 				return watchSpinDoneMsg{generation: generation}
-			})
+			}))
+		} else {
+			m.syncing = false
 		}
-		m.syncing = false
+		return m, tea.Sequence(commands...)
 	case watchSpinDoneMsg:
 		if message.generation == m.spinGeneration {
 			m.syncing = false
@@ -177,7 +212,7 @@ func (m watchModel) View() string {
 		header += " " + m.spinner.View()
 	}
 	view.WriteString(header + "\n\n")
-	lines := ComposeReport(m.snapshot, m.now)
+	lines := ComposeStanding(m.snapshot, m.now)
 	if len(lines) == 0 {
 		view.WriteString(mutedStyle.Render("  No tracked saves discovered yet") + "\n")
 	}
@@ -185,22 +220,43 @@ func (m watchModel) View() string {
 		view.WriteString(line + "\n")
 	}
 	view.WriteString("\n")
-	if m.summary != "" {
-		view.WriteString(m.summary + "\n")
-	}
 	if m.failure != "" {
-		view.WriteString("  " + errorStyle.Render("✗") + " " + mutedStyle.Render(m.failure) + "\n")
+		view.WriteString(FailureLine(m.failure) + "\n")
 	}
 	view.WriteString("  " + mutedStyle.Render(m.activity()+" · "+m.config.ServerURL) + "\n")
 	view.WriteString("  " + mutedStyle.Render("s sync now · q quit") + "\n")
 	return view.String()
 }
 
-func (m watchModel) activity() string {
-	if m.synced.IsZero() {
-		return fmt.Sprintf("watching %d save paths", m.files)
+// passFailure is what stopped a pass, as one sentence: the pass's own
+// error, or the run-wide failure it reported. Both are conditions rather
+// than events — they hold until a pass clears them — so the view keeps
+// them while the stream announces them once.
+func passFailure(result PassResult) string {
+	if result.Err != nil {
+		return Cause(result.Err)
 	}
-	return fmt.Sprintf("watching %d save paths · synced %s", m.files, ago(m.now, m.synced))
+	if len(result.Snapshot.General) > 0 {
+		return result.Snapshot.General[0]
+	}
+	return ""
+}
+
+func (m watchModel) activity() string {
+	watching := "watching " + SavePaths(m.files)
+	if m.synced.IsZero() {
+		return watching
+	}
+	return watching + " · synced " + ago(m.now, m.synced)
+}
+
+// SavePaths counts what a watcher is polling, so the live footer and the
+// plain log say it the same way.
+func SavePaths(count int) string {
+	if count == 1 {
+		return "1 save path"
+	}
+	return fmt.Sprintf("%d save paths", count)
 }
 
 func ago(now, then time.Time) string {

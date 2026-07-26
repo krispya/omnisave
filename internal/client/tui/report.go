@@ -8,10 +8,10 @@ import (
 	"unicode/utf8"
 )
 
-// Track reporting gives every game one line: a state glyph, the title
-// padded to a shared column, and its status — dim sentences joined by
-// dots, or "Up to date" when the pass needed nothing. Run-wide failures
-// print first.
+// Track reporting gives every game its own line — a state glyph, the title
+// padded to a shared column, and the standing state of its save — with what
+// happened this pass indented beneath it, one dim sentence per line. A game
+// that needed nothing keeps its single line. Run-wide failures print first.
 
 // TrackReport buffers tracking results and renders them grouped by game.
 type TrackReport struct {
@@ -103,7 +103,7 @@ func (r *TrackReport) SaveDeleted(title string) {
 // Failed records a game the server could not resolve or record.
 func (r *TrackReport) Failed(title string, err error) {
 	r.mark(title, errorStyle.Render("✗"))
-	r.event(title, "failed — "+strings.TrimSpace(err.Error()))
+	r.event(title, "failed — "+Cause(err))
 }
 
 // NoSave records that an installed game has no local save content to
@@ -188,18 +188,18 @@ func (r *TrackReport) Unbound(title string) {
 // the game's glyph so it is visible without reading every sentence.
 func (r *TrackReport) SaveFailed(title string, err error) {
 	r.mark(title, errorStyle.Render("✗"))
-	r.event(title, "save failed — "+strings.TrimSpace(err.Error()))
+	r.event(title, "save failed — "+Cause(err))
 }
 
 // SyncFailed records a failure that prevented the whole server update.
 func (r *TrackReport) SyncFailed(err error) {
-	r.general = append(r.general, capitalized("library sync failed — "+strings.TrimSpace(err.Error())))
+	r.general = append(r.general, capitalized("library sync failed — "+Cause(err)))
 	r.changed()
 }
 
 // BindingFailed records a failure that prevented the whole binding pass.
 func (r *TrackReport) BindingFailed(err error) {
-	r.general = append(r.general, capitalized("save binding failed — "+strings.TrimSpace(err.Error())))
+	r.general = append(r.general, capitalized("save binding failed — "+Cause(err)))
 	r.changed()
 }
 
@@ -219,12 +219,12 @@ func (r *TrackReport) render() []string {
 	return ComposeReport(r.Snapshot(), time.Now())
 }
 
-// GameStatus is one game's report line as data, so live views can age the
+// GameStatus is one game's report entry as data, so live views can age the
 // synced timestamp between passes.
 type GameStatus struct {
 	Glyph      string
 	Title      string
-	Events     string
+	Events     []string
 	SyncedWith string
 	SyncedAt   time.Time
 }
@@ -247,7 +247,7 @@ func (r *TrackReport) Snapshot() ReportSnapshot {
 		games = append(games, GameStatus{
 			Glyph:      glyph,
 			Title:      title,
-			Events:     strings.Join(entry.events, " · "),
+			Events:     append([]string(nil), entry.events...),
 			SyncedWith: entry.syncedWith,
 			SyncedAt:   entry.syncedAt,
 		})
@@ -269,27 +269,90 @@ func ComposeReport(snapshot ReportSnapshot, now time.Time) []string {
 		}
 	}
 	for _, game := range snapshot.Games {
-		synced := ""
-		switch {
-		case game.SyncedWith != "" && !game.SyncedAt.IsZero():
-			synced = game.SyncedWith + " · synced " + ago(now, game.SyncedAt)
-		case game.SyncedWith != "":
-			synced = game.SyncedWith + " · up to date"
+		lines = append(lines, gameLine(game, standingState(game, now), width))
+		for _, event := range game.Events {
+			lines = append(lines, eventIndent+mutedStyle.Render(event))
 		}
-		status := game.Events
-		switch {
-		case status != "" && synced != "":
-			status = status + " · " + synced
-		case status == "":
-			status = synced
-		}
-		if status == "" {
-			status = "Up to date"
-		}
-		padding := strings.Repeat(" ", width-utf8.RuneCountInString(game.Title))
-		lines = append(lines, "  "+game.Glyph+" "+plainTitle(game.Title)+padding+"  "+mutedStyle.Render(status))
 	}
 	return lines
+}
+
+// ComposeStanding renders only what is true right now — one line per game,
+// no event lines. It is the live view's table: a pass's events scroll past
+// as their own lines (see Event), so the pinned block never grows.
+func ComposeStanding(snapshot ReportSnapshot, now time.Time) []string {
+	width := 0
+	for _, game := range snapshot.Games {
+		if count := utf8.RuneCountInString(game.Title); count > width {
+			width = count
+		}
+	}
+	lines := make([]string, 0, len(snapshot.Games))
+	for _, game := range snapshot.Games {
+		lines = append(lines, gameLine(game, condition(game, now), width))
+	}
+	return lines
+}
+
+// condition is what the live table says about a game. A save that is bound
+// reads as its standing state; anything else falls back to the last thing
+// reported about it, so an unresolved event — a diverged save, a missing
+// one — stays visible until the pass that clears it.
+func condition(game GameStatus, now time.Time) string {
+	if status := standingState(game, now); status != "" {
+		return status
+	}
+	return game.Events[len(game.Events)-1]
+}
+
+// Event is one thing that happened, written once into the terminal's
+// scrollback rather than held in the live view. The clock time is what
+// makes it readable hours later, where a live view's "just now" would lie.
+type Event struct {
+	Glyph    string
+	Title    string
+	Sentence string
+	At       time.Time
+}
+
+// EventLine renders one streamed event.
+func EventLine(event Event) string {
+	line := "  " + mutedStyle.Render(event.At.Format("15:04")) + "  " + event.Glyph
+	if event.Title != "" {
+		return line + " " + plainTitle(event.Title) + "  " + mutedStyle.Render(capitalized(event.Sentence))
+	}
+	// A run-wide event has no game to name, so the sentence follows its
+	// glyph the way a failure line reads.
+	return line + " " + mutedStyle.Render(capitalized(event.Sentence))
+}
+
+// eventIndent nests a pass's events under the game they belong to.
+const eventIndent = "      "
+
+// gameLine is what is true of a game: its state glyph, its name, and the
+// status it carries. What happened this pass reads underneath, so a game
+// with nothing to report still holds exactly one line.
+func gameLine(game GameStatus, status string, width int) string {
+	line := "  " + game.Glyph + " " + plainTitle(game.Title)
+	if status == "" {
+		return line
+	}
+	padding := strings.Repeat(" ", width-utf8.RuneCountInString(game.Title))
+	return line + padding + "  " + mutedStyle.Render(status)
+}
+
+func standingState(game GameStatus, now time.Time) string {
+	switch {
+	case game.SyncedWith != "" && !game.SyncedAt.IsZero():
+		return game.SyncedWith + " · synced " + ago(now, game.SyncedAt)
+	case game.SyncedWith != "":
+		return game.SyncedWith + " · up to date"
+	case len(game.Events) == 0:
+		// A game the pass never had to touch still says so.
+		return "Up to date"
+	default:
+		return ""
+	}
 }
 
 // TrackOutcome tallies one track run for the summary line.
@@ -381,7 +444,12 @@ func SummaryLine(outcome TrackOutcome) string {
 // indented to the report's column so a failure before the pass and one
 // during it read alike.
 func FailureLine(sentence string) string {
-	return "  " + errorStyle.Render("✗") + " " + mutedStyle.Render(capitalized(sentence))
+	return "  " + FailureGlyph() + " " + mutedStyle.Render(capitalized(sentence))
+}
+
+// FailureGlyph is the mark a failure carries wherever it is rendered.
+func FailureGlyph() string {
+	return errorStyle.Render("✗")
 }
 
 func withCanonical(sentence, title, canonical string) string {
