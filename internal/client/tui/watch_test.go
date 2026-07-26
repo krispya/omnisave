@@ -5,32 +5,53 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
 func newTestWatchModel(requests chan WatchRequest) watchModel {
-	indicator := spinner.New()
-	indicator.Spinner = spinner.MiniDot
-	return watchModel{
-		config:   WatchConfig{ServerURL: "http://localhost:8080"},
-		requests: requests,
-		spinner:  indicator,
+	return newWatchModel(WatchConfig{ServerURL: "http://localhost:8080"}, requests)
+}
+
+// A run that reconciled before opening the view hands over what it found, so
+// the first frame is the finished table with a footer that already proves
+// the run reached the server — nothing waits for the next pass.
+func TestAHandOffOpensOnTheTableAndClockItWasGiven(t *testing.T) {
+	model := newWatchModel(WatchConfig{
+		ServerURL: "http://localhost:8081",
+		Initial: ReportSnapshot{Games: []GameStatus{
+			{Glyph: "✓", Title: "Slay the Spire 2", SyncedWith: "Main", SyncedAt: time.Now().Add(-time.Hour)},
+			{Glyph: "·", Title: "Project Zomboid", Events: []string{"No save available"}},
+		}},
+		Synced: time.Now().Add(-11 * time.Minute),
+	}, make(chan WatchRequest, 1))
+
+	watching, _ := model.Update(watchWatchingMsg{files: 231})
+	clocked, _ := watching.(watchModel).Update(watchClockMsg(time.Now()))
+
+	view := ansi.Strip(clocked.(watchModel).View())
+	for _, text := range []string{
+		"✓ Slay the Spire 2  Main · synced 1h ago",
+		"· Project Zomboid   No save available",
+		"watching 231 save paths · synced 11m ago · http://localhost:8081",
+	} {
+		if !strings.Contains(view, text) {
+			t.Fatalf("expected the opening frame to contain %q, got:\n%s", text, view)
+		}
 	}
 }
 
 func TestWatchViewShowsTheTableTallyAndFooter(t *testing.T) {
 	model := newTestWatchModel(make(chan WatchRequest, 1))
 	updated, _ := model.Update(watchWatchingMsg{files: 3})
-	updated, _ = updated.(watchModel).Update(watchPassFinishedMsg{
-		snapshot: ReportSnapshot{Games: []GameStatus{
+	updated, _ = updated.(watchModel).Update(watchPassFinishedMsg{result: PassResult{
+		Snapshot: ReportSnapshot{Games: []GameStatus{
 			{Glyph: "✓", Title: "Slay the Spire 2", SyncedWith: "Save 1", SyncedAt: time.Now().Add(-2 * time.Minute)},
-			{Glyph: "·", Title: "Project Zomboid", Events: "No save available"},
+			{Glyph: "·", Title: "Project Zomboid", Events: []string{"No save available"}},
 		}},
-		summary: "  2 tracked · up to date",
-		at:      time.Now(),
-	})
+		Summary: "  2 tracked · up to date",
+		At:      time.Now(),
+	}})
 	clocked, _ := updated.(watchModel).Update(watchClockMsg(time.Now()))
 
 	view := ansi.Strip(clocked.(watchModel).View())
@@ -38,7 +59,6 @@ func TestWatchViewShowsTheTableTallyAndFooter(t *testing.T) {
 		"▲ Omnisave · watching",
 		"✓ Slay the Spire 2  Save 1 · synced 2m ago",
 		"· Project Zomboid   No save available",
-		"2 tracked · up to date",
 		"watching 3 save paths · synced just now",
 		"http://localhost:8080",
 		"s sync now · q quit",
@@ -53,7 +73,7 @@ func TestWatchSpinnerFinishesAFullRotationOnFastPasses(t *testing.T) {
 	model := newTestWatchModel(make(chan WatchRequest, 1))
 	started := time.Now()
 	updated, _ := model.Update(watchPassStartedMsg{at: started})
-	settled, command := updated.(watchModel).Update(watchPassFinishedMsg{at: started.Add(10 * time.Millisecond)})
+	settled, command := updated.(watchModel).Update(watchPassFinishedMsg{result: PassResult{At: started.Add(10 * time.Millisecond)}})
 
 	fast := settled.(watchModel)
 	if !fast.syncing || command == nil {
@@ -72,9 +92,38 @@ func TestWatchSpinnerFinishesAFullRotationOnFastPasses(t *testing.T) {
 	}
 
 	slow, _ := newTestWatchModel(make(chan WatchRequest, 1)).Update(watchPassStartedMsg{at: started.Add(-2 * time.Second)})
-	slowSettled, _ := slow.(watchModel).Update(watchPassFinishedMsg{at: started})
+	slowSettled, _ := slow.(watchModel).Update(watchPassFinishedMsg{result: PassResult{At: started}})
 	if slowSettled.(watchModel).syncing {
 		t.Fatal("expected a pass longer than the minimum to settle immediately")
+	}
+}
+
+func TestAnOutageKeepsTheLastTableAndClockAndShowsTheCause(t *testing.T) {
+	model := newTestWatchModel(make(chan WatchRequest, 1))
+	synced := time.Now().Add(-2 * time.Minute)
+	settled, _ := model.Update(watchPassFinishedMsg{result: PassResult{
+		Snapshot: ReportSnapshot{Games: []GameStatus{
+			{Glyph: "✓", Title: "Slay the Spire 2", SyncedWith: "Save 1", SyncedAt: synced},
+		}},
+		At: synced,
+	}})
+
+	// The server goes away: the pass reaches no one and reports no games.
+	offline, _ := settled.(watchModel).Update(watchPassFinishedMsg{result: PassResult{
+		Snapshot: ReportSnapshot{General: []string{"Library sync failed — connection refused"}},
+		At:       time.Now(),
+	}})
+	clocked, _ := offline.(watchModel).Update(watchClockMsg(time.Now()))
+
+	view := ansi.Strip(clocked.(watchModel).View())
+	if !strings.Contains(view, "✓ Slay the Spire 2  Save 1 · synced 2m ago") {
+		t.Fatalf("expected the outage to leave the last known table, got:\n%s", view)
+	}
+	if !strings.Contains(view, "✗ Library sync failed — connection refused") {
+		t.Fatalf("expected the outage shown as the current condition, got:\n%s", view)
+	}
+	if strings.Contains(view, "synced just now") {
+		t.Fatalf("expected a failed pass not to claim a fresh sync, got:\n%s", view)
 	}
 }
 
@@ -90,7 +139,7 @@ func TestWatchViewSpinsWhileSyncingAndKeysWork(t *testing.T) {
 		t.Fatalf("expected the footer to keep its usual text while syncing, got:\n%s", syncingView)
 	}
 
-	settled, _ := updated.(watchModel).Update(watchPassFinishedMsg{at: time.Now()})
+	settled, _ := updated.(watchModel).Update(watchPassFinishedMsg{result: PassResult{At: time.Now()}})
 	settled.(watchModel).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	select {
 	case request := <-requests:
