@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattn/go-isatty"
+
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client"
 	"github.com/krisbaumgartner/omnisave/internal/client/binding"
@@ -40,7 +42,7 @@ func main() {
 func run(ctx context.Context, arguments []string) error {
 	scanner := client.NewScanner(nil, retroarch.NewDefault(), steam.NewDefault())
 	if len(arguments) == 0 {
-		return runTrack(ctx, scanner, nil)
+		return runApp(ctx, scanner, nil)
 	}
 	switch arguments[0] {
 	case "connect":
@@ -59,11 +61,11 @@ func run(ctx context.Context, arguments []string) error {
 		printUsage()
 		return nil
 	default:
-		// Bare flags belong to track, the default command.
+		// Bare flags belong to the commandless run.
 		if strings.HasPrefix(arguments[0], "-") {
-			return runTrack(ctx, scanner, arguments)
+			return runApp(ctx, scanner, arguments)
 		}
-		return fmt.Errorf("unknown command %q; use track (the default), sync, watch, connect, scan, or bind", arguments[0])
+		return fmt.Errorf("unknown command %q; run omnisave-client with no command, or use track, sync, watch, connect, scan, or bind", arguments[0])
 	}
 }
 
@@ -151,13 +153,24 @@ func establishServer(ctx context.Context, store *tracking.Store, state *tracking
 }
 
 // ensureServer returns a client for the established server connection,
-// running the connect flow first when this device has none: every command
-// that records against a server knows which server that is, even when it is
-// unreachable for the run itself.
+// running the connect flow first when this device has none. The saved
+// connection is checked before the command starts work: a server that is
+// down is reported in the first moment of the run rather than after a scan
+// and a selection prompt the run cannot honor.
 func ensureServer(ctx context.Context, store *tracking.Store, state *tracking.State, flagURL, flagToken string) (*remote.Client, error) {
 	url, token := serverConnection(*state, flagURL, flagToken)
 	if token != "" {
-		return remote.New(url, token, nil)
+		server, err := remote.New(url, token, nil)
+		if err != nil {
+			return nil, err
+		}
+		if err := awaitServer(ctx, url, server); err != nil {
+			if errors.Is(err, tui.ErrDisconnected) {
+				return nil, errReported
+			}
+			return nil, err
+		}
+		return server, nil
 	}
 	promptURL, promptToken, err := tui.PromptConnect(url)
 	if err != nil {
@@ -166,11 +179,49 @@ func ensureServer(ctx context.Context, store *tracking.Store, state *tracking.St
 	return establishServer(ctx, store, state, promptURL, promptToken)
 }
 
+// awaitServer contacts the server before the command starts work. In a
+// terminal the connection panel shows what happened and offers the retry key,
+// so a NAS that was asleep costs one keypress; under a service manager or a
+// pipe there is no one to ask, so the failure is one line and the run ends.
+func awaitServer(ctx context.Context, serverURL string, server *remote.Client) error {
+	if !isatty.IsTerminal(os.Stderr.Fd()) {
+		err := verifyConnection(ctx, server)
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, errRejectedToken):
+			tui.ServerRejectedToken(serverURL)
+		default:
+			tui.ServerUnreachable(serverURL, err)
+		}
+		return tui.ErrDisconnected
+	}
+	return tui.AwaitConnection(ctx, serverURL, func(checkCtx context.Context) *tui.ConnectionFailure {
+		err := verifyConnection(checkCtx, server)
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, errRejectedToken):
+			// Retrying re-asks with the same credentials; only connect helps.
+			return &tui.ConnectionFailure{
+				Cause: "the server rejected this token",
+				Fix:   "Run omnisave-client connect to reconnect this device",
+			}
+		default:
+			return &tui.ConnectionFailure{Cause: tui.Cause(err), Retry: true}
+		}
+	})
+}
+
+// errRejectedToken marks a server that answered and refused the credentials:
+// the connection is wrong rather than absent, so retrying cannot fix it.
+var errRejectedToken = errors.New("the server rejected this token")
+
 func verifyConnection(ctx context.Context, server *remote.Client) error {
 	_, err := server.ListOmnisaves(ctx)
 	var response *remote.ResponseError
 	if errors.As(err, &response) && response.StatusCode == http.StatusUnauthorized {
-		return errors.New("the server rejected this token")
+		return errRejectedToken
 	}
 	return err
 }
@@ -294,8 +345,49 @@ func runScan(ctx context.Context, scanner *client.Scanner, arguments []string) e
 	return err
 }
 
+// sessionMode is the difference between the two runs that reconcile.
+type sessionMode int
+
+const (
+	// appSession is the commandless run: it asks only what this Device has
+	// not answered yet and ends in the watch loop.
+	appSession sessionMode = iota
+	// trackSession is track: it exists to change which games this Device
+	// protects, so it always asks, and it ends with its report.
+	trackSession
+)
+
+// asks reports whether this run stops to ask which games to track.
+func (m sessionMode) asks(state tracking.State) bool {
+	return m == trackSession || len(state.Games) == 0
+}
+
+// keepsWatching reports whether this run hands off to the watch loop rather
+// than ending once the pass is reported.
+func (m sessionMode) keepsWatching() bool {
+	return m == appSession
+}
+
+// runApp is the bare command: the whole app as one state machine that skips
+// whatever this Device already did. It connects if there is no saved
+// connection, asks which games to track if none are tracked, and then
+// always reconciles once and watches until the run is quit.
+func runApp(ctx context.Context, scanner *client.Scanner, arguments []string) error {
+	return runSession(ctx, scanner, "omnisave-client", appSession, arguments)
+}
+
+// runTrack is the selection step on its own: it always asks, so a game
+// installed since the last run can join, reports what the pass did, and
+// exits. Protecting those saves is what the commandless run is for.
 func runTrack(ctx context.Context, scanner *client.Scanner, arguments []string) error {
-	flags := flag.NewFlagSet("track", flag.ContinueOnError)
+	return runSession(ctx, scanner, "track", trackSession, arguments)
+}
+
+// runSession connects, settles which games are tracked, and runs the one
+// reconcile pass that may ask. The commandless run then keeps watching;
+// track stops there.
+func runSession(ctx context.Context, scanner *client.Scanner, name string, mode sessionMode, arguments []string) error {
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	statePath := flags.String("state", "", "path to local tracking state")
 	serverURL := flags.String("server", environmentOr("OMNISAVE_SERVER_URL", ""), "Omnisave server URL")
 	token := flags.String("token", os.Getenv("OMNISAVE_API_TOKEN"), "Omnisave API token")
@@ -328,16 +420,20 @@ func runTrack(ctx context.Context, scanner *client.Scanner, arguments []string) 
 	if err != nil {
 		return err
 	}
-	selected, err := tui.SelectTrackedGames(scans, state.TrackedIDs())
-	if errors.Is(err, tui.ErrAborted) {
-		return nil
-	}
-	if errors.Is(err, tui.ErrNoGames) {
-		fmt.Println("No games were discovered to track.")
-		return nil
-	}
-	if err != nil {
-		return err
+	asked := mode.asks(state)
+	selected := standingSelection(state, scans)
+	if asked {
+		selected, err = tui.SelectTrackedGames(scans, state.TrackedIDs())
+		if errors.Is(err, tui.ErrAborted) {
+			return nil
+		}
+		if errors.Is(err, tui.ErrNoGames) {
+			fmt.Println("No games were discovered to track.")
+			return nil
+		}
+		if err != nil {
+			return err
+		}
 	}
 	removed, err := state.ApplyVisible(tracking.FromScans(scans), selected)
 	if err != nil {
@@ -389,15 +485,79 @@ func runTrack(ctx context.Context, scanner *client.Scanner, arguments []string) 
 		return waitErr
 	}
 	outcome.Untracked += reconciled
-	report.Print()
-	tui.TrackSummary(outcome)
+	pass := handoff{snapshot: report.Snapshot(), at: time.Now()}
+	// A run that asked answers with its report; a run that asked nothing has
+	// nothing to answer, so it lets the live view carry what the pass found.
+	if asked {
+		report.Print()
+		tui.TrackSummary(outcome)
+	}
 	if err := store.Save(state); err != nil {
 		return err
 	}
 	if errors.Is(waitErr, tui.ErrAborted) || errors.Is(bindingErr, tui.ErrAborted) {
 		return nil
 	}
-	return bindingErr
+	if bindingErr != nil {
+		return bindingErr
+	}
+	if !mode.keepsWatching() {
+		return nil
+	}
+	if asked {
+		// The report is scrollback now; the live block gets its own space.
+		fmt.Println()
+	}
+	return keepTracking(ctx, scanner, server, store, &state, scans, pass, *serverURL, *token)
+}
+
+// standingSelection is what a run that does not ask keeps: the tracked
+// games this scan can see. Re-applying it refreshes their scan details and
+// leaves games the scan missed tracked but untouched.
+func standingSelection(state tracking.State, scans []client.TargetScan) []string {
+	tracked := state.TrackedIDs()
+	selected := make([]string, 0, len(tracked))
+	for _, scan := range scans {
+		for _, discovered := range scan.Games {
+			if tracked[discovered.Game.ID] {
+				selected = append(selected, discovered.Game.ID)
+			}
+		}
+	}
+	return selected
+}
+
+// keepTracking hands the commandless run's reconcile pass to the watch loop
+// in the same process: whatever was printed is now scrollback, and the live
+// block takes the bottom of the terminal. Running Omnisave is leaving it
+// open, so the run does not end until the user quits it.
+func keepTracking(
+	ctx context.Context,
+	scanner *client.Scanner,
+	server *remote.Client,
+	store *tracking.Store,
+	state *tracking.State,
+	scans []client.TargetScan,
+	pass handoff,
+	flagURL, flagToken string,
+) error {
+	settings := defaultWatchSettings()
+	events := newAnnouncer()
+	// The run's own pass is the view's opening state, not news: the loop
+	// starts from it so the stream announces only what happens next.
+	events.seen(pass.snapshot)
+	loop := watchLoop{
+		scanner: scanner,
+		server:  server,
+		store:   store,
+		poll:    settings.poll,
+		pull:    settings.pull,
+		floor:   settings.floor,
+		events:  events,
+		watched: watchedFiles(state, scans),
+	}
+	url, _ := serverConnection(*state, flagURL, flagToken)
+	return keepWatching(ctx, loop, url, settings, pass)
 }
 
 // reconcileDeletedGames untracks games whose Library records were deleted on
@@ -1305,18 +1465,25 @@ func printUsage() {
 	fmt.Println(`Omnisave client
 
 Usage:
-  omnisave-client [track] [--state path]
+  omnisave-client [--state path]
+  omnisave-client track [--state path]
   omnisave-client sync [--state path]
   omnisave-client watch [--poll 10s] [--pull-every 15m] [--floor 5m]
   omnisave-client connect [URL] [--state path]
   omnisave-client scan [--verbose]
   omnisave-client bind [--state path]
 
+Run omnisave-client with no command to run Omnisave. It skips whatever this
+device already did: it asks for your server connection only if there is none
+saved, asks which games to track only if none are tracked, then always syncs
+once and keeps watching until you quit.
+
 Commands:
   track    Choose which discovered games should be synchronized; tracked games
            are added to your server library and record this device's provenance.
-           Running omnisave-client with no command runs track; the first run
-           asks for your server connection.
+           It always asks, so a game installed since the last run can join,
+           then syncs once, reports what happened, and exits. Protecting those
+           saves from then on is what a commandless run does.
   sync     Sync every tracked save once: local progress uploads, server
            progress downloads, and anything needing a decision is reported
            for the next track run. Never prompts.
