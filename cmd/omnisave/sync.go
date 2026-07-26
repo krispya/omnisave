@@ -20,7 +20,7 @@ import (
 func syncConnection(state tracking.State, flagURL, flagToken string) (*remote.Client, error) {
 	url, token := serverConnection(state, flagURL, flagToken)
 	if token == "" {
-		return nil, errors.New("no server connection; run omnisave-client track or connect first")
+		return nil, errors.New("no server connection; run omnisave track or connect first")
 	}
 	return remote.New(url, token, nil)
 }

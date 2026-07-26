@@ -1,7 +1,7 @@
 # FDR-006: Connecting a Device
 
 **Status:** Experimental
-**Last reviewed:** 2026-07-25
+**Last reviewed:** 2026-07-26
 
 ## Overview
 
@@ -20,12 +20,12 @@ network.
 
 ## Behavior
 
-- `omnisave-client connect` with no arguments looks for servers announcing
+- `omnisave connect` with no arguments looks for servers announcing
   themselves over mDNS on the local network
   ([ADR-009](../adr/ADR-009-mdns-server-discovery.md)). One match is used;
   several are listed to choose from; none reports that nothing was found and
   asks for an address.
-- `omnisave-client connect --server <url>`, or the same URL given positionally
+- `omnisave connect --server <url>`, or the same URL given positionally
   as `connect` accepts it today, skips discovery. It is the only shape that
   works where the server cannot announce — a bridged container, a routed or
   segmented network, anything across the internet — and everything after the
@@ -72,7 +72,7 @@ network.
   ([ADR-010](../adr/ADR-010-taking-ownership.md)). Setting
   `OMNISAVE_TOKEN` supplies one instead and nothing is generated.
 - The owner token keeps working as the way in when nothing else does:
-  `omnisave-client connect --server <url> --token <owner token>` skips pairing
+  `omnisave connect --server <url> --token <owner token>` skips pairing
   and stores it. Devices connected before pairing existed hold that token and
   keep working unchanged; running `connect` again is what trades it for a
   credential of their own.

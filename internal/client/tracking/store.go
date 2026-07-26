@@ -33,7 +33,7 @@ type Device struct {
 	Name string `json:"name"`
 }
 
-// Server is the persisted connection created by `omnisave-client connect`.
+// Server is the persisted connection created by `omnisave connect`.
 type Server struct {
 	URL   string `json:"url,omitempty"`
 	Token string `json:"token,omitempty"`

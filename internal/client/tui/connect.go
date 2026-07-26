@@ -83,7 +83,7 @@ func ConnectDenied() {
 // behind on the server, so the only thing to say is to try again.
 func ConnectExpired() {
 	fmt.Println(errorStyle.Render("✗") + " Not connected  " +
-		mutedStyle.Render("the code expired; run omnisave-client connect again"))
+		mutedStyle.Render("the code expired; run omnisave connect again"))
 }
 
 // ConnectSuccess confirms the persisted connection and the device it created.
@@ -128,7 +128,7 @@ func ServerRejectedToken(serverURL string) {
 
 func serverRejectedTokenLine(serverURL string) string {
 	return FailureLine("the Omnisave server at " + serverURL +
-		" rejected this token; run omnisave-client connect")
+		" rejected this token; run omnisave connect")
 }
 
 // Cause reduces a failed request to the part worth reading: the line already

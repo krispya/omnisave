@@ -34,15 +34,15 @@ User-facing concepts. If a user might say the word, it goes here.
 
 **Provenance** — A Game's append-only record of the Devices that have tracked it: per device, when it was first tracked, when it was last seen, whether the install is still present, and whether it has since been untracked. Provenance survives untracking, uninstalls, and deletion of every omnisave; only deleting the Game removes it. Distinct from a save's fork lineage (see _Fork_). See [FDR-002](fdr/FDR-002-game-lifecycle.md).
 
-**Scan** — A read-only discovery pass across adapters, reporting each target, its installed games, and their current saves without modifying anything. Run with `omnisave-client scan`.
+**Scan** — A read-only discovery pass across adapters, reporting each target, its installed games, and their current saves without modifying anything. Run with `omnisave scan`.
 
 **Tracking** — A Device's selection of which discovered games to synchronize, chosen in the `track` prompt and persisted in local tracking state (`client.json` in the user config directory). Tracking is what makes Omnisave aware of a game: at track time the game is resolved from the Catalog into the Library, before any save is bound. Games that disappear from a scan stay tracked until explicitly unselected, or until a track run learns the game was deleted on the server (see [FDR-002](fdr/FDR-002-game-lifecycle.md)).
 
 **Local Save** — One adapter-native save set discovered on this machine; may contain multiple files.
 
-**Binding** — A machine-local mapping from one Local Save to one omnisave. Tracking creates bindings automatically when it seeds a new omnisave or finds one lineage with matching head content; `omnisave-client bind` remains available for corrections. A binding records the revision whose content the Local Save is known to equal — the **sync baseline**. A manual binding to non-matching content has no baseline and starts life diverged (see _Sync_).
+**Binding** — A machine-local mapping from one Local Save to one omnisave. Tracking creates bindings automatically when it seeds a new omnisave or finds one lineage with matching head content; `omnisave bind` remains available for corrections. A binding records the revision whose content the Local Save is known to equal — the **sync baseline**. A manual binding to non-matching content has no baseline and starts life diverged (see _Sync_).
 
-**Sync** — The pass keeping a bound save and its omnisave equal: local progress commits up as revisions, server progress applies down to disk, and the sync baseline arbitrates which direction is safe. New progress on both sides is **divergence**, which sync never resolves on its own — an interactive track run asks, and both answers keep everything. Runs once via `omnisave-client sync` and continuously via `omnisave-client watch`. See [FDR-005](fdr/FDR-005-save-sync.md).
+**Sync** — The pass keeping a bound save and its omnisave equal: local progress commits up as revisions, server progress applies down to disk, and the sync baseline arbitrates which direction is safe. New progress on both sides is **divergence**, which sync never resolves on its own — an interactive track run asks, and both answers keep everything. Runs once via `omnisave sync` and continuously via `omnisave watch`. See [FDR-005](fdr/FDR-005-save-sync.md).
 
 ## Authorization
 
@@ -66,7 +66,7 @@ Infrastructure jargon. If only contributors say the word, it goes here.
 
 **Server** — The self-hosted Go service (NAS-first) that owns the Library, omnisaves, and artifacts, exposed as an HTTP API under `/api/v1`. The server is the source of truth; clients hold only machine-local state.
 
-**Client** — The portable `omnisave-client` binary that runs where games live (Steam Deck first). It scans, tracks, binds, and syncs, talking to one server through the authenticated `remote` HTTP client (`internal/client/remote`). One self-identified installation of it is a _Device_ (Product).
+**Client** — The portable `omnisave` binary that runs where games live (Steam Deck first). It scans, tracks, binds, and syncs, talking to one server through the authenticated `remote` HTTP client (`internal/client/remote`). One self-identified installation of it is a _Device_ (Product).
 
 **Repository** — The server's persistence boundary: Omnisave records, Game records, and artifact storage behind one interface (`internal/storage`), implemented on SQLite.
 
