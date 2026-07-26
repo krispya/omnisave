@@ -33,7 +33,7 @@ trap 'rm -rf "${STAGE}"' EXIT INT TERM
 PAYLOAD="${STAGE}/payload"
 PACKAGE="${STAGE}/package"
 mkdir -p "${PAYLOAD}/bin" "${PAYLOAD}/web" "${PAYLOAD}/port_conf" \
-    "${PACKAGE}/scripts" "${PACKAGE}/conf" "${PACKAGE}/WIZARD_UIFILES"
+    "${PACKAGE}/scripts" "${PACKAGE}/conf"
 
 (
     cd "${ROOT}"
@@ -51,7 +51,6 @@ sed \
     "${ROOT}/packaging/synology/INFO.template" > "${PACKAGE}/INFO"
 cp -R "${ROOT}/packaging/synology/scripts/." "${PACKAGE}/scripts/"
 cp -R "${ROOT}/packaging/synology/conf/." "${PACKAGE}/conf/"
-cp -R "${ROOT}/packaging/synology/WIZARD_UIFILES/." "${PACKAGE}/WIZARD_UIFILES/"
 cp "${ROOT}/packaging/synology/PACKAGE_ICON.PNG" "${PACKAGE}/PACKAGE_ICON.PNG"
 cp "${ROOT}/packaging/synology/PACKAGE_ICON_256.PNG" "${PACKAGE}/PACKAGE_ICON_256.PNG"
 chmod 755 "${PACKAGE}/scripts/"*
@@ -59,6 +58,6 @@ chmod 755 "${PACKAGE}/scripts/"*
 mkdir -p "${ROOT}/dist"
 OUTPUT="${ROOT}/dist/omnisave-${VERSION}-${SPK_BUILD}-${SPK_ARCH}.spk"
 tar -cf "${OUTPUT}" -C "${PACKAGE}" \
-    INFO package.tgz scripts conf WIZARD_UIFILES PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG
+    INFO package.tgz scripts conf PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG
 
 echo "${OUTPUT}"

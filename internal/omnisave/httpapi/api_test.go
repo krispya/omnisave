@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	accessservice "github.com/krisbaumgartner/omnisave/internal/access/service"
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	catalogservice "github.com/krisbaumgartner/omnisave/internal/catalog/service"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
@@ -22,7 +23,7 @@ import (
 )
 
 func TestNetworkClientStory(t *testing.T) {
-	handler := httpapi.New(omnisaveservice.New(storagetest.NewMemoryRepository()))
+	handler := newHandler(t, storagetest.NewMemoryRepository())
 
 	createBody := bytes.NewBufferString(`{"game_id":"pokemon-emerald-usa"}`)
 	response := request(t, handler, http.MethodPost, "/api/v1/omnisaves", "application/json", createBody)
@@ -158,7 +159,7 @@ func uploadArtifact(t *testing.T, handler http.Handler, contents string) omnisav
 }
 
 func TestUpdateOmnisaveDisplayName(t *testing.T) {
-	handler := httpapi.New(omnisaveservice.New(storagetest.NewMemoryRepository()))
+	handler := newHandler(t, storagetest.NewMemoryRepository())
 
 	response := request(t, handler, http.MethodPost, "/api/v1/omnisaves", "application/json",
 		bytes.NewBufferString(`{"game_id":"pokemon-emerald-usa"}`))
@@ -188,7 +189,7 @@ func TestUpdateOmnisaveDisplayName(t *testing.T) {
 }
 
 func TestDownloadSaveArchive(t *testing.T) {
-	handler := httpapi.New(omnisaveservice.New(storagetest.NewMemoryRepository()))
+	handler := newHandler(t, storagetest.NewMemoryRepository())
 
 	createBody := bytes.NewBufferString(
 		`{"game_id":"pokemon-emerald-usa","display_name":"Before the final boss"}`)
@@ -243,7 +244,7 @@ func TestDownloadSaveArchive(t *testing.T) {
 }
 
 func TestDownloadRevisionArchive(t *testing.T) {
-	handler := httpapi.New(omnisaveservice.New(storagetest.NewMemoryRepository()))
+	handler := newHandler(t, storagetest.NewMemoryRepository())
 
 	createBody := bytes.NewBufferString(
 		`{"game_id":"pokemon-emerald-usa","display_name":"Before the final boss"}`)
@@ -335,32 +336,59 @@ func archiveContents(t *testing.T, archive *zip.Reader) map[string]string {
 	return contents
 }
 
-func TestBearerAuth(t *testing.T) {
-	protected := httpapi.BearerAuth("secret", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+func TestAuthenticationTakesTheOwnerTokenAndIssuedCredentialsOnly(t *testing.T) {
+	credentials := accessservice.New(storagetest.NewMemoryRepository(), "secret")
+	protected := httpapi.Authenticate(credentials, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := httpapi.PrincipalFrom(r.Context())
+		if !ok || principal == nil {
+			t.Error("an authenticated request carried no principal")
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	withoutToken := httptest.NewRequest(http.MethodGet, "/api/v1/omnisaves", nil)
-	response := httptest.NewRecorder()
-	protected.ServeHTTP(response, withoutToken)
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("request without token returned %d", response.Code)
+	issued, err := credentials.ExchangeOwnerToken(context.Background(), "Dash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, testCase := range []struct {
+		name   string
+		token  string
+		status int
+	}{
+		{name: "no token", token: "", status: http.StatusUnauthorized},
+		{name: "the owner token", token: "secret", status: http.StatusNoContent},
+		{name: "an issued credential", token: issued.Token, status: http.StatusNoContent},
+		{name: "someone else's guess", token: "secret2", status: http.StatusUnauthorized},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/omnisaves", nil)
+		if testCase.token != "" {
+			request.Header.Set("Authorization", "Bearer "+testCase.token)
+		}
+		response := httptest.NewRecorder()
+		protected.ServeHTTP(response, request)
+		if response.Code != testCase.status {
+			t.Fatalf("%s returned %d, wanted %d", testCase.name, response.Code, testCase.status)
+		}
 	}
 
-	withToken := httptest.NewRequest(http.MethodGet, "/api/v1/omnisaves", nil)
-	withToken.Header.Set("Authorization", "Bearer secret")
-	response = httptest.NewRecorder()
-	protected.ServeHTTP(response, withToken)
-	if response.Code != http.StatusNoContent {
-		t.Fatalf("authorized request returned %d", response.Code)
+	// Revoking is what makes a credential stop working, and it must not touch
+	// the owner token that issued it.
+	if err := credentials.Revoke(context.Background(), issued.Credential.ID); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/omnisaves", nil)
+	request.Header.Set("Authorization", "Bearer "+issued.Token)
+	response := httptest.NewRecorder()
+	protected.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("a revoked credential returned %d", response.Code)
 	}
 }
 
 func TestCatalogStory(t *testing.T) {
 	repository := storagetest.NewMemoryRepository()
-	saves := omnisaveservice.New(repository)
 	games := catalogservice.New(repository, repository, catalogProviderStub{})
-	handler := httpapi.New(saves, games)
+	handler := newHandler(t, repository, games)
 
 	response := request(t, handler, http.MethodPost, "/api/v1/games/resolve", "application/json",
 		bytes.NewBufferString(`{
@@ -423,10 +451,7 @@ func TestCatalogStory(t *testing.T) {
 // provenance travels with game reads; untracking annotates the record.
 func TestDeviceTrackingStory(t *testing.T) {
 	repository := storagetest.NewMemoryRepository()
-	handler := httpapi.New(
-		omnisaveservice.New(repository),
-		catalogservice.New(repository, repository, catalogProviderStub{}),
-	)
+	handler := newHandler(t, repository, catalogservice.New(repository, repository, catalogProviderStub{}))
 
 	response := request(t, handler, http.MethodPut, "/api/v1/devices/device-1", "application/json",
 		bytes.NewBufferString(`{"name":"Steam Deck","platform":"linux"}`))
@@ -487,10 +512,7 @@ func TestDeviceTrackingStory(t *testing.T) {
 
 func TestManualCatalogMatchStory(t *testing.T) {
 	repository := storagetest.NewMemoryRepository()
-	handler := httpapi.New(
-		omnisaveservice.New(repository),
-		catalogservice.New(repository, repository, catalogProviderStub{}),
-	)
+	handler := newHandler(t, repository, catalogservice.New(repository, repository, catalogProviderStub{}))
 
 	response := request(t, handler, http.MethodGet,
 		"/api/v1/games/debug-game/match-candidates?q=Super+Mario+World&platform=SNES", "", nil)
@@ -567,9 +589,23 @@ func (catalogProviderStub) OpenMedia(context.Context, catalog.MediaReference) (s
 	return "image/png", io.NopCloser(strings.NewReader(testCoverImage)), nil
 }
 
+// newHandler builds the handler the server ships: authenticated, over one
+// repository, with the owner token every request helper here sends.
+func newHandler(
+	t *testing.T, repository *storagetest.MemoryRepository, catalogs ...catalog.Service,
+) http.Handler {
+	t.Helper()
+	config := httpapi.Config{Saves: omnisaveservice.New(repository)}
+	if len(catalogs) > 0 {
+		config.Catalog = catalogs[0]
+	}
+	return httpapi.New(accessservice.New(repository, owner), config)
+}
+
 func request(t *testing.T, handler http.Handler, method, path, contentType string, body io.Reader) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequestWithContext(context.Background(), method, path, body)
+	request.Header.Set("Authorization", "Bearer "+owner)
 	if contentType != "" {
 		request.Header.Set("Content-Type", contentType)
 	}

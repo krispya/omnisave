@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/krisbaumgartner/omnisave/internal/access"
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
@@ -58,6 +59,74 @@ type CatalogRepository interface {
 	GetGameMedia(ctx context.Context, gameID, mediaID string) (*catalog.GameMedia, error)
 }
 
+// CredentialRecord is a credential as it is stored, carrying the hash that
+// authentication looks up.
+//
+// The secret-carrying shapes live here rather than beside the API types they
+// embed. A hash and a minted token have no business in a package that answers
+// HTTP: keeping them one import away from the handlers is what stops them from
+// being serialized by a writeJSON that meant to send the credential itself.
+type CredentialRecord struct {
+	access.Credential
+	TokenHash string
+}
+
+// PairingRecord is a pairing request as it is stored. It carries the two
+// secrets the API never returns together: the hashed poll handle, which is
+// what collects the credential, and the minted token, which is held only
+// between approval and the one collection that takes it.
+type PairingRecord struct {
+	access.PairingRequest
+	HandleHash  string
+	MintedToken string
+}
+
+// AccessRepository persists issued credentials and pairing requests.
+type AccessRepository interface {
+	InsertCredential(ctx context.Context, record CredentialRecord) error
+	// InsertFirstCredential stores a credential only while the server has
+	// none, and answers ErrConflict once it has one. Claiming a server is a
+	// race between whoever reaches it first, so "only the first" has to be
+	// decided by the write rather than by a read before it (ADR-010).
+	InsertFirstCredential(ctx context.Context, record CredentialRecord) error
+	FindCredentialByTokenHash(ctx context.Context, tokenHash string) (*access.Credential, error)
+	ListCredentials(ctx context.Context) ([]access.Credential, error)
+	TouchCredential(ctx context.Context, id string, at time.Time) error
+	RevokeCredential(ctx context.Context, id string, at time.Time) error
+
+	InsertPairingRequest(ctx context.Context, record PairingRecord) error
+	GetPairingRequest(ctx context.Context, id string) (*access.PairingRequest, error)
+	ListPendingPairingRequests(ctx context.Context, now time.Time) ([]access.PairingRequest, error)
+	ResolvePairingRequest(ctx context.Context, id string, status access.PairingStatus, credentialID, mintedToken string) error
+	// TakePairingToken reads a request by its handle hash and, when one is
+	// waiting there, takes the minted token in the same step. Collecting a
+	// credential has to be single use, so the read and the clear are one
+	// operation rather than two a second poller could interleave with.
+	TakePairingToken(ctx context.Context, handleHash string, now time.Time) (*PairingRecord, error)
+	CountRecentPairingRequests(ctx context.Context, sourceAddress string, since time.Time) (int, error)
+	DeleteExpiredPairingRequests(ctx context.Context, before time.Time) error
+
+	GetOwnerPIN(ctx context.Context) (*OwnerPIN, error)
+	SetOwnerPIN(ctx context.Context, pin OwnerPIN) error
+}
+
+// OwnerPIN is the stored form of the owner's PIN: a salted, slow hash and the
+// cost it was computed at, so the cost can be raised later without stranding
+// PINs set before the change.
+type OwnerPIN struct {
+	Salt       string
+	Hash       string
+	Iterations int
+	UpdatedAt  time.Time
+}
+
+// SettingsRepository persists owner settings, the small tier of configuration
+// that belongs to the owner rather than the deployment (ADR-008).
+type SettingsRepository interface {
+	GetOwnerSetting(ctx context.Context, key string) (string, error)
+	SetOwnerSetting(ctx context.Context, key, value string, at time.Time) error
+}
+
 // Artifact describes content-addressed bytes stored outside metadata tables.
 type Artifact struct {
 	Format string
@@ -77,4 +146,6 @@ type Repository interface {
 	OmnisaveRepository
 	CatalogRepository
 	ArtifactStore
+	AccessRepository
+	SettingsRepository
 }

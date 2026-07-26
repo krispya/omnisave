@@ -14,6 +14,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 
+	"github.com/krisbaumgartner/omnisave/internal/access"
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client"
 	"github.com/krisbaumgartner/omnisave/internal/client/binding"
@@ -23,6 +24,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client/target/steam"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
+	"github.com/krisbaumgartner/omnisave/internal/discovery"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
@@ -69,17 +71,23 @@ func run(ctx context.Context, arguments []string) error {
 	}
 }
 
-// runConnect verifies a server connection and persists it for later commands.
-// Nothing is saved unless the token is accepted, so a failed attempt leaves
-// any previous connection intact.
+// runConnect connects this Device to a server and persists the credential the
+// owner approved. Nothing is saved unless a credential comes back, so a
+// refused or abandoned attempt leaves any previous connection intact.
 func runConnect(ctx context.Context, arguments []string) error {
 	flags := flag.NewFlagSet("connect", flag.ContinueOnError)
 	statePath := flags.String("state", "", "path to local tracking state")
-	token := flags.String("token", os.Getenv("OMNISAVE_API_TOKEN"), "Omnisave API token")
+	server := flags.String("server", "", "Omnisave server URL; skips discovery")
+	// The owner token remains the way in when nothing else works, so it stays
+	// available here — and stays the exception rather than the flow.
+	token := flags.String("token", os.Getenv("OMNISAVE_API_TOKEN"), "owner token; skips pairing")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
-	serverURL := flags.Arg(0)
+	serverURL := *server
+	if serverURL == "" {
+		serverURL = flags.Arg(0)
+	}
 	// The standard flag package stops at the first positional argument, so
 	// flags written after the URL ("connect URL --state path") need a second
 	// parsing pass over the remainder.
@@ -97,31 +105,125 @@ func runConnect(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
-
 	if serverURL == "" {
-		serverURL = environmentOr("OMNISAVE_SERVER_URL", state.Server.URL)
-	}
-	apiToken := *token
-	if serverURL == "" || apiToken == "" {
-		defaultURL := serverURL
-		if defaultURL == "" {
-			defaultURL = "http://localhost:8080"
-		}
-		promptURL, promptToken, err := tui.PromptConnect(defaultURL)
-		if errors.Is(err, tui.ErrAborted) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		serverURL = promptURL
-		if apiToken == "" {
-			apiToken = promptToken
-		}
+		serverURL = os.Getenv("OMNISAVE_SERVER_URL")
 	}
 
-	_, err = establishServer(ctx, store, &state, serverURL, apiToken)
+	if *token != "" {
+		if serverURL == "" {
+			serverURL = state.Server.URL
+		}
+		if serverURL == "" {
+			return errors.New("connecting with a token needs --server")
+		}
+		_, err = establishServer(ctx, store, &state, serverURL, *token)
+		return err
+	}
+	_, err = connectByPairing(ctx, store, &state, serverURL)
+	if errors.Is(err, tui.ErrAborted) {
+		// Calling off a connection is not a failure worth an error line.
+		return nil
+	}
 	return err
+}
+
+// connectByPairing runs the flow a Device with no credential goes through:
+// find a server, ask it to pair, show the code the owner matches in the Dash,
+// and wait for them to answer (FDR-006).
+func connectByPairing(
+	ctx context.Context, store *tracking.Store, state *tracking.State, serverURL string,
+) (*remote.Client, error) {
+	if serverURL == "" {
+		found, err := findServer(ctx)
+		if err != nil {
+			// Aborting is passed through rather than reported: calling off a
+			// run is not a failure, and the caller ends it quietly.
+			return nil, err
+		}
+		serverURL = found
+	}
+	serverURL, err := remote.NormalizeServerURL(serverURL)
+	if err != nil {
+		tui.ConnectFailed(err)
+		return nil, errReported
+	}
+
+	device := state.EnsureDevice(deviceName())
+	ticket, err := remote.RequestPairing(ctx, serverURL, access.RequestPairing{
+		DeviceID:   device.ID,
+		DeviceName: device.Name,
+		Platform:   runtime.GOOS,
+	}, nil)
+	if err != nil {
+		tui.ConnectFailed(err)
+		return nil, errReported
+	}
+
+	// The token is collected by the poll the screen drives, so it is captured
+	// here rather than returned through the interface: what the screen shows
+	// is a code and a state, never a credential.
+	var credential string
+	outcome, err := tui.AwaitApproval(ctx, serverURL, ticket.Code,
+		func(ctx context.Context) (access.CollectionStatus, error) {
+			collection, err := remote.CollectPairing(ctx, serverURL, ticket.Handle, nil)
+			if err != nil {
+				return access.CollectionPending, err
+			}
+			if collection.Status == access.CollectionApproved {
+				credential = collection.Token
+			}
+			return collection.Status, nil
+		})
+	if errors.Is(err, tui.ErrAborted) {
+		return nil, err
+	}
+	if err != nil {
+		tui.ConnectFailed(err)
+		return nil, errReported
+	}
+
+	switch outcome {
+	case access.CollectionApproved:
+		return establishServer(ctx, store, state, serverURL, credential)
+	case access.CollectionDenied:
+		tui.ConnectDenied()
+	default:
+		tui.ConnectExpired()
+	}
+	return nil, errReported
+}
+
+// findServer looks for servers announcing themselves and settles on one. A
+// network that announced nothing is the ordinary case in a bridged container,
+// so it asks for an address rather than giving up (ADR-009).
+func findServer(ctx context.Context) (string, error) {
+	var servers []discovery.Server
+	var browseErr error
+	if err := tui.Wait(ctx, "Looking for Omnisave servers", func(ctx context.Context, _ *tui.WaitSession) {
+		servers, browseErr = discovery.Browse(ctx, 0)
+	}); err != nil {
+		return "", err
+	}
+	if browseErr != nil {
+		// Discovery is a convenience; a machine that cannot browse can still
+		// be told where the server is.
+		servers = nil
+	}
+
+	switch len(servers) {
+	case 0:
+		tui.NoServersFound()
+		return tui.PromptServerURL("http://localhost:8080")
+	case 1:
+		tui.ServerFound(servers[0])
+		return servers[0].URL, nil
+	default:
+		chosen, err := tui.ChooseServer(servers)
+		if err != nil {
+			return "", err
+		}
+		return chosen.URL, nil
+	}
 }
 
 // establishServer verifies a connection, registers this device, and persists
@@ -172,11 +274,9 @@ func ensureServer(ctx context.Context, store *tracking.Store, state *tracking.St
 		}
 		return server, nil
 	}
-	promptURL, promptToken, err := tui.PromptConnect(url)
-	if err != nil {
-		return nil, err
-	}
-	return establishServer(ctx, store, state, promptURL, promptToken)
+	// No credential yet: this Device has never been connected, so it runs the
+	// same pairing flow `connect` does rather than asking for a secret.
+	return connectByPairing(ctx, store, state, flagURL)
 }
 
 // awaitServer contacts the server before the command starts work. In a
@@ -1469,14 +1569,14 @@ Usage:
   omnisave-client track [--state path]
   omnisave-client sync [--state path]
   omnisave-client watch [--poll 10s] [--pull-every 15m] [--floor 5m]
-  omnisave-client connect [URL] [--state path]
+  omnisave-client connect [--server URL] [--state path]
   omnisave-client scan [--verbose]
   omnisave-client bind [--state path]
 
 Run omnisave-client with no command to run Omnisave. It skips whatever this
-device already did: it asks for your server connection only if there is none
-saved, asks which games to track only if none are tracked, then always syncs
-once and keeps watching until you quit.
+device already did: it connects this device only if it holds no credential,
+asks which games to track only if none are tracked, then always syncs once and
+keeps watching until you quit.
 
 Commands:
   track    Choose which discovered games should be synchronized; tracked games
@@ -1490,10 +1590,16 @@ Commands:
   watch    Keep syncing continuously: commits shortly after the game stops
            writing its save and checks the server periodically. Run it under
            your service manager to survive reboots.
-  connect  Link this device to your Omnisave server and remember the connection
+  connect  Connect this device to your Omnisave server. With no arguments it
+           looks for a server announcing itself on the local network, then
+           shows a code to approve in the Dash's server settings. Use --server
+           when nothing announces, such as from outside the network.
   scan     Discover installed targets, games, and saves without changing state
   bind     Choose which Omnisave a discovered local save should synchronize with
 
-The saved connection can be overridden per command with --server and --token,
-or the OMNISAVE_SERVER_URL and OMNISAVE_API_TOKEN environment variables.`)
+Once connected, this device holds its own credential and later commands need
+no token or address. The connection can still be overridden per command with
+--server and --token, or the OMNISAVE_SERVER_URL and OMNISAVE_API_TOKEN
+environment variables; the owner token remains the way in when nothing else
+works.`)
 }

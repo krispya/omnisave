@@ -29,7 +29,7 @@ Compose overrides only the settings an operator owns. The server handles
 SIGTERM with a graceful HTTP shutdown before the container is stopped.
 
 The image runs as a fixed unprivileged user and contains no mutable state.
-Compose mounts the data root and supplies the API token.
+Compose mounts the data root; the server generates its own owner token when none is supplied.
 
 Kubernetes packaging, an external database, and multiple server replicas are
 out of scope. They add operational surface without serving the single-owner,
