@@ -12,7 +12,7 @@ services:
       #
       # Bridged networking does not carry multicast to the LAN, so this
       # deployment cannot announce itself however OMNISAVE_DISCOVERY is set.
-      # Connect devices with omnisave-client connect --server URL.
+      # Connect devices with omnisave connect --server URL.
       OMNISAVE_NAME: ${OMNISAVE_NAME:-}
       OMNISAVE_DISCOVERY: ${OMNISAVE_DISCOVERY:-}
       OMNISAVE_HASHEOUS_BASE_URL: ${OMNISAVE_HASHEOUS_BASE_URL:-}

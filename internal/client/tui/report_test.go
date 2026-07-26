@@ -20,7 +20,7 @@ func TestTrackReportNestsEachGamesEventsUnderItsLine(t *testing.T) {
 		"      Added to the library as Slay the Spire II",
 		"  ✓ Project Zomboid",
 		"      Linked to the library",
-		"      Save needs omnisave-client bind",
+		"      Save needs omnisave bind",
 	}, "\n")
 	if rendered != expected {
 		t.Fatalf("expected each event on its own line under its game, got:\n%s", rendered)
@@ -64,7 +64,7 @@ func TestTheStandingTableDropsEventLinesAndKeepsTheCondition(t *testing.T) {
 
 	expected := strings.Join([]string{
 		"  ✓ Slay the Spire 2  Save 1 · synced 2m ago",
-		"  ○ Project Zomboid   Save diverged from Save 2, run omnisave-client track to resolve",
+		"  ○ Project Zomboid   Save diverged from Save 2, run omnisave track to resolve",
 	}, "\n")
 	if rendered != expected {
 		t.Fatalf("expected one standing line per game, got:\n%s", rendered)
@@ -171,8 +171,8 @@ func TestTrackReportSpeaksSyncExceptions(t *testing.T) {
 
 	rendered := strings.Join(report.render(), "\n")
 	for _, sentence := range []string{
-		"Save diverged from New Game+, run omnisave-client track to resolve",
-		"Save is behind Farm run, run omnisave-client track to resolve",
+		"Save diverged from New Game+, run omnisave track to resolve",
+		"Save is behind Farm run, run omnisave track to resolve",
 	} {
 		if !strings.Contains(rendered, sentence) {
 			t.Fatalf("expected %q in the report, got:\n%s", sentence, rendered)

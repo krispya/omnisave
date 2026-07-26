@@ -26,10 +26,10 @@ one with `OMNISAVE_TOKEN_FILE`. The Compose project stores the database and
 artifacts in its `data` volume, runs the server without root privileges, and
 restarts it unless explicitly stopped.
 
-Connect a device with `omnisave-client connect`, then approve the code it shows
+Connect a device with `omnisave connect`, then approve the code it shows
 under **Server** in the Dash. On a local network the client finds the server by
 itself; a bridged container cannot announce over mDNS, so this deployment needs
-`omnisave-client connect --server http://your-server:8080`.
+`omnisave connect --server http://your-server:8080`.
 
 Upgrade in place:
 
@@ -95,17 +95,17 @@ Build and run the client scanner:
 
 ```sh
 make build-client
-./bin/omnisave-client scan
+./bin/omnisave scan
 ```
 
 The default view reports adapter totals followed by compact save statistics for
-each discovered game. Use `./bin/omnisave-client scan --verbose` to include
+each discovered game. Use `./bin/omnisave scan --verbose` to include
 target locations, save sets, and individual files.
 
 Run Omnisave:
 
 ```sh
-./bin/omnisave-client
+./bin/omnisave
 ```
 
 The commandless run is the whole app. It asks for a server connection only if
@@ -116,7 +116,7 @@ Change the selection later with an explicit run, which always asks and then
 exits:
 
 ```sh
-./bin/omnisave-client track
+./bin/omnisave track
 ```
 
 The tracking prompt is preselected from local state. Space toggles a game,

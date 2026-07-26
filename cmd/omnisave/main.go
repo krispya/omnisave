@@ -35,7 +35,7 @@ var errReported = errors.New("failure already reported")
 func main() {
 	if err := run(context.Background(), os.Args[1:]); err != nil {
 		if !errors.Is(err, errReported) {
-			fmt.Fprintf(os.Stderr, "omnisave-client: %v\n", err)
+			fmt.Fprintf(os.Stderr, "omnisave: %v\n", err)
 		}
 		os.Exit(1)
 	}
@@ -67,7 +67,7 @@ func run(ctx context.Context, arguments []string) error {
 		if strings.HasPrefix(arguments[0], "-") {
 			return runApp(ctx, scanner, arguments)
 		}
-		return fmt.Errorf("unknown command %q; run omnisave-client with no command, or use track, sync, watch, connect, scan, or bind", arguments[0])
+		return fmt.Errorf("unknown command %q; run omnisave with no command, or use track, sync, watch, connect, scan, or bind", arguments[0])
 	}
 }
 
@@ -305,7 +305,7 @@ func awaitServer(ctx context.Context, serverURL string, server *remote.Client) e
 			// Retrying re-asks with the same credentials; only connect helps.
 			return &tui.ConnectionFailure{
 				Cause: "the server rejected this token",
-				Fix:   "Run omnisave-client connect to reconnect this device",
+				Fix:   "Run omnisave connect to reconnect this device",
 			}
 		default:
 			return &tui.ConnectionFailure{Cause: tui.Cause(err), Retry: true}
@@ -473,7 +473,7 @@ func (m sessionMode) keepsWatching() bool {
 // connection, asks which games to track if none are tracked, and then
 // always reconciles once and watches until the run is quit.
 func runApp(ctx context.Context, scanner *client.Scanner, arguments []string) error {
-	return runSession(ctx, scanner, "omnisave-client", appSession, arguments)
+	return runSession(ctx, scanner, "omnisave", appSession, arguments)
 }
 
 // runTrack is the selection step on its own: it always asks, so a game
@@ -1565,15 +1565,15 @@ func printUsage() {
 	fmt.Println(`Omnisave client
 
 Usage:
-  omnisave-client [--state path]
-  omnisave-client track [--state path]
-  omnisave-client sync [--state path]
-  omnisave-client watch [--poll 10s] [--pull-every 15m] [--floor 5m]
-  omnisave-client connect [--server URL] [--state path]
-  omnisave-client scan [--verbose]
-  omnisave-client bind [--state path]
+  omnisave [--state path]
+  omnisave track [--state path]
+  omnisave sync [--state path]
+  omnisave watch [--poll 10s] [--pull-every 15m] [--floor 5m]
+  omnisave connect [--server URL] [--state path]
+  omnisave scan [--verbose]
+  omnisave bind [--state path]
 
-Run omnisave-client with no command to run Omnisave. It skips whatever this
+Run omnisave with no command to run Omnisave. It skips whatever this
 device already did: it connects this device only if it holds no credential,
 asks which games to track only if none are tracked, then always syncs once and
 keeps watching until you quit.

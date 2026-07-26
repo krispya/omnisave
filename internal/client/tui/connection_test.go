@@ -94,13 +94,13 @@ func TestRetryingContactsTheServerAgainAndConnects(t *testing.T) {
 func TestAFailureRetryingCannotClearOffersTheFixInsteadOfTheKey(t *testing.T) {
 	failure := &ConnectionFailure{
 		Cause: "the server rejected this token",
-		Fix:   "Run omnisave-client connect to reconnect this device",
+		Fix:   "Run omnisave connect to reconnect this device",
 	}
 	model := checked(t, newTestConnectionModel(failure), failure)
 
 	view := ansi.Strip(model.View())
 
-	if !strings.Contains(view, "Run omnisave-client connect to reconnect this device") {
+	if !strings.Contains(view, "Run omnisave connect to reconnect this device") {
 		t.Fatalf("expected the panel to carry the fix, got:\n%s", view)
 	}
 	if strings.Contains(view, "r retry") {

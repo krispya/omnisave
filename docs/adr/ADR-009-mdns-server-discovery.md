@@ -4,7 +4,7 @@
 
 ## Context
 
-[FDR-006](../fdr/FDR-006-connecting-a-device.md) makes `omnisave-client
+[FDR-006](../fdr/FDR-006-connecting-a-device.md) makes `omnisave
 connect` with no arguments the ordinary way onto a local network. That asks the
 server to be findable without an address, and nothing on the wire says it
 exists today: every client is handed a URL by hand, typed from whatever the

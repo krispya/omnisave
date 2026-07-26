@@ -27,8 +27,8 @@ export function PendingRequests({ requests, busyID, onApprove, onDeny }: Pending
 
       {requests.length === 0 ? (
         <p className="mt-5 rounded-md border border-dashed border-white/10 px-4 py-6 text-center text-sm text-neutral-500">
-          Nothing is waiting. Run <code className="text-neutral-300">omnisave-client connect</code> on
-          a device to start.
+          Nothing is waiting. Run <code className="text-neutral-300">omnisave connect</code> on a
+          device to start.
         </p>
       ) : (
         <ul className="mt-5 flex flex-col gap-3">
