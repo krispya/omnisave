@@ -1,7 +1,7 @@
 # FDR-003: Automatic Save Binding
 
 **Status:** Experimental
-**Last reviewed:** 2026-07-18
+**Last reviewed:** 2026-07-26
 
 ## Overview
 
@@ -40,7 +40,7 @@ establishes the baseline that sync will later diff against.
 - If the local save matches nothing, or matches more than one Omnisave, the
   user chooses: bind to one of the existing Omnisaves (matches are marked),
   create a new one seeded from the local save, or decide later — the save
-  stays unbound and the result points at `omnisave-client bind`.
+  stays unbound and the result points at `omnisave bind`.
 - Choosing an existing Omnisave that does not match the local save records
   the binding with no baseline; nothing is uploaded or overwritten.
   Reconciling that divergence is synchronization's job.

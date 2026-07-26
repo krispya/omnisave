@@ -1,7 +1,7 @@
 # FDR-005: Save Sync
 
 **Status:** Experimental
-**Last reviewed:** 2026-07-25
+**Last reviewed:** 2026-07-26
 
 ## Overview
 
@@ -9,9 +9,9 @@ How a bound save and its omnisave stay the same thing over time. Sync is a
 pass over this Device's bindings: local progress commits to the server as
 new revisions, server progress applies to the local files, and the sync
 baseline arbitrates which direction is safe. It runs one-shot as
-`omnisave-client sync` and continuously as `omnisave-client watch`, which
+`omnisave sync` and continuously as `omnisave watch`, which
 commits a quiet moment after the game writes its save — and continuous is
-where a bare `omnisave-client` run ends up, because running Omnisave is
+where a bare `omnisave` run ends up, because running Omnisave is
 running the watcher. This completes what
 [FDR-003](FDR-003-automatic-save-binding.md) and
 [FDR-004](FDR-004-sync-to-device.md) started: seeding built the write
@@ -33,16 +33,16 @@ path, syncing-down built the read path; sync makes both routine.
 - A binding without a baseline (a manual bind to non-matching content,
   [FDR-003](FDR-003-automatic-save-binding.md) decision 9) is diverged
   from the start and resolves the same way.
-- `omnisave-client sync` runs one pass over every binding, reports each
+- `omnisave sync` runs one pass over every binding, reports each
   outcome in the track report voice, and exits. It never prompts.
-- `omnisave-client watch` stays running: it watches bound save locations —
+- `omnisave watch` stays running: it watches bound save locations —
   the known files and their directories, so a file appearing in a save
   also triggers — and commits shortly after the game finishes a burst of
   writes, so a crash or a Deck going to sleep loses at most the burst in
   progress. It checks for server-side movement when it starts and
   periodically after. It never prompts.
 - Diverged saves are reported — "save diverged from …; run
-  omnisave-client track to resolve" — and skipped until an interactive
+  omnisave track to resolve" — and skipped until an interactive
   track run asks: fork here, and this Device's progress continues as a new
   lineage, or jump to latest, which first preserves the unsynced local
   progress as a fork and then applies the head. Neither choice destroys
@@ -67,12 +67,12 @@ path, syncing-down built the read path; sync makes both routine.
   uploaded, never travels twice.
 - Failures leave both sides valid: an interrupted upload leaves the head
   where it was; an interrupted download leaves the local save untouched.
-- `omnisave-client` with no command is the whole app, and it skips whatever
+- `omnisave` with no command is the whole app, and it skips whatever
   this Device already did: no saved connection asks for one, no tracked
   games asks which to track, and then every run reconciles once — the pass
   that may ask — and watches until it is quit. `track`, `bind`, `sync`,
   `watch`, `scan`, and `connect` stay as the explicit commands.
-- `omnisave-client track` is that run's selection step on its own: it always
+- `omnisave track` is that run's selection step on its own: it always
   asks which games this Device protects, so a game installed since the last
   run can join, then reconciles once, reports what happened, and exits.
   Protecting those saves from then on is the commandless run's job.
@@ -174,7 +174,7 @@ run; the report is the only nudge.
 
 ### 6. The bare command is the app, and it skips what is already done
 
-**Decision:** `omnisave-client` with no command is a state machine over this
+**Decision:** `omnisave` with no command is a state machine over this
 Device's own state — connect if there is no saved connection, choose games
 if none are tracked, then always one reconcile pass and the watch loop. It
 is the only run that keeps watching; the named commands each do one of those

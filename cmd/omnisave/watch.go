@@ -310,7 +310,7 @@ func (plainWatchSink) PassStarted() {}
 
 func (plainWatchSink) PassFinished(result tui.PassResult) {
 	if result.Err != nil {
-		fmt.Fprintf(os.Stderr, "omnisave-client watch: %v\n", result.Err)
+		fmt.Fprintf(os.Stderr, "omnisave watch: %v\n", result.Err)
 		return
 	}
 	for _, event := range result.Events {

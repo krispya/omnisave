@@ -69,7 +69,7 @@ func TestServerUnreachableReportsASilentServerAsATimeout(t *testing.T) {
 func TestServerRejectedTokenPointsAtTheConnectCommand(t *testing.T) {
 	line := ansi.Strip(serverRejectedTokenLine("http://localhost:8080"))
 
-	expected := "  ✗ The Omnisave server at http://localhost:8080 rejected this token; run omnisave-client connect"
+	expected := "  ✗ The Omnisave server at http://localhost:8080 rejected this token; run omnisave connect"
 	if line != expected {
 		t.Fatalf("expected %q, got %q", expected, line)
 	}

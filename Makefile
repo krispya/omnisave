@@ -18,7 +18,7 @@ build-server:
 	go build -trimpath -o bin/omnisave-server ./cmd/server
 
 build-client:
-	go build -o bin/omnisave-client ./cmd/client
+	go build -o bin/omnisave ./cmd/omnisave
 
 build-all: build-web build-server
 

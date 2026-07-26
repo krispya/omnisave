@@ -121,7 +121,7 @@ func (r *TrackReport) SaveAvailable(title string) {
 	if entry := r.game(title); entry.glyph == "" {
 		entry.glyph = mutedStyle.Render("○")
 	}
-	r.event(title, "server save available; run omnisave-client track to choose")
+	r.event(title, "server save available; run omnisave track to choose")
 }
 
 // SaveLocationUnavailable records that this Device cannot safely determine
@@ -163,14 +163,14 @@ func (r *TrackReport) SyncedWith(title, omnisaveName string, at time.Time) {
 // interactive run to choose between advancing and forking.
 func (r *TrackReport) Behind(title, omnisaveName string) {
 	r.mark(title, mutedStyle.Render("○"))
-	r.event(title, "save is behind "+omnisaveName+", run omnisave-client track to resolve")
+	r.event(title, "save is behind "+omnisaveName+", run omnisave track to resolve")
 }
 
 // Diverged records a save with new progress on both sides, waiting for an
 // interactive run to resolve.
 func (r *TrackReport) Diverged(title, omnisaveName string) {
 	r.mark(title, mutedStyle.Render("○"))
-	r.event(title, "save diverged from "+omnisaveName+", run omnisave-client track to resolve")
+	r.event(title, "save diverged from "+omnisaveName+", run omnisave track to resolve")
 }
 
 // BoundUnsynced records a save mapped to a chosen Omnisave with no
@@ -181,7 +181,7 @@ func (r *TrackReport) BoundUnsynced(title, omnisaveName string) {
 
 // Unbound records a save left for manual binding.
 func (r *TrackReport) Unbound(title string) {
-	r.event(title, "save needs omnisave-client bind")
+	r.event(title, "save needs omnisave bind")
 }
 
 // SaveFailed records one save whose binding pass failed; the failure claims
