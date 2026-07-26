@@ -15,8 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/krisbaumgartner/omnisave/internal/access"
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
+	"github.com/krisbaumgartner/omnisave/internal/settings"
 )
 
 const (
@@ -25,16 +27,59 @@ const (
 )
 
 type API struct {
-	saves   omnisave.Service
-	catalog catalog.Service
-	events  *eventBroker
+	saves    omnisave.Service
+	catalog  catalog.Service
+	access   access.Service
+	settings settings.Service
+	events   *eventBroker
 }
 
-func New(saves omnisave.Service, catalogs ...catalog.Service) http.Handler {
-	api := &API{saves: saves, events: newEventBroker()}
-	if len(catalogs) > 0 {
-		api.catalog = catalogs[0]
+// Config assembles the API. Catalog is optional — a server without a catalog
+// provider serves saves alone — but Access and Settings are not, because they
+// are what decides who may reach any of it.
+type Config struct {
+	Saves    omnisave.Service
+	Catalog  catalog.Service
+	Settings settings.Service
+}
+
+// New creates the whole /api/v1 surface, with every route that needs a
+// credential behind one that checks it. Authentication is a parameter rather
+// than a config field so there is no shape of this handler that serves the
+// API without it.
+//
+// Five endpoints are deliberately open: a client asking to pair, the same
+// client polling for the answer, the two that claim a server nobody owns yet,
+// and signing in with the owner PIN. Whoever calls them has no credential — getting one
+// is the point — so what protects them is not authentication but their expiry,
+// their single use, their rate limit, their refusal to mint anything without
+// an owner's approval (ADR-007), and, for claiming, a server that refuses
+// once it has an owner (ADR-010).
+func New(credentials access.Service, config Config) http.Handler {
+	api := &API{
+		saves:    config.Saves,
+		catalog:  config.Catalog,
+		access:   credentials,
+		settings: config.Settings,
+		events:   newEventBroker(),
 	}
+
+	root := http.NewServeMux()
+	root.Handle("/api/v1/", Authenticate(credentials, api.guardedRoutes()))
+	root.HandleFunc("POST /api/v1/pairing/requests", api.requestPairing)
+	root.HandleFunc("POST /api/v1/pairing/collect", api.collectPairing)
+	// Claiming is open for the same reason pairing is: the browser doing it
+	// has no credential yet, and getting one is the point. What guards it is
+	// that a claimed server refuses forever, and that the request has to come
+	// from the local network (ADR-010).
+	root.HandleFunc("GET /api/v1/claim", api.claimStatus)
+	root.HandleFunc("POST /api/v1/claim", api.claim)
+	root.HandleFunc("POST /api/v1/session", api.signIn)
+	return root
+}
+
+// guardedRoutes is every route that requires a credential.
+func (api *API) guardedRoutes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/events", api.streamEvents)
 	mux.HandleFunc("POST /api/v1/omnisaves", api.create)
@@ -62,6 +107,24 @@ func New(saves omnisave.Service, catalogs ...catalog.Service) http.Handler {
 		mux.HandleFunc("PUT /api/v1/devices/{id}", api.registerDevice)
 		mux.HandleFunc("PUT /api/v1/games/{id}/tracking/{deviceID}", api.trackGame)
 		mux.HandleFunc("DELETE /api/v1/games/{id}/tracking/{deviceID}", api.untrackGame)
+	}
+	mux.HandleFunc("GET /api/v1/pairing/requests", api.listPairingRequests)
+	// Approving admits another client, and the PIN is how the owner gets back
+	// in. Neither is a Device's to do, however valid its credential.
+	mux.Handle("POST /api/v1/pairing/requests/{id}/approve",
+		RequireOwner(http.HandlerFunc(api.approvePairingRequest)))
+	mux.Handle("POST /api/v1/pairing/requests/{id}/deny",
+		RequireOwner(http.HandlerFunc(api.denyPairingRequest)))
+	mux.Handle("PUT /api/v1/pin", RequireOwner(http.HandlerFunc(api.setPIN)))
+	mux.HandleFunc("GET /api/v1/credentials", api.listCredentials)
+	mux.HandleFunc("DELETE /api/v1/credentials/{id}", api.revokeCredential)
+	// Only the owner token mints a credential out of nothing; an issued one
+	// cannot use this to grow another.
+	mux.Handle("POST /api/v1/credentials/exchange",
+		RequireOwnerToken(http.HandlerFunc(api.exchangeOwnerToken)))
+	if api.settings != nil {
+		mux.HandleFunc("GET /api/v1/settings", api.listSettings)
+		mux.HandleFunc("PATCH /api/v1/settings/{key}", api.updateSetting)
 	}
 	return mux
 }
@@ -604,6 +667,17 @@ func writeError(w http.ResponseWriter, err error) {
 		})
 		return
 	}
+	var lockedOut *access.LockedOut
+	if errors.As(err, &lockedOut) {
+		seconds := int(lockedOut.RetryAfter.Seconds()) + 1
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"error":       "locked_out",
+			"status":      http.StatusTooManyRequests,
+			"retry_after": seconds,
+		})
+		return
+	}
 	var missing *omnisave.MissingArtifacts
 	if errors.As(err, &missing) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
@@ -615,14 +689,28 @@ func writeError(w http.ResponseWriter, err error) {
 	}
 	status := http.StatusInternalServerError
 	switch {
-	case errors.Is(err, omnisave.ErrInvalid), errors.Is(err, catalog.ErrInvalid):
+	case errors.Is(err, omnisave.ErrInvalid), errors.Is(err, catalog.ErrInvalid),
+		errors.Is(err, access.ErrInvalid):
 		status = http.StatusBadRequest
-	case errors.Is(err, omnisave.ErrNotFound), errors.Is(err, catalog.ErrNotFound):
+	case errors.Is(err, omnisave.ErrNotFound), errors.Is(err, catalog.ErrNotFound),
+		errors.Is(err, access.ErrNotFound), errors.Is(err, settings.ErrNotFound):
 		status = http.StatusNotFound
 	case errors.Is(err, catalog.ErrUnavailable):
 		status = http.StatusServiceUnavailable
-	case errors.Is(err, catalog.ErrConflict):
+	case errors.Is(err, catalog.ErrConflict), errors.Is(err, access.ErrNotPending),
+		errors.Is(err, access.ErrClaimed):
 		status = http.StatusConflict
+	case errors.Is(err, access.ErrUnauthorized), errors.Is(err, access.ErrPIN):
+		status = http.StatusUnauthorized
+	case errors.Is(err, access.ErrNoPIN):
+		status = http.StatusConflict
+	// A setting the deployment pinned is not the owner's to change, and
+	// saying so is the point: a Dash that silently ignored the edit would
+	// be worse than one that never offered it (ADR-008).
+	case errors.Is(err, settings.ErrPinned):
+		status = http.StatusForbidden
+	case errors.Is(err, access.ErrRateLimited):
+		status = http.StatusTooManyRequests
 	default:
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {

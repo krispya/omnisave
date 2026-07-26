@@ -38,6 +38,7 @@ Routes are ordinary paths:
 ```
 /                   the Library
 /games/<game>       one game
+/settings           the server
 ```
 
 Only a whole view earns a route. Which save has its history open and which way a

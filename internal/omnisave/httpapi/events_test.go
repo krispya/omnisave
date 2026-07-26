@@ -13,9 +13,11 @@ import (
 	"testing"
 	"time"
 
+	accessservice "github.com/krisbaumgartner/omnisave/internal/access/service"
 	catalogservice "github.com/krisbaumgartner/omnisave/internal/catalog/service"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave/httpapi"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
+	"github.com/krisbaumgartner/omnisave/internal/settings"
 	"github.com/krisbaumgartner/omnisave/internal/storage/storagetest"
 )
 
@@ -95,10 +97,11 @@ type streamedEvent struct {
 
 func newEventServer(t *testing.T, repository *storagetest.MemoryRepository) *httptest.Server {
 	t.Helper()
-	handler := httpapi.BearerAuth("secret", httpapi.New(
-		omnisaveservice.New(repository),
-		catalogservice.New(repository, repository, catalogProviderStub{}),
-	))
+	handler := httpapi.New(accessservice.New(repository, "secret"), httpapi.Config{
+		Saves:    omnisaveservice.New(repository),
+		Catalog:  catalogservice.New(repository, repository, catalogProviderStub{}),
+		Settings: settings.New(repository, nil),
+	})
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	return server

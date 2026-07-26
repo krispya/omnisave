@@ -134,3 +134,70 @@ func TestHealthChecksDoNotRequireTheAPIToken(t *testing.T) {
 		}
 	}
 }
+
+func TestServerGeneratesAnOwnerTokenWhenTheDeploymentSetsNone(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("OMNISAVE_DB_PATH", filepath.Join(directory, "omnisave.db"))
+
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.TokenGenerated || config.TokenPath != filepath.Join(directory, "owner-token") {
+		t.Fatalf("unexpected generated token: %+v", config.TokenPath)
+	}
+	if len(config.Token) < 32 {
+		t.Fatalf("the generated token is %d characters", len(config.Token))
+	}
+	stored, err := os.Stat(config.TokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The token is a secret sitting in the data volume beside the saves.
+	if stored.Mode().Perm() != 0o600 {
+		t.Fatalf("the owner token is stored %v", stored.Mode().Perm())
+	}
+
+	// A later start reuses it rather than locking the owner out of the server
+	// they connected yesterday.
+	next, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Token != config.Token || next.TokenGenerated {
+		t.Fatalf("the second start minted a new token: generated=%v", next.TokenGenerated)
+	}
+}
+
+func TestAConfiguredTokenIsNeverOverriddenByAGeneratedOne(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("OMNISAVE_DB_PATH", filepath.Join(directory, "omnisave.db"))
+	t.Setenv("OMNISAVE_TOKEN", "abcdef0123456789abcdef0123456789")
+
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Token != "abcdef0123456789abcdef0123456789" || config.TokenGenerated {
+		t.Fatalf("the environment did not win: %+v", config.Token)
+	}
+	if _, err := os.Stat(filepath.Join(directory, "owner-token")); !os.IsNotExist(err) {
+		t.Fatal("a configured deployment had a token generated behind it")
+	}
+}
+
+func TestAHalfWrittenOwnerTokenIsReplaced(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("OMNISAVE_DB_PATH", filepath.Join(directory, "omnisave.db"))
+	if err := os.WriteFile(filepath.Join(directory, "owner-token"), []byte("  \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.TokenGenerated || len(config.Token) < 32 {
+		t.Fatalf("an empty token file was treated as a token: %+v", config)
+	}
+}

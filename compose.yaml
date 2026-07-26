@@ -5,8 +5,16 @@ services:
     image: ghcr.io/krisbaumgartner/omnisave:${OMNISAVE_VERSION:-latest}
     restart: unless-stopped
     environment:
-      OMNISAVE_TOKEN: ${OMNISAVE_TOKEN:?Set OMNISAVE_TOKEN in .env}
+      # Leave this empty and the server generates an owner token on first
+      # start and prints it once; set it to supply your own.
+      OMNISAVE_TOKEN: ${OMNISAVE_TOKEN:-}
       # Unset values fall back to the server's own defaults.
+      #
+      # Bridged networking does not carry multicast to the LAN, so this
+      # deployment cannot announce itself however OMNISAVE_DISCOVERY is set.
+      # Connect devices with omnisave-client connect --server URL.
+      OMNISAVE_NAME: ${OMNISAVE_NAME:-}
+      OMNISAVE_DISCOVERY: ${OMNISAVE_DISCOVERY:-}
       OMNISAVE_HASHEOUS_BASE_URL: ${OMNISAVE_HASHEOUS_BASE_URL:-}
       OMNISAVE_HASHEOUS_TIMEOUT: ${OMNISAVE_HASHEOUS_TIMEOUT:-}
       OMNISAVE_IGDB_CLIENT_ID: ${OMNISAVE_IGDB_CLIENT_ID:-}

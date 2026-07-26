@@ -18,10 +18,13 @@ mutations that affect server-authoritative views. Events invalidate a named
 view; they do not contain replacement entities. The Dash responds by reading
 that view again through its ordinary HTTP API.
 
-The first event scope is `library.changed`. It covers games, saves, revisions,
-and game provenance because those values travel together in Library reads.
-Delivery is at least once, consumers coalesce repeated invalidations, and
-refreshes are idempotent.
+Two scopes exist. `library.changed` covers games, saves, revisions, and game
+provenance, because those values travel together in Library reads.
+`access.changed` covers pending pairing requests and issued credentials, which
+appear and expire while someone is looking at them. Delivery is at least once
+per scope, consumers coalesce repeated invalidations, and refreshes are
+idempotent. A consumer subscribes to the scopes it reads; one connection
+carries all of them, so watching a second scope costs no second stream.
 
 The event broker is in memory and belongs to the single server process. Each
 event has a monotonically increasing process-local ID, subscriber delivery is
@@ -30,8 +33,8 @@ receives an invalidation checkpoint and performs a complete resync, so event
 history does not need durable storage.
 
 The Dash consumes the stream with `fetch` rather than the browser's native
-`EventSource`, allowing the existing bearer token to remain in the
-`Authorization` header. It keeps settled content visible while a transitioned
+`EventSource`, allowing the credential the client already holds to remain in
+the `Authorization` header. It keeps settled content visible while a transitioned
 refresh prepares the next complete view.
 
 ## Consequences

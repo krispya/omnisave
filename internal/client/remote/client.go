@@ -64,13 +64,24 @@ func (e *ResponseError) Error() string {
 	return fmt.Sprintf("Omnisave server returned %s", http.StatusText(e.StatusCode))
 }
 
-// New creates a client for one Omnisave server.
-func New(baseURL, token string, httpClient *http.Client) (*Client, error) {
+// NormalizeServerURL trims a server URL to the form the client talks to and
+// rejects anything that is not one. Pairing needs this before a client holds
+// any credential, so it lives apart from the authenticated client.
+func NormalizeServerURL(baseURL string) (string, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" ||
 		(parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return nil, fmt.Errorf("invalid Omnisave server URL")
+		return "", fmt.Errorf("invalid Omnisave server URL")
+	}
+	return baseURL, nil
+}
+
+// New creates a client for one Omnisave server.
+func New(baseURL, token string, httpClient *http.Client) (*Client, error) {
+	baseURL, err := NormalizeServerURL(baseURL)
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(token) == "" {
 		return nil, fmt.Errorf("Omnisave API token is required")
@@ -223,17 +234,27 @@ func (c *Client) OpenArtifact(ctx context.Context, sha256 string) (io.ReadCloser
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, payload, result any) error {
+	return postJSON(ctx, c.httpClient, c.baseURL+path, c.token, payload, result)
+}
+
+// postJSON sends one JSON request and decodes the answer. It takes its client,
+// URL, and token rather than reading them off a Client, because pairing has to
+// make the same call before it holds either a credential or a Client — an
+// empty token sends no Authorization header.
+func postJSON(ctx context.Context, httpClient *http.Client, url, token string, payload, result any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
 	request.Header.Set("Content-Type", "application/json")
-	response, err := c.httpClient.Do(request)
+	response, err := httpClient.Do(request)
 	if err != nil {
 		return fmt.Errorf("contact Omnisave server: %w", err)
 	}

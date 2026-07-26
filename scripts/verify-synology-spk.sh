@@ -16,7 +16,7 @@ for SPK in "$@"; do
     mkdir -p "${ROOT}" "${PAYLOAD}"
     tar -xf "${SPK}" -C "${ROOT}"
 
-    for REQUIRED in INFO package.tgz scripts conf WIZARD_UIFILES PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG; do
+    for REQUIRED in INFO package.tgz scripts conf PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG; do
         if [ ! -e "${ROOT}/${REQUIRED}" ]; then
             echo "${SPK}: missing ${REQUIRED}" >&2
             exit 1
@@ -41,8 +41,7 @@ for SPK in "$@"; do
         exit 1
     fi
 
-    jq empty "${ROOT}/conf/privilege" "${ROOT}/conf/resource" \
-        "${ROOT}/WIZARD_UIFILES/install_uifile"
+    jq empty "${ROOT}/conf/privilege" "${ROOT}/conf/resource"
     for SCRIPT in "${ROOT}/scripts/"*; do
         sh -n "${SCRIPT}"
         if [ ! -x "${SCRIPT}" ]; then

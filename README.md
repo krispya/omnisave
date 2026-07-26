@@ -11,14 +11,25 @@ included `compose.yaml`.
 
 ```sh
 cp .env.example .env
-openssl rand -hex 32
-# Replace OMNISAVE_TOKEN in .env with the generated value.
 docker compose up -d
 ```
 
-Open `http://your-server:8080`. The Compose project stores the database and
+Open `http://your-server:8080` from the same network, claim the server, and
+choose a four-digit PIN. That browser becomes the owner and gets a credential of
+its own; nobody else can claim it afterward. Every other browser opens the same
+address and enters the PIN.
+
+The first start also generates an owner token and prints it once. It is the way
+in from outside the network and the way back if the PIN is forgotten — set
+`OMNISAVE_TOKEN` in `.env` before starting to supply your own instead, or mount
+one with `OMNISAVE_TOKEN_FILE`. The Compose project stores the database and
 artifacts in its `data` volume, runs the server without root privileges, and
 restarts it unless explicitly stopped.
+
+Connect a device with `omnisave-client connect`, then approve the code it shows
+under **Server** in the Dash. On a local network the client finds the server by
+itself; a bridged container cannot announce over mDNS, so this deployment needs
+`omnisave-client connect --server http://your-server:8080`.
 
 Upgrade in place:
 
@@ -33,16 +44,18 @@ is a complete server backup.
 
 The image accepts these deployment environment variables:
 
-| Variable                      | Purpose                                                    | Image default       |
-| ----------------------------- | ---------------------------------------------------------- | ------------------- |
-| `OMNISAVE_TOKEN`              | API bearer token; must be at least 32 characters           | Required            |
-| `OMNISAVE_TOKEN_FILE`         | File containing the token; use instead of `OMNISAVE_TOKEN` | —                   |
-| `OMNISAVE_LISTEN_ADDR`        | HTTP listen address                                        | `:8080`             |
-| `OMNISAVE_DB_PATH`            | SQLite database path                                       | `/data/omnisave.db` |
-| `OMNISAVE_ARTIFACT_DIR`       | Content-addressed artifact directory                       | `/data/artifacts`   |
-| `OMNISAVE_WEB_DIR`            | Built Dashboard directory                                  | `/app/web`          |
-| `OMNISAVE_IGDB_CLIENT_ID`     | Optional IGDB client ID                                    | —                   |
-| `OMNISAVE_IGDB_CLIENT_SECRET` | Optional IGDB client secret                                | —                   |
+| Variable                      | Purpose                                                    | Image default            |
+| ----------------------------- | ---------------------------------------------------------- | ------------------------ |
+| `OMNISAVE_TOKEN`              | Owner token; at least 32 characters                        | Generated on first start |
+| `OMNISAVE_TOKEN_FILE`         | File containing the token; use instead of `OMNISAVE_TOKEN` | —                        |
+| `OMNISAVE_LISTEN_ADDR`        | HTTP listen address                                        | `:8080`                  |
+| `OMNISAVE_NAME`               | Name announced on the local network                        | The host name            |
+| `OMNISAVE_DISCOVERY`          | Pins local network announcing; owner setting when unset    | On, editable             |
+| `OMNISAVE_DB_PATH`            | SQLite database path                                       | `/data/omnisave.db`      |
+| `OMNISAVE_ARTIFACT_DIR`       | Content-addressed artifact directory                       | `/data/artifacts`        |
+| `OMNISAVE_WEB_DIR`            | Built Dashboard directory                                  | `/app/web`               |
+| `OMNISAVE_IGDB_CLIENT_ID`     | Optional IGDB client ID                                    | —                        |
+| `OMNISAVE_IGDB_CLIENT_SECRET` | Optional IGDB client secret                                | —                        |
 
 `.env.example` documents the complete environment contract, including the
 catalog provider settings `compose.yaml` passes through.

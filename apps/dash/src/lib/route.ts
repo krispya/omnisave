@@ -5,24 +5,33 @@ import { useMemo, useSyncExternalStore } from 'react';
  *
  *   /                   the Library
  *   /games/<game>       one game
+ *   /settings           the server: connecting devices, credentials, discovery
  *
  * Only whole views get a route. Which save has its history open and which way a game's
  * saves are drawn are things a reader does inside a game, not places to link to; a
  * focused save view would be its own route.
  */
-export type Route = { name: 'library' } | { name: 'game'; gameID: string };
+export type Route = { name: 'library' } | { name: 'game'; gameID: string } | { name: 'settings' };
 
 const routeChanged = 'omnisave:routechange';
 
 export function parseRoute(pathname: string): Route {
   const segments = pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  if (segments[0] === 'settings') return { name: 'settings' };
   if (segments[0] !== 'games' || !segments[1]) return { name: 'library' };
 
   return { name: 'game', gameID: segments[1] };
 }
 
 export function routePath(route: Route) {
-  return route.name === 'library' ? '/' : `/games/${encodeURIComponent(route.gameID)}`;
+  switch (route.name) {
+    case 'library':
+      return '/';
+    case 'settings':
+      return '/settings';
+    default:
+      return `/games/${encodeURIComponent(route.gameID)}`;
+  }
 }
 
 /**

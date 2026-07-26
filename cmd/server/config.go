@@ -1,20 +1,42 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/krisbaumgartner/omnisave/internal/settings"
 )
 
+// ownerTokenFile is where a generated owner token is kept, beside the database.
+const ownerTokenFile = "owner-token"
+
 type serverConfig struct {
-	ListenAddr  string
-	Token       string
+	ListenAddr string
+	Token      string
+	// TokenPath is where a generated owner token lives, and is empty when the
+	// deployment supplied one. TokenGenerated is true only on the start that
+	// minted it — the one start that has to tell the operator what it is.
+	TokenPath      string
+	TokenGenerated bool
+	// Name is what this server calls itself when it announces on the local
+	// network (ADR-009). Two servers on one network are told apart by it, so
+	// it defaults to the host's own name rather than to "Omnisave".
+	Name        string
 	DBPath      string
 	ArtifactDir string
 	WebDir      string
-	Hasheous    struct {
+	// SettingsPins are owner settings the deployment has taken over. An
+	// operator who pins one keeps a fleet identical; an owner who pins
+	// nothing edits them in the Dash (ADR-008).
+	SettingsPins map[string]string
+	Hasheous     struct {
 		BaseURL string
 		Timeout string
 	}
@@ -52,7 +74,13 @@ func loadConfig() (serverConfig, error) {
 	}
 	config.Token = token
 	if config.Token == "" {
-		return serverConfig{}, errors.New("token must be set with OMNISAVE_TOKEN or OMNISAVE_TOKEN_FILE")
+		// Nothing was configured, so the server mints its own rather than
+		// refusing to start (ADR-010). The environment still wins: this only
+		// runs when neither token variable is set.
+		config.Token, config.TokenPath, config.TokenGenerated, err = ownerToken(config.DBPath)
+		if err != nil {
+			return serverConfig{}, err
+		}
 	}
 	if len(config.Token) < 32 {
 		return serverConfig{}, errors.New("token must contain at least 32 characters")
@@ -60,12 +88,19 @@ func loadConfig() (serverConfig, error) {
 	if (config.IGDB.ClientID == "") != (config.IGDB.ClientSecret == "") {
 		return serverConfig{}, errors.New("both IGDB client_id and client_secret must be set")
 	}
+
+	pins, err := settings.ParsePins(os.LookupEnv)
+	if err != nil {
+		return serverConfig{}, err
+	}
+	config.SettingsPins = pins
 	return config, nil
 }
 
 func defaultConfig() serverConfig {
 	config := serverConfig{
 		ListenAddr:  ":8080",
+		Name:        defaultServerName(),
 		DBPath:      "./omnisave.db",
 		ArtifactDir: "./artifacts",
 		WebDir:      "./apps/dash/dist",
@@ -74,8 +109,33 @@ func defaultConfig() serverConfig {
 	return config
 }
 
+// defaultServerName is the host's own name, which is what an owner already
+// calls the machine. A container with a hexadecimal host name gets the plain
+// product name instead, since a random string helps nobody choose.
+func defaultServerName() string {
+	host, err := os.Hostname()
+	if err != nil {
+		return "Omnisave"
+	}
+	host = strings.TrimSuffix(strings.TrimSpace(host), ".local")
+	if host == "" || isHexadecimal(host) {
+		return "Omnisave"
+	}
+	return host
+}
+
+func isHexadecimal(value string) bool {
+	for _, character := range value {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", character) {
+			return false
+		}
+	}
+	return len(value) >= 12
+}
+
 func applyEnvironment(config *serverConfig) {
 	setFromEnvironment(&config.ListenAddr, "OMNISAVE_LISTEN_ADDR")
+	setFromEnvironment(&config.Name, "OMNISAVE_NAME")
 	setFromEnvironment(&config.DBPath, "OMNISAVE_DB_PATH")
 	setFromEnvironment(&config.ArtifactDir, "OMNISAVE_ARTIFACT_DIR")
 	setFromEnvironment(&config.WebDir, "OMNISAVE_WEB_DIR")
@@ -94,6 +154,39 @@ func setFromEnvironment(destination *string, name string) {
 	if value := os.Getenv(name); value != "" {
 		*destination = value
 	}
+}
+
+// ownerToken reads the token the server generated for itself, minting one on
+// the first start that finds none (ADR-010).
+//
+// It lives beside the database rather than behind a variable of its own: it is
+// state this deployment owns, like the database and the artifacts, and it
+// belongs in the same place they get backed up from. It is never merged with
+// the environment — a deployment that sets a token never reaches this.
+func ownerToken(databasePath string) (token, path string, generated bool, err error) {
+	path = filepath.Join(filepath.Dir(databasePath), ownerTokenFile)
+	data, err := os.ReadFile(path)
+	if err == nil {
+		if token = strings.TrimSpace(string(data)); token != "" {
+			return token, path, false, nil
+		}
+		// An empty file is a half-finished first start, not a token.
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", "", false, fmt.Errorf("read owner token: %w", err)
+	}
+
+	buffer := make([]byte, 32)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", "", false, fmt.Errorf("generate owner token: %w", err)
+	}
+	token = hex.EncodeToString(buffer)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", "", false, fmt.Errorf("create data directory: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(token+"\n"), 0o600); err != nil {
+		return "", "", false, fmt.Errorf("write owner token: %w", err)
+	}
+	return token, path, true, nil
 }
 
 func configuredToken() (string, error) {

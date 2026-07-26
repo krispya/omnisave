@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	accessservice "github.com/krisbaumgartner/omnisave/internal/access/service"
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	catalogservice "github.com/krisbaumgartner/omnisave/internal/catalog/service"
 	"github.com/krisbaumgartner/omnisave/internal/client"
@@ -450,7 +451,10 @@ func TestDeletingAGameInTheDashUntracksItBeforeTheNextPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repository.Close()
-	handler := httpapi.New(omnisaveservice.New(repository), catalogservice.New(repository, repository))
+	handler := httpapi.New(accessservice.New(repository, "secret"), httpapi.Config{
+		Saves:   omnisaveservice.New(repository),
+		Catalog: catalogservice.New(repository, repository),
+	})
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	remoteClient, err := remote.New(server.URL, "secret", server.Client())
@@ -490,6 +494,7 @@ func TestDeletingAGameInTheDashUntracksItBeforeTheNextPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	request.Header.Set("Authorization", "Bearer secret")
 	response, err := server.Client().Do(request)
 	if err != nil {
 		t.Fatal(err)

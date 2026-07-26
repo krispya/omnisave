@@ -27,18 +27,26 @@ type MemoryRepository struct {
 	media     map[string]catalog.GameMedia
 	devices   map[string]catalog.Device
 	tracking  map[string]map[string]catalog.GameTracking
+
+	credentials map[string]storage.CredentialRecord
+	pairing     map[string]storage.PairingRecord
+	settings    map[string]string
+	ownerPIN    *storage.OwnerPIN
 }
 
 func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{
-		saves:     make(map[string]omnisave.Omnisave),
-		revisions: make(map[string][]omnisave.Revision),
-		blobs:     make(map[string][]byte),
-		games:     make(map[string]catalog.Game),
-		roms:      make(map[string]catalog.GameROM),
-		media:     make(map[string]catalog.GameMedia),
-		devices:   make(map[string]catalog.Device),
-		tracking:  make(map[string]map[string]catalog.GameTracking),
+		saves:       make(map[string]omnisave.Omnisave),
+		revisions:   make(map[string][]omnisave.Revision),
+		blobs:       make(map[string][]byte),
+		games:       make(map[string]catalog.Game),
+		roms:        make(map[string]catalog.GameROM),
+		media:       make(map[string]catalog.GameMedia),
+		devices:     make(map[string]catalog.Device),
+		credentials: make(map[string]storage.CredentialRecord),
+		pairing:     make(map[string]storage.PairingRecord),
+		settings:    make(map[string]string),
+		tracking:    make(map[string]map[string]catalog.GameTracking),
 	}
 }
 
