@@ -5,6 +5,9 @@ type DeleteDialogProps = {
   description: ReactNode;
   deleting: boolean;
   error: string;
+  /** What the confirming button says. Not every irreversible act is a delete. */
+  confirmLabel?: string;
+  busyLabel?: string;
   onCancel: () => void;
   onConfirm: () => void;
 };
@@ -19,6 +22,8 @@ export function DeleteDialog({
   description,
   deleting,
   error,
+  confirmLabel = 'Delete',
+  busyLabel = 'Deleting…',
   onCancel,
   onConfirm,
 }: DeleteDialogProps) {
@@ -68,7 +73,7 @@ export function DeleteDialog({
             disabled={deleting}
             className="rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-500 disabled:opacity-40"
           >
-            {deleting ? 'Deleting…' : 'Delete'}
+            {deleting ? busyLabel : confirmLabel}
           </button>
         </div>
       </section>

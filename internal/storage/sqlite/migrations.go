@@ -246,6 +246,62 @@ var migrations = []string{
 		sha256 TEXT PRIMARY KEY,
 		size   INTEGER NOT NULL
 	);`,
+
+	// Credentials the server has issued, and the pairing requests that mint
+	// them (ADR-007). Secrets are stored hashed and are never recoverable;
+	// pairing_requests.minted_token is the one exception, holding a token
+	// between approval and the single poll that collects it.
+	//
+	// Neither table references devices(id): a pairing request names an
+	// identity the client minted for itself, which the server may not have
+	// seen yet and which nothing here can verify. The name is copied onto the
+	// credential so a revocation list stays readable on its own.
+	`CREATE TABLE credentials (
+		id           TEXT PRIMARY KEY,
+		token_hash   TEXT NOT NULL UNIQUE,
+		kind         TEXT NOT NULL,
+		device_id    TEXT NOT NULL DEFAULT '',
+		device_name  TEXT NOT NULL,
+		created_at   TEXT NOT NULL,
+		last_used_at TEXT,
+		revoked_at   TEXT
+	);
+
+	CREATE TABLE pairing_requests (
+		id             TEXT PRIMARY KEY,
+		code           TEXT NOT NULL,
+		handle_hash    TEXT NOT NULL UNIQUE,
+		device_id      TEXT NOT NULL,
+		device_name    TEXT NOT NULL,
+		platform       TEXT NOT NULL DEFAULT '',
+		source_address TEXT NOT NULL DEFAULT '',
+		status         TEXT NOT NULL,
+		created_at     TEXT NOT NULL,
+		expires_at     TEXT NOT NULL,
+		minted_token   TEXT NOT NULL DEFAULT '',
+		credential_id  TEXT
+	);
+
+	CREATE INDEX pairing_requests_by_status ON pairing_requests(status, expires_at);
+	CREATE INDEX pairing_requests_by_source ON pairing_requests(source_address, created_at);
+
+	CREATE TABLE owner_settings (
+		key        TEXT PRIMARY KEY,
+		value      TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);`,
+
+	// The owner's PIN (ADR-010). One row, because there is one owner. The
+	// hash is slow to compute but a four-digit space is small enough to walk
+	// regardless — what actually protects the PIN is the server refusing to
+	// be hurried, which lives in the service rather than here.
+	`CREATE TABLE owner_pin (
+		id         INTEGER PRIMARY KEY CHECK (id = 1),
+		salt       TEXT NOT NULL,
+		hash       TEXT NOT NULL,
+		iterations INTEGER NOT NULL,
+		updated_at TEXT NOT NULL
+	);`,
 }
 
 func migrate(db *sql.DB) error {

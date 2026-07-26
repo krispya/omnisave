@@ -124,9 +124,22 @@ export type ServerEvent = {
   data: string;
 };
 
-export class EventStreamAuthError extends Error {
+/**
+ * The server does not recognize this browser's credential — it was revoked, or
+ * it belongs to a server that no longer exists behind this address. Callers
+ * treat it as "start over" rather than as an error to display, because there
+ * is nothing the reader can do about it except sign in again.
+ */
+export class UnauthorizedError extends Error {
   constructor() {
-    super('The API token was not accepted.');
+    super('This browser is no longer signed in.');
+    this.name = 'UnauthorizedError';
+  }
+}
+
+export class EventStreamAuthError extends UnauthorizedError {
+  constructor() {
+    super();
     this.name = 'EventStreamAuthError';
   }
 }
@@ -202,11 +215,8 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
         actual_head_id: body.actual_head_id ?? null,
       });
     }
-    const message =
-      response.status === 401
-        ? 'The API token was not accepted.'
-        : `Request failed (${response.status}).`;
-    throw new Error(message);
+    if (response.status === 401) throw new UnauthorizedError();
+    throw new Error(`Request failed (${response.status}).`);
   }
 
   if (response.status === 204) return undefined as T;
@@ -425,4 +435,163 @@ export async function uploadArtifact(token: string, payload: Blob): Promise<Arti
     body: payload,
   });
   return { format, sha256, size: payload.size };
+}
+
+/**
+ * Access: the credentials this server has issued and the pairing requests that
+ * mint them. The Dash is not privileged here — it holds an issued credential
+ * like any Device, and can be revoked like one (ADR-007).
+ */
+
+export type PairingRequest = {
+  id: string;
+  /**
+   * What the owner matches against the Device's screen. The name and identity
+   * in a request are minted by the client and the address is worth what its
+   * network path is worth, so this is the only part that ties a request to the
+   * Device that sent it.
+   */
+  code: string;
+  device_id: string;
+  device_name: string;
+  platform?: string;
+  source_address: string;
+  status: 'pending' | 'approved' | 'denied';
+  created_at: string;
+  expires_at: string;
+};
+
+export type Credential = {
+  id: string;
+  kind: 'device' | 'dash';
+  device_id?: string;
+  device_name: string;
+  created_at: string;
+  last_used_at?: string;
+  revoked_at?: string;
+};
+
+export type IssuedCredential = {
+  credential: Credential;
+  token: string;
+};
+
+export type OwnerSetting = {
+  key: string;
+  group: string;
+  summary: string;
+  kind: 'toggle' | 'text' | 'secret';
+  /** Toggles only. */
+  value: boolean;
+  /** Text only. A secret's value is never sent — see `configured`. */
+  text: string;
+  configured: boolean;
+  source: 'default' | 'owner' | 'deployment';
+  editable: boolean;
+  env_var: string;
+};
+
+/**
+ * Whether this server has never been claimed, and can be claimed from here.
+ * Asked without a credential, because a browser that has one never asks.
+ */
+export type ServerAccess = { claimable: boolean; pinSet: boolean };
+
+export async function serverAccess(signal?: AbortSignal): Promise<ServerAccess> {
+  const response = await fetch(`${apiBaseURL}/api/v1/claim`, { signal });
+  if (!response.ok) return { claimable: false, pinSet: false };
+  const status = (await response.json()) as { claimable?: boolean; pin_set?: boolean };
+  return { claimable: status.claimable === true, pinSet: status.pin_set === true };
+}
+
+/** Claims an unclaimed server, setting the PIN and minting this credential. */
+export async function claimServer(name: string, pin: string) {
+  return firstCredential('/api/v1/claim', { name, pin }, (status) =>
+    status === 409
+      ? 'This server has already been claimed. Sign in with its PIN instead.'
+      : 'That PIN is not four digits.'
+  );
+}
+
+/** Signs in with the owner PIN, which mints this browser's own credential. */
+export async function signIn(name: string, pin: string) {
+  return firstCredential('/api/v1/session', { name, pin }, (status, retryAfter) =>
+    status === 429
+      ? `Too many attempts. Try again in ${retryAfter ?? 60} seconds.`
+      : 'That is not the PIN.'
+  );
+}
+
+/** Changes the owner PIN. Only something already signed in may. */
+export function setPIN(token: string, pin: string) {
+  return request<void>('/api/v1/pin', token, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin }),
+  });
+}
+
+async function firstCredential(
+  path: string,
+  body: { name: string; pin: string },
+  describe: (status: number, retryAfter?: number) => string
+) {
+  const response = await fetch(`${apiBaseURL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const details = (await response.json().catch(() => null)) as { retry_after?: number } | null;
+    throw new Error(describe(response.status, details?.retry_after));
+  }
+  return (await response.json()) as IssuedCredential;
+}
+
+/** Trades the owner token for a credential of this browser's own. */
+export function exchangeOwnerToken(ownerToken: string, name: string) {
+  return request<IssuedCredential>('/api/v1/credentials/exchange', ownerToken, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function listPairingRequests(token: string, signal?: AbortSignal) {
+  return request<PairingRequest[]>('/api/v1/pairing/requests', token, { signal });
+}
+
+export function approvePairingRequest(token: string, id: string) {
+  return request<void>(`/api/v1/pairing/requests/${encodeURIComponent(id)}/approve`, token, {
+    method: 'POST',
+  });
+}
+
+export function denyPairingRequest(token: string, id: string) {
+  return request<void>(`/api/v1/pairing/requests/${encodeURIComponent(id)}/deny`, token, {
+    method: 'POST',
+  });
+}
+
+export function listCredentials(token: string, signal?: AbortSignal) {
+  return request<Credential[]>('/api/v1/credentials', token, { signal });
+}
+
+export function revokeCredential(token: string, id: string) {
+  return request<void>(`/api/v1/credentials/${encodeURIComponent(id)}`, token, {
+    method: 'DELETE',
+  });
+}
+
+export function listSettings(token: string, signal?: AbortSignal) {
+  return request<OwnerSetting[]>('/api/v1/settings', token, { signal });
+}
+
+/** Stores one owner setting. Everything travels as text, secrets included. */
+export function updateSetting(token: string, key: string, value: string) {
+  return request<OwnerSetting>(`/api/v1/settings/${encodeURIComponent(key)}`, token, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  });
 }

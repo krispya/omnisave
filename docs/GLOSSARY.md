@@ -12,9 +12,9 @@ Entries within each section are ordered by **conceptual flow** — foundational 
 
 Names for visible surfaces. When a name here disagrees with a file or component name in the codebase, the glossary wins — the file is the one that should rename.
 
-**Dash** — The web app (`apps/dash`) for managing the server: connection, the Library, and debug features. Where omnisaves are created and browsed.
+**Dash** — The web app (`apps/dash`) for managing the server: the Library, server settings, and debug features. Where omnisaves are created and browsed, where a Device's Pairing request is approved, and where Credentials are listed and revoked.
 
-**Client CLI** — The terminal surface of the client binary: the `connect`, `scan`, `track`, `sync`, `watch`, and `bind` commands and the prompts they render (`internal/client/tui`). `connect` verifies and persists the server connection so the other commands need no token or URL; `sync` and `watch` are headless and never prompt.
+**Client CLI** — The terminal surface of the client binary: the `connect`, `scan`, `track`, `sync`, `watch`, and `bind` commands and the prompts they render (`internal/client/tui`). `connect` finds a server, pairs with it, and persists the Credential the Owner approved, so the other commands need no token or URL; `sync` and `watch` are headless and never prompt.
 
 ## Product
 
@@ -46,9 +46,19 @@ User-facing concepts. If a user might say the word, it goes here.
 
 ## Authorization
 
-Access vocabulary. Deliberately small — there are no user accounts or roles yet, so this section grows with them.
+Access vocabulary. Deliberately small: there are no accounts, roles, or users — one Owner, and access expressed as credentials rather than identities (see [ADR-007](adr/ADR-007-per-device-credentials.md)).
 
-**API Token** — The single bearer token protecting the server HTTP API (`internal/omnisave/httpapi`), compared in constant time; clients supply it via `OMNISAVE_API_TOKEN`.
+**Owner** — The single person a server belongs to. Not an account and not a login: ownership is held as credentials, and a server acquires an owner the first time someone claims it.
+
+**Credential** — One issued, revocable bearer token, held by exactly one client — a Device, a browser, or a script. The server stores it hashed and can never recover it, records when it was last used, and can withdraw it without disturbing any other. Every way into a server ends at one of these, which is why the list in the Dash is the complete answer to what can reach it. See [ADR-007](adr/ADR-007-per-device-credentials.md).
+
+**Claiming** — The first browser to reach a server that has issued nothing takes ownership of it, from the local network and without a secret, and chooses the Owner PIN while doing so. Permanent and one-shot: a claimed server refuses every later claim. See [ADR-010](adr/ADR-010-taking-ownership.md).
+
+**Owner PIN** — Four digits, one per server, chosen when the server is claimed. Every browser after the first proves it to be issued a Credential of its own. Short by design and safe by refusal rather than by length: wrong answers are counted per source address and across the server, and sign-in locks for escalating periods. See [ADR-010](adr/ADR-010-taking-ownership.md).
+
+**Pairing** — How a Device with no Credential gets one: it asks, displays a short **code**, and waits while holding a long **handle** that is the only thing able to collect the credential. The Owner approves the request whose code matches the screen in front of them — a request's name and address are supplied by whoever sent it, so the code is the only part that ties it to the Device that sent it. See [FDR-006](fdr/FDR-006-connecting-a-device.md).
+
+**Owner Token** — The deployment-level credential, set with `OMNISAVE_TOKEN` (or `OMNISAVE_TOKEN_FILE`) and generated beside the database when neither is. It is the way in that never depends on the Dash: claiming from off the network, recovering a forgotten PIN, and automation. Never throttled, never locked, and never carried by a Device. See [ADR-010](adr/ADR-010-taking-ownership.md).
 
 ## Backend
 

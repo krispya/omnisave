@@ -24,13 +24,16 @@ package `etc` directory, following the environment configuration contract in
 [ADR-003](ADR-003-environment-server-configuration.md); the lifecycle script
 exports it before launching the server. The SQLite database, content-addressed
 artifacts, PID, and service log live under the package's persistent `var`
-directory. Package Center's installation wizard collects the initial API token
-and writes that environment file with owner-only permissions.
+directory. Installation generates the owner token, writes that environment
+file with owner-only permissions, and shows the token once in Package Center's
+completion message ([ADR-010](ADR-010-taking-ownership.md)).
 
 DSM removes only `target` and `tmp` when a package is upgraded or uninstalled,
 so `etc` and `var` carry configuration and save history across both. Because
-`etc` therefore outlives an uninstall, a reinstall applies the token the wizard
-just collected to the surviving environment file rather than discarding it.
+`etc` therefore outlives an uninstall, a reinstall keeps the surviving
+environment file as it stands — including the owner token, which devices may
+already have been connected against — and generates one only if that file has
+none.
 The package requires DSM 7.0-40314, the release that introduced the persistent
 `var` directory. The paths written into the environment file address `etc`,
 `var`, and `target` through their `/var/packages` symlinks rather than the

@@ -107,7 +107,12 @@ func New(config Config, client *http.Client) (*Provider, error) {
 	}, nil
 }
 
-func (p *Provider) Name() string { return "igdb" }
+// ProviderName is the name IGDB is stamped onto stored media and selection
+// tokens under. It outlives any particular set of credentials, so it is a
+// constant rather than something a configured provider decides.
+const ProviderName = "igdb"
+
+func (p *Provider) Name() string { return ProviderName }
 
 func (p *Provider) Resolve(ctx context.Context, evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
 	if value := identifierValue(evidence.Identifiers, "igdb.game"); value != "" {

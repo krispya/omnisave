@@ -7,22 +7,33 @@ import {
   useRef,
   useState,
   useTransition,
-  type FormEvent,
 } from 'react';
 import {
   deleteGame,
   deleteOmnisave,
   downloadOmnisaveArchive,
   downloadRevisionArchive,
+  claimServer,
+  exchangeOwnerToken,
   listGames,
+  approvePairingRequest,
+  denyPairingRequest,
   listOmnisaves,
+  listPairingRequests,
+  serverAccess,
+  UnauthorizedError,
+  signIn,
   HeadConflictError,
   updateOmnisaveDisplayName,
   type CatalogGame,
+  type IssuedCredential,
+  type PairingRequest,
   type Omnisave,
   type Revision,
 } from '../lib/omnisave-api.js';
 import { ConnectForm } from '../features/connection/connect-form.js';
+import { PairingDialog } from '../features/connection/pairing-dialog.js';
+import { ServerSettings } from '../features/connection/server-settings.js';
 import {
   createRandomTestOmnisave,
   createTestRevision,
@@ -38,11 +49,35 @@ import { buildLibrary } from '../features/library/build-library.js';
 import { FixMatchDialog } from '../features/library/fix-match-dialog.js';
 import { DeleteSaveDialog } from '../features/omnisave/delete-save-dialog.js';
 import { GameLibrary, GameLibraryLoading } from '../features/library/game-library.js';
-import { useLibraryEvents, type LibraryEventStatus } from '../features/library/use-library-events.js';
 import { navigate, useRoute } from '../lib/route.js';
+import { useServerEvents, type ServerEventStatus } from '../lib/use-server-events.js';
 import { RouteLink } from '../components/route-link.js';
 
-const tokenStorageKey = 'omnisave.api-token';
+/**
+ * The Dash holds a credential of its own, traded for the owner token once and
+ * revocable like any device's (ADR-007). The owner's secret is never stored
+ * here — only what this browser was issued in exchange for it.
+ */
+const credentialStorageKey = 'omnisave.credential';
+
+type StoredCredential = { id: string; token: string };
+
+function storedCredential(): StoredCredential {
+  try {
+    const stored = localStorage.getItem(credentialStorageKey);
+    if (!stored) return { id: '', token: '' };
+    const parsed = JSON.parse(stored) as Partial<StoredCredential>;
+    return { id: parsed.id ?? '', token: parsed.token ?? '' };
+  } catch {
+    return { id: '', token: '' };
+  }
+}
+
+/** A name the owner will recognize in the list of what holds a credential. */
+function browserLabel() {
+  const platform = navigator.userAgent.match(/\(([^;)]+)/)?.[1];
+  return platform ? `Dash on ${platform.trim()}` : 'Dash';
+}
 
 type DeleteTarget =
   | { type: 'game'; game: GameSummary }
@@ -79,6 +114,9 @@ type LibrarySnapshot = {
   catalog: CatalogGame[] | null;
   saves: Omnisave[];
   error: string;
+  // Set when the server refused this browser's credential. It is not an error
+  // to show — it means this browser has to sign in again.
+  unauthorized?: boolean;
 };
 
 type LibraryResource = {
@@ -107,6 +145,9 @@ async function fetchLibrary(
   } catch (loadError) {
     if (loadError instanceof DOMException && loadError.name === 'AbortError') {
       return fallback ?? { catalog: null, saves: [], error: '' };
+    }
+    if (loadError instanceof UnauthorizedError) {
+      return { catalog: null, saves: [], error: '', unauthorized: true };
     }
     const error = loadError instanceof Error ? loadError.message : 'Could not load the library.';
     if (fallback) return { ...fallback, error };
@@ -150,7 +191,6 @@ type LibraryDashboardProps = {
   onReload: () => Promise<LibrarySnapshot>;
   onReplace: (snapshot: LibrarySnapshot) => void;
   onSnapshot: (snapshot: LibrarySnapshot) => void;
-  onEventStatusChange: (status: LibraryEventStatus) => void;
 };
 
 function LibraryDashboard({
@@ -162,7 +202,6 @@ function LibraryDashboard({
   onReload,
   onReplace,
   onSnapshot,
-  onEventStatusChange,
 }: LibraryDashboardProps) {
   const snapshot = use(resource.promise);
   const { catalog, saves } = snapshot;
@@ -198,13 +237,6 @@ function LibraryDashboard({
       setSelectedSaveID('');
     }
   }, [games, onCloseGame, saves, selectedGameID, selectedSaveID]);
-
-  const refresh = useCallback(async () => {
-    setError('');
-    await onReload();
-  }, [onReload]);
-
-  useLibraryEvents({ token, onRefresh: refresh, onStatusChange: onEventStatusChange });
 
   async function addRandomGame() {
     if (!token) return;
@@ -513,8 +545,15 @@ function LibraryDashboard({
 }
 
 export function App() {
-  const [token, setToken] = useState(() => sessionStorage.getItem(tokenStorageKey) ?? '');
-  const [tokenInput, setTokenInput] = useState(token);
+  const [credential, setCredential] = useState<StoredCredential>(storedCredential);
+  const token = credential.token;
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState('');
+  const [access, setAccess] = useState({ claimable: false, pinSet: false });
+  const [pending, setPending] = useState<PairingRequest[]>([]);
+  const [answering, setAnswering] = useState('');
+  const [pairingError, setPairingError] = useState('');
+  const [dismissed, setDismissed] = useState<string[]>([]);
   const [resource, setResource] = useState<LibraryResource | null>(() =>
     token ? initialLibraryResource(token) : null
   );
@@ -523,7 +562,7 @@ export function App() {
   const activeResource = useRef(resource);
   const latestSnapshot = useRef<LibrarySnapshot | undefined>(undefined);
   const [libraryPending, startLibraryTransition] = useTransition();
-  const [eventStatus, setEventStatus] = useState<LibraryEventStatus>('connecting');
+  const [eventStatus, setEventStatus] = useState<ServerEventStatus>('connecting');
 
   const installResource = useCallback(
     (next: LibraryResource, transition: boolean) => {
@@ -549,37 +588,134 @@ export function App() {
     [installResource]
   );
 
-  const rememberSnapshot = useCallback((snapshot: LibrarySnapshot) => {
-    latestSnapshot.current = snapshot;
+  // A credential the server no longer accepts is not an error to display. Drop
+  // it and go back to the way in, which is where someone can do something.
+  const forgetCredential = useCallback(() => {
+    activeResource.current?.abort();
+    activeResource.current = null;
+    latestSnapshot.current = undefined;
+    localStorage.removeItem(credentialStorageKey);
+    setCredential({ id: '', token: '' });
+    setResource(null);
   }, []);
+
+  const rememberSnapshot = useCallback(
+    (snapshot: LibrarySnapshot) => {
+      // The library load answers before the event stream does, so this is
+      // usually what notices a revoked or stale credential first.
+      if (snapshot.unauthorized) {
+        forgetCredential();
+        return;
+      }
+      latestSnapshot.current = snapshot;
+    },
+    [forgetCredential]
+  );
+
+  useEffect(() => {
+    if (eventStatus === 'unauthorized') forgetCredential();
+  }, [eventStatus, forgetCredential]);
+
+  const refreshPending = useCallback(async () => {
+    if (!token) return;
+    try {
+      setPending(await listPairingRequests(token));
+    } catch {
+      // A request nobody can read is not worth interrupting anyone about; the
+      // stream will bring the next one.
+    }
+  }, [token]);
+
+  // One stream for the whole shell. The Library refreshes on its own changes,
+  // and a device asking to connect reaches the owner wherever they are —
+  // pending requests expire in minutes, so waiting for a visit to the server
+  // settings would mean missing most of them.
+  const refreshAll = useCallback(async () => {
+    await Promise.all([resource ? reloadLibrary() : Promise.resolve(), refreshPending()]);
+  }, [refreshPending, reloadLibrary, resource]);
+
+  useServerEvents({
+    token,
+    eventTypes: ['library.changed', 'access.changed'],
+    onRefresh: refreshAll,
+    onStatusChange: setEventStatus,
+  });
+
+  useEffect(() => {
+    void refreshPending();
+  }, [refreshPending]);
+
+  async function answerPairing(request: PairingRequest, approve: boolean) {
+    setAnswering(request.id);
+    setPairingError('');
+    try {
+      await (approve
+        ? approvePairingRequest(token, request.id)
+        : denyPairingRequest(token, request.id));
+      await refreshPending();
+    } catch (answerError) {
+      setPairingError(answerError instanceof Error ? answerError.message : 'That did not work.');
+      await refreshPending();
+    } finally {
+      setAnswering('');
+    }
+  }
+
+  useEffect(() => {
+    if (token) return;
+    const controller = new AbortController();
+    serverAccess(controller.signal)
+      .then(setAccess)
+      .catch(() => setAccess({ claimable: false, pinSet: false }));
+    return () => controller.abort();
+  }, [token]);
 
   // Only corrections close a game on the reader's behalf — a stale link, a disconnect —
   // so this replaces rather than pushes. The visible way back is a link.
   const closeGame = useCallback(() => navigate({ name: 'library' }, { replace: true }), []);
 
-  function connect(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const nextToken = tokenInput.trim();
-    if (!nextToken) return;
-
-    sessionStorage.setItem(tokenStorageKey, nextToken);
-    setEventStatus('connecting');
-    setToken(nextToken);
-    if (nextToken === token) void reloadLibrary();
-    else {
+  // Both ways in end the same way: this browser holds a credential of its own,
+  // and whatever proved it was entitled to one is not kept.
+  async function establish(issue: () => Promise<IssuedCredential>) {
+    if (connecting) return;
+    setConnecting(true);
+    setConnectError('');
+    try {
+      const issued = await issue();
+      const next = { id: issued.credential.id, token: issued.token };
+      localStorage.setItem(credentialStorageKey, JSON.stringify(next));
+      setEventStatus('connecting');
+      setCredential(next);
       latestSnapshot.current = undefined;
-      void installResource(createLibraryResource(nextToken), false);
+      void installResource(createLibraryResource(next.token), false);
+    } catch (issueError) {
+      setConnectError(issueError instanceof Error ? issueError.message : 'Could not connect.');
+      // A server claimed out from under this browser should stop offering to
+      // claim it and start asking for the PIN.
+      serverAccess()
+        .then(setAccess)
+        .catch(() => undefined);
+    } finally {
+      setConnecting(false);
     }
   }
 
+  function claim(pin: string) {
+    void establish(() => claimServer(browserLabel(), pin));
+  }
+
+  function enterPIN(pin: string) {
+    void establish(() => signIn(browserLabel(), pin));
+  }
+
+  function enterOwnerToken(ownerToken: string) {
+    if (ownerToken) void establish(() => exchangeOwnerToken(ownerToken, browserLabel()));
+  }
+
   function disconnect() {
-    activeResource.current?.abort();
-    activeResource.current = null;
-    latestSnapshot.current = undefined;
-    sessionStorage.removeItem(tokenStorageKey);
-    setToken('');
-    setTokenInput('');
-    setResource(null);
+    // The credential stays valid on the server; forgetting it here is not
+    // revoking it, which is a deliberate act in the server settings.
+    forgetCredential();
     closeGame();
   }
 
@@ -602,6 +738,10 @@ export function App() {
         ? 'bg-[#e5a00d]'
         : 'bg-sky-400';
 
+  // Dismissing sets this request aside without answering it; the next one to
+  // arrive still interrupts.
+  const unanswered = pending.filter((request) => !dismissed.includes(request.id));
+
   return (
     <div className="min-h-screen bg-[#111111] text-[#e5e5e5]">
       <header className="border-b border-white/5 bg-[#181818]">
@@ -619,13 +759,23 @@ export function App() {
               {connectionLabel}
             </span>
             {token ? (
-              <button
-                type="button"
-                onClick={disconnect}
-                className="rounded-md px-3 py-2 text-xs font-medium text-neutral-400 transition hover:bg-white/5 hover:text-white"
-              >
-                Disconnect
-              </button>
+              <>
+                <RouteLink
+                  to={{ name: 'settings' }}
+                  className={`rounded-md px-3 py-2 text-xs font-medium transition hover:bg-white/5 hover:text-white ${
+                    route.name === 'settings' ? 'text-white' : 'text-neutral-400'
+                  }`}
+                >
+                  Server
+                </RouteLink>
+                <button
+                  type="button"
+                  onClick={disconnect}
+                  className="rounded-md px-3 py-2 text-xs font-medium text-neutral-400 transition hover:bg-white/5 hover:text-white"
+                >
+                  Disconnect
+                </button>
+              </>
             ) : null}
           </div>
         </div>
@@ -633,7 +783,22 @@ export function App() {
 
       <main className="px-5 py-8 sm:px-8 lg:px-10">
         {!token ? (
-          <ConnectForm token={tokenInput} onTokenChange={setTokenInput} onConnect={connect} />
+          <ConnectForm
+            claimable={access.claimable}
+            pinSet={access.pinSet}
+            pending={connecting}
+            error={connectError}
+            onClaim={claim}
+            onSignIn={enterPIN}
+            onOwnerToken={enterOwnerToken}
+          />
+        ) : route.name === 'settings' ? (
+          <ServerSettings
+            token={token}
+            credentialID={credential.id}
+            requests={pending}
+            onAnswered={refreshPending}
+          />
         ) : resource ? (
           <Suspense fallback={<GameLibraryLoading />}>
             <LibraryDashboard
@@ -645,11 +810,21 @@ export function App() {
               onReload={reloadLibrary}
               onReplace={replaceLibrary}
               onSnapshot={rememberSnapshot}
-              onEventStatusChange={setEventStatus}
             />
           </Suspense>
         ) : null}
       </main>
+
+      {token && route.name !== 'settings' && unanswered.length > 0 ? (
+        <PairingDialog
+          requests={unanswered}
+          busyID={answering}
+          error={pairingError}
+          onApprove={(request) => void answerPairing(request, true)}
+          onDeny={(request) => void answerPairing(request, false)}
+          onDismiss={() => setDismissed(pending.map((request) => request.id))}
+        />
+      ) : null}
     </div>
   );
 }

@@ -7,30 +7,83 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+
+	"github.com/krisbaumgartner/omnisave/internal/discovery"
 )
 
-// PromptConnect asks for the server URL and API token. The token input is
-// masked so it never echoes into the terminal or scrollback.
-func PromptConnect(defaultURL string) (url, token string, err error) {
-	url = defaultURL
+// PromptServerURL asks where the server is. It is the fallback for a network
+// that carried no announcement — a bridged container, a segmented network,
+// anywhere across the internet — and the flow after it is the same one
+// discovery leads to.
+func PromptServerURL(defaultURL string) (string, error) {
+	url := defaultURL
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().
 				Title("Server URL").
 				Value(&url),
-			huh.NewInput().
-				Title("API token").
-				EchoMode(huh.EchoModePassword).
-				Value(&token),
 		).Title("Connect to your Omnisave server"),
 	).WithTheme(trackingTheme())
 	if err := form.Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
-			return "", "", ErrAborted
+			return "", ErrAborted
 		}
-		return "", "", err
+		return "", err
 	}
-	return strings.TrimSpace(url), strings.TrimSpace(token), nil
+	return strings.TrimSpace(url), nil
+}
+
+// ChooseServer asks which announcing server to connect to. Every one of them
+// is a claim rather than a credential — anything on the network can say it is
+// an Omnisave server — so the list shows the URL each name resolved to.
+func ChooseServer(servers []discovery.Server) (discovery.Server, error) {
+	options := make([]huh.Option[int], 0, len(servers))
+	for index, server := range servers {
+		options = append(options, huh.NewOption(server.Name+"  "+server.URL, index))
+	}
+	chosen := 0
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[int]().
+				Title("Server").
+				Options(options...).
+				Value(&chosen),
+		).Title("Found more than one Omnisave server"),
+	).WithTheme(trackingTheme())
+	if err := form.Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return discovery.Server{}, ErrAborted
+		}
+		return discovery.Server{}, err
+	}
+	return servers[chosen], nil
+}
+
+// ServerFound names the one server that answered, so a command with no
+// arguments still says what it connected to.
+func ServerFound(server discovery.Server) {
+	fmt.Println(mutedStyle.Render("Found") + " " + plainTitle(server.Name) + " " +
+		mutedStyle.Render("at "+server.URL))
+}
+
+// NoServersFound reports a local network that announced nothing. It is the
+// ordinary answer in a bridged container, so it asks for an address rather
+// than treating it as a failure.
+func NoServersFound() {
+	fmt.Println(mutedStyle.Render("No Omnisave server announced itself on this network."))
+}
+
+// ConnectDenied reports a request the owner refused.
+func ConnectDenied() {
+	fmt.Println(errorStyle.Render("✗") + " Not connected  " +
+		mutedStyle.Render("the request was denied in the Dash"))
+}
+
+// ConnectExpired reports a request nobody answered in time. Nothing is left
+// behind on the server, so the only thing to say is to try again.
+func ConnectExpired() {
+	fmt.Println(errorStyle.Render("✗") + " Not connected  " +
+		mutedStyle.Render("the code expired; run omnisave-client connect again"))
 }
 
 // ConnectSuccess confirms the persisted connection and the device it created.

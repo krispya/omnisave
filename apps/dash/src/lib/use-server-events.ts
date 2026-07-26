@@ -1,25 +1,38 @@
 import { useEffect, useEffectEvent } from 'react';
-import { EventStreamAuthError, streamServerEvents } from '../../lib/omnisave-api.js';
+import { EventStreamAuthError, streamServerEvents } from './omnisave-api.js';
 
-export type LibraryEventStatus = 'connecting' | 'live' | 'retrying' | 'unauthorized';
+export type ServerEventStatus = 'connecting' | 'live' | 'retrying' | 'unauthorized';
 
 const burstDelay = 200;
 const maximumRetryDelay = 30_000;
 const safetyRefreshInterval = 5 * 60_000;
 
-export function useLibraryEvents({
+/**
+ * Keeps a view current from the server's own event stream: it refreshes on the
+ * event type it was asked for, and reconnects on its own when the stream drops.
+ *
+ * `eventTypes` is what lets one connection serve more than one watcher. The
+ * shell listens for both the Library's changes and access changes, so a
+ * pairing request can interrupt whatever the owner is doing without a second
+ * stream open behind it.
+ */
+export function useServerEvents({
   token,
+  eventTypes,
   onRefresh,
   onStatusChange,
 }: {
   token: string;
+  eventTypes: string[];
   onRefresh: () => Promise<unknown>;
-  onStatusChange: (status: LibraryEventStatus) => void;
+  onStatusChange: (status: ServerEventStatus) => void;
 }) {
-  const refreshLibrary = useEffectEvent(onRefresh);
+  const refresh = useEffectEvent(onRefresh);
   const changeStatus = useEffectEvent(onStatusChange);
+  const watched = eventTypes.join(',');
 
   useEffect(() => {
+    const wanted = new Set(watched.split(','));
     const controller = new AbortController();
     let refreshTimer: number | undefined;
     let refreshRunning = false;
@@ -32,7 +45,7 @@ export function useLibraryEvents({
       try {
         do {
           refreshQueued = false;
-          await refreshLibrary();
+          await refresh();
         } while (refreshQueued && !controller.signal.aborted);
       } finally {
         refreshRunning = false;
@@ -67,7 +80,7 @@ export function useLibraryEvents({
             },
             onEvent: (event) => {
               if (event.id) lastEventID = event.id;
-              if (event.type === 'library.changed') queueRefresh();
+              if (wanted.has(event.type)) queueRefresh();
             },
           });
         } catch (error) {
@@ -101,7 +114,7 @@ export function useLibraryEvents({
       window.removeEventListener('online', queueRefresh);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
-  }, [token]);
+  }, [token, watched]);
 }
 
 function abortableDelay(milliseconds: number, signal: AbortSignal) {
