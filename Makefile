@@ -1,5 +1,8 @@
 VERSION ?= 0.1.0
-SPK_BUILD ?= 0001
+# Default to one UTC timestamp per invocation. CI can override this with its
+# monotonic run number, for example: make build-spk SPK_BUILD=1234.
+SPK_BUILD ?= $(shell date -u +%Y%m%d%H%M%S)
+SPK_BUILD := $(SPK_BUILD)
 OCI_IMAGE ?= ghcr.io/krisbaumgartner/omnisave
 OCI_PLATFORMS ?= linux/amd64,linux/arm64
 TEST_GOALS = $(filter-out test,$(MAKECMDGOALS))
