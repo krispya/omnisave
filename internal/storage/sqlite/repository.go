@@ -13,20 +13,32 @@ import (
 
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	"github.com/krisbaumgartner/omnisave/internal/storage"
+	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 	_ "modernc.org/sqlite"
 )
 
 type Repository struct {
-	db          *sql.DB
-	artifactDir string
+	db    *sql.DB
+	store *store.Store
 }
 
-// Open opens the database and applies pending schema migrations.
-func Open(databasePath, artifactDir string) (*Repository, error) {
+// Open opens the save store and the database over it, applies pending schema
+// migrations, and repairs each from the other: rebuild imports what the store
+// holds and the database lacks, then reconcile writes what the database holds
+// and the store lacks. Together they mean whichever of the two survived is
+// enough — a lost database grows back from the store, and a lost store grows
+// back from the database.
+//
+// The two are not peers. The store is the durable record — one directory that
+// recovers every save on its own — and the database is a fast index over it
+// that also holds deployment secrets, which is why it lives outside the store
+// rather than in it.
+func Open(databasePath, storeDir string) (*Repository, error) {
 	if err := os.MkdirAll(filepath.Dir(databasePath), 0755); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(artifactDir, 0755); err != nil {
+	saveStore, err := store.Open(storeDir)
+	if err != nil {
 		return nil, err
 	}
 
@@ -43,8 +55,20 @@ func Open(databasePath, artifactDir string) (*Repository, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Repository{db: db, artifactDir: artifactDir}, nil
+	repository := &Repository{db: db, store: saveStore}
+	if err := repository.rebuild(context.Background()); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := repository.reconcile(context.Background()); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return repository, nil
 }
+
+// Store is the portable save store this repository writes through.
+func (r *Repository) Store() *store.Store { return r.store }
 
 func (r *Repository) Close() error {
 	return r.db.Close()
@@ -64,7 +88,11 @@ func (r *Repository) InsertOmnisave(ctx context.Context, save omnisave.Omnisave)
 		forkOmnisaveID(save.ForkedFrom), forkRevisionID(save.ForkedFrom),
 		save.CreatedAt.Format(time.RFC3339Nano), string(metadata),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	r.noteStoreLag("save "+save.ID, r.recordOmnisave(ctx, save.ID))
+	return nil
 }
 
 func (r *Repository) ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, error) {
@@ -120,6 +148,7 @@ func (r *Repository) UpdateOmnisaveDisplayName(ctx context.Context, id, displayN
 	if count == 0 {
 		return storage.ErrNotFound
 	}
+	r.noteStoreLag("save "+id, r.recordOmnisave(ctx, id))
 	return nil
 }
 
@@ -129,6 +158,13 @@ func (r *Repository) DeleteOmnisave(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
+
+	// The manifests to drop have to be listed while the rows still exist; the
+	// cascade takes them out of reach a few statements from here.
+	revisionIDs, err := revisionIDsOf(ctx, tx, id)
+	if err != nil {
+		return err
+	}
 
 	rows, err := tx.QueryContext(ctx,
 		`SELECT DISTINCT artifact_sha256 FROM revision_files WHERE revision_id IN (
@@ -180,10 +216,14 @@ func (r *Repository) DeleteOmnisave(ctx context.Context, id string) error {
 			unreferenced = append(unreferenced, hash)
 		}
 	}
+	if err := r.tombstoneOmnisave(id, time.Now().UTC()); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 
+	r.noteStoreLag("deletion of save "+id, r.dropRevisions(revisionIDs))
 	for _, hash := range unreferenced {
 		if err := r.removeArtifact(hash); err != nil {
 			return err
@@ -223,7 +263,12 @@ func (r *Repository) ForkOmnisave(ctx context.Context, save omnisave.Omnisave, i
 	if err := insertRevisionFiles(ctx, tx, initial); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	r.noteStoreLag("save "+save.ID, r.recordOmnisave(ctx, save.ID))
+	r.noteStoreLag("revision "+initial.ID, r.recordRevision(ctx, initial.ID))
+	return nil
 }
 
 func (r *Repository) CommitRevision(ctx context.Context, expectedHeadID *string, revision omnisave.Revision) error {
@@ -272,7 +317,11 @@ func (r *Repository) CommitRevision(ctx context.Context, expectedHeadID *string,
 		}
 		return &storage.HeadConflict{ActualHeadID: nullableStringPointer(actual)}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	r.noteStoreLag("revision "+revision.ID, r.recordRevision(ctx, revision.ID))
+	return nil
 }
 
 func (r *Repository) GetRevision(ctx context.Context, saveID, revisionID string) (*omnisave.Revision, error) {

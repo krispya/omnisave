@@ -70,7 +70,7 @@ func runServer(ctx context.Context, config serverConfig) error {
 		}
 	}
 
-	repository, err := sqlitestorage.Open(config.DBPath, config.ArtifactDir)
+	repository, err := sqlitestorage.Open(config.DBPath, config.StoreDir)
 	if err != nil {
 		return fmt.Errorf("open storage: %w", err)
 	}

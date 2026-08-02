@@ -40,8 +40,8 @@ COPY --from=server-builder /out/omnisave-server /app/omnisave-server
 COPY --from=web-builder /src/apps/dash/dist /app/web
 
 ENV OMNISAVE_LISTEN_ADDR=:8080 \
+    OMNISAVE_STORE_DIR=/data/store \
     OMNISAVE_DB_PATH=/data/omnisave.db \
-    OMNISAVE_ARTIFACT_DIR=/data/artifacts \
     OMNISAVE_WEB_DIR=/app/web
 
 VOLUME ["/data"]

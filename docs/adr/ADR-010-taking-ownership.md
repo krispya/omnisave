@@ -129,11 +129,13 @@ More difficult:
   The boundary is narrow — a single generated secret, never re-read as
   configuration, never merged with the environment — but it is a boundary that
   has to be defended each time something else wants to be written there.
-- The token is in the data volume, so it is inside the backup that already holds
-  every save. A backup that leaks now leaks the way back into the server as well
-  as its contents. Losing that file loses ownership; recovery is deleting it for
-  a fresh token, which is survivable because issued credentials live in the
-  database, not in this file.
+- The token sits beside the database rather than in the save store
+  ([ADR-012](ADR-012-portable-save-store.md)), so the backup that holds every
+  save does not carry the way back into the server — but neither does backing up
+  the saves back up ownership. Losing the file loses ownership; recovery is
+  deleting it for a fresh token, which is survivable because issued credentials
+  live in the database, not in this file. Restoring a store onto a fresh server
+  produces an unclaimed one, and the owner claims it again.
 - A generated secret appears in the startup log once, and in Package Center's
   completion message on Synology. Deployments that ship logs off the host ship
   that line with them, and the answer for anyone who minds is to set the

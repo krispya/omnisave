@@ -245,7 +245,9 @@ them.
   only by commit against expected state, which is what makes the baseline
   comparison trustworthy; [ADR-002](../adr/ADR-002-sse-view-invalidation.md)
   — the server event stream that could someday wake watch instead of
-  polling.
+  polling; [ADR-012](../adr/ADR-012-portable-save-store.md) — where a
+  committed revision comes to rest, and why the content a sync-down replaces
+  is recoverable from the store alone.
 - **FDRs:** [FDR-003](FDR-003-automatic-save-binding.md) — the binding
   pass whose automatic half sync re-runs and whose lineage philosophy
   divergence inherits; [FDR-004](FDR-004-sync-to-device.md) — joining a

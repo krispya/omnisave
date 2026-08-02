@@ -97,7 +97,18 @@ func (r *Repository) SaveGame(ctx context.Context, game catalog.Game, rom *catal
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// Read the game back rather than recording the argument: identity claims
+	// merge with what other evidence has already established, so the stored
+	// game can carry identifiers this call never mentioned.
+	if stored, err := r.GetGame(ctx, game.ID); err != nil {
+		r.noteStoreLag("game "+game.ID, err)
+	} else {
+		r.noteStoreLag("game "+game.ID, r.recordGame(*stored))
+	}
+	return nil
 }
 
 func claimIdentity(ctx context.Context, tx *sql.Tx, table, gameID string, columns []string, values []any) error {
@@ -185,6 +196,13 @@ func (r *Repository) DeleteGame(ctx context.Context, id string) error {
 	}
 	defer tx.Rollback()
 
+	// Deleting a game deletes every save of it, so the store records the same
+	// deletion for each lineage. Both have to be read before the cascade.
+	lineages, err := lineagesOfGame(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+
 	rows, err := tx.QueryContext(ctx,
 		`SELECT sha256 FROM game_media WHERE game_id = ?
 		UNION
@@ -242,10 +260,20 @@ func (r *Repository) DeleteGame(ctx context.Context, id string) error {
 			unreferenced = append(unreferenced, hash)
 		}
 	}
+	deletedAt := time.Now().UTC()
+	for omnisaveID := range lineages {
+		if err := r.tombstoneOmnisave(omnisaveID, deletedAt); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 
+	for omnisaveID, revisionIDs := range lineages {
+		r.noteStoreLag("deletion of save "+omnisaveID, r.dropRevisions(revisionIDs))
+	}
+	r.noteStoreLag("deletion of game "+id, r.store.RemoveGame(id))
 	for _, hash := range unreferenced {
 		if err := r.removeArtifact(hash); err != nil {
 			return err

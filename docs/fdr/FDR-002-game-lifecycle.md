@@ -152,7 +152,10 @@ deleted with the intent of reseeding it also requires that re-track first.
 - **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — the
   source-of-truth premise behind installation-independent membership and
   server-side provenance; [ADR-002](../adr/ADR-002-sse-view-invalidation.md) —
-  how clients learn that server-owned views changed.
+  how clients learn that server-owned views changed;
+  [ADR-012](../adr/ADR-012-portable-save-store.md) — why deleting a game
+  tombstones its saves in the store rather than only erasing them, so a
+  restore does not undo the deletion.
 - **FDRs:** [FDR-001](FDR-001-game-identity-resolution.md) — how track-time
   resolution chooses or creates the canonical Game;
   [FDR-003](FDR-003-automatic-save-binding.md) — the binding pass that
