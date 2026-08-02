@@ -116,7 +116,10 @@ fast-forward, forking, and manual bind cover it.
 ## Related
 
 - **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — content flows
-  from the authoritative copy; the client places but never arbitrates.
+  from the authoritative copy; the client places but never arbitrates;
+  [ADR-012](../adr/ADR-012-portable-save-store.md) — the store the
+  authoritative copy is read from, whose manifests carry the paths this
+  record materializes.
 - **FDRs:** [FDR-003](FDR-003-automatic-save-binding.md) — the binding pass
   this extends, whose open question about fresh Devices this resolves, and
   whose fast-forward staging this shares;

@@ -24,3 +24,4 @@ what the system does.
 | [ADR-009](ADR-009-mdns-server-discovery.md)             | Announce the server over mDNS                                  | 2026-07-25 |
 | [ADR-010](ADR-010-taking-ownership.md)                  | Take ownership on first contact, and carry it with a PIN       | 2026-07-26 |
 | [ADR-011](ADR-011-owner-provider-credentials.md)        | Let the owner hold provider credentials                        | 2026-07-26 |
+| [ADR-012](ADR-012-portable-save-store.md)               | Keep saves in a portable store                                 | 2026-07-27 |

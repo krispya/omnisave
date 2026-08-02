@@ -18,7 +18,7 @@ func openRepository(t *testing.T) *sqlite.Repository {
 	t.Helper()
 	directory := t.TempDir()
 	repository, err := sqlite.Open(filepath.Join(directory, "omnisave.db"),
-		filepath.Join(directory, "artifacts"))
+		filepath.Join(directory, "store"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,9 +30,9 @@ func TestIssuedCredentialsSurviveRestart(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
 	databasePath := filepath.Join(directory, "omnisave.db")
-	artifactDir := filepath.Join(directory, "artifacts")
+	storeDir := filepath.Join(directory, "store")
 
-	repository, err := sqlite.Open(databasePath, artifactDir)
+	repository, err := sqlite.Open(databasePath, storeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestIssuedCredentialsSurviveRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reopened, err := sqlite.Open(databasePath, artifactDir)
+	reopened, err := sqlite.Open(databasePath, storeDir)
 	if err != nil {
 		t.Fatal(err)
 	}

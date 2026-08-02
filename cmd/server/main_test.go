@@ -16,8 +16,8 @@ func TestServerIsConfiguredFromEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("OMNISAVE_TOKEN_FILE", tokenPath)
+	t.Setenv("OMNISAVE_STORE_DIR", "/data/store")
 	t.Setenv("OMNISAVE_DB_PATH", "/data/omnisave.db")
-	t.Setenv("OMNISAVE_ARTIFACT_DIR", "/data/artifacts")
 	t.Setenv("OMNISAVE_WEB_DIR", "/app/web")
 	t.Setenv("OMNISAVE_HASHEOUS_TIMEOUT", "10s")
 	t.Setenv("OMNISAVE_IGDB_REQUESTS_PER_SECOND", "3")
@@ -27,7 +27,8 @@ func TestServerIsConfiguredFromEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	if config.Token != "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" || config.DBPath != "/data/omnisave.db" ||
-		config.ArtifactDir != "/data/artifacts" || config.WebDir != "/app/web" || config.Hasheous.Timeout != "10s" ||
+		config.StoreDir != "/data/store" ||
+		config.WebDir != "/app/web" || config.Hasheous.Timeout != "10s" ||
 		config.IGDB.RequestsPerSecond != 3 {
 		t.Fatal("environment configuration was not applied")
 	}
@@ -40,7 +41,7 @@ func TestServerUsesDefaultsForOptionalEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.ListenAddr != ":8080" || config.DBPath != "./omnisave.db" || config.ArtifactDir != "./artifacts" ||
+	if config.ListenAddr != ":8080" || config.DBPath != "./omnisave.db" || config.StoreDir != "./store" ||
 		config.WebDir != "./apps/dash/dist" || config.Hasheous.BaseURL != "https://hasheous.org" {
 		t.Fatal("optional environment defaults were not applied")
 	}
