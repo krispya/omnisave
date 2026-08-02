@@ -38,9 +38,37 @@ docker compose pull
 docker compose up -d
 ```
 
-Back up the complete Compose data volume while the service is stopped. The
-SQLite database and `artifacts/` directory form one backup unit; neither alone
-is a complete server backup.
+## The save store
+
+Everything needed to recover your saves lives in one directory — `/data/store`
+in the Compose deployment, `./store` in development. Copy it anywhere and every
+save in it can be recovered from that copy alone: no server, no database, and
+no network. It holds the save content, a manifest per snapshot naming the files
+in it, and a record per save and per game — all plain JSON and gzip, so
+[docs/RECOVERY.md](docs/RECOVERY.md) can walk anyone through pulling a save
+out by hand.
+
+The SQLite database beside it is an index over the store, and it lives outside
+the store on purpose: it carries credentials and the owner PIN, and those must
+not travel with a directory meant to be copied and shared.
+
+The store is the backup. A server that loses its database rebuilds its index
+from the store on the next start: every game, every save, every snapshot in
+its history returns, under the identifiers connected devices already know. What
+does not return is deployment state — the rebuilt server is unclaimed, and
+browsers and devices claim and pair with it again. Without any server at all,
+[docs/RECOVERY.md](docs/RECOVERY.md) explains how to extract a save with
+`gunzip` alone.
+
+Take the backup while the service is stopped, or accept that a copy taken
+during a commit may miss the snapshot in flight — everything already
+committed is intact either way, because nothing in the store is ever rewritten.
+Every object is named by the SHA-256 of its content, so a copy can be verified
+without reference to the original:
+
+```sh
+gunzip -c store/objects/ab/abcd….gz | shasum -a 256
+```
 
 The image accepts these deployment environment variables:
 
@@ -51,8 +79,8 @@ The image accepts these deployment environment variables:
 | `OMNISAVE_LISTEN_ADDR`        | HTTP listen address                                        | `:8080`                  |
 | `OMNISAVE_NAME`               | Name announced on the local network                        | The host name            |
 | `OMNISAVE_DISCOVERY`          | Pins local network announcing; owner setting when unset    | On, editable             |
-| `OMNISAVE_DB_PATH`            | SQLite database path                                       | `/data/omnisave.db`      |
-| `OMNISAVE_ARTIFACT_DIR`       | Content-addressed artifact directory                       | `/data/artifacts`        |
+| `OMNISAVE_STORE_DIR`          | Save store; the directory to back up                       | `/data/store`            |
+| `OMNISAVE_DB_PATH`            | SQLite index over the store                                | `/data/omnisave.db`      |
 | `OMNISAVE_WEB_DIR`            | Built Dashboard directory                                  | `/app/web`               |
 | `OMNISAVE_IGDB_CLIENT_ID`     | Optional IGDB client ID                                    | —                        |
 | `OMNISAVE_IGDB_CLIENT_SECRET` | Optional IGDB client secret                                | —                        |

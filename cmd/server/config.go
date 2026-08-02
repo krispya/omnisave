@@ -28,10 +28,14 @@ type serverConfig struct {
 	// Name is what this server calls itself when it announces on the local
 	// network (ADR-009). Two servers on one network are told apart by it, so
 	// it defaults to the host's own name rather than to "Omnisave".
-	Name        string
-	DBPath      string
-	ArtifactDir string
-	WebDir      string
+	Name string
+	// StoreDir is the portable save store: one directory holding everything
+	// needed to recover the saves in it. DBPath is an index over it, and lives
+	// outside it because it carries credentials and the owner PIN, which have
+	// no business travelling with a directory meant to be copied and shared.
+	StoreDir string
+	DBPath   string
+	WebDir   string
 	// SettingsPins are owner settings the deployment has taken over. An
 	// operator who pins one keeps a fleet identical; an owner who pins
 	// nothing edits them in the Dash (ADR-008).
@@ -99,11 +103,11 @@ func loadConfig() (serverConfig, error) {
 
 func defaultConfig() serverConfig {
 	config := serverConfig{
-		ListenAddr:  ":8080",
-		Name:        defaultServerName(),
-		DBPath:      "./omnisave.db",
-		ArtifactDir: "./artifacts",
-		WebDir:      "./apps/dash/dist",
+		ListenAddr: ":8080",
+		Name:       defaultServerName(),
+		StoreDir:   "./store",
+		DBPath:     "./omnisave.db",
+		WebDir:     "./apps/dash/dist",
 	}
 	config.Hasheous.BaseURL = "https://hasheous.org"
 	return config
@@ -136,8 +140,8 @@ func isHexadecimal(value string) bool {
 func applyEnvironment(config *serverConfig) {
 	setFromEnvironment(&config.ListenAddr, "OMNISAVE_LISTEN_ADDR")
 	setFromEnvironment(&config.Name, "OMNISAVE_NAME")
+	setFromEnvironment(&config.StoreDir, "OMNISAVE_STORE_DIR")
 	setFromEnvironment(&config.DBPath, "OMNISAVE_DB_PATH")
-	setFromEnvironment(&config.ArtifactDir, "OMNISAVE_ARTIFACT_DIR")
 	setFromEnvironment(&config.WebDir, "OMNISAVE_WEB_DIR")
 	setFromEnvironment(&config.Hasheous.BaseURL, "OMNISAVE_HASHEOUS_BASE_URL")
 	setFromEnvironment(&config.Hasheous.Timeout, "OMNISAVE_HASHEOUS_TIMEOUT")

@@ -3,7 +3,7 @@
 // client's local state so the next `pnpm dev` and client run start from
 // nothing. Refuses to run while the dev server is listening — deleting the
 // database under a live server corrupts it.
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -51,10 +51,28 @@ if (existsSync(environmentPath)) {
   process.loadEnvFile(environmentPath);
 }
 const dbPath = path.resolve(root, process.env.OMNISAVE_DB_PATH || './omnisave.db');
-const artifactDir = path.resolve(root, process.env.OMNISAVE_ARTIFACT_DIR || './artifacts');
+const storeDir = path.resolve(root, process.env.OMNISAVE_STORE_DIR || './store');
 
 if (await portInUse(environmentPort())) {
   console.error(`the dev server is running on port ${environmentPort()} — stop it first (pnpm dev)`);
+  process.exit(1);
+}
+
+// The store is the durable record of every save on this server, and deleting
+// it is not recoverable from anywhere else. A reset during development is
+// usually aimed at a store holding nothing but test data, so it only stops to
+// ask when there is real content to lose.
+function storedSaveCount(directory) {
+  const objects = path.join(directory, 'objects');
+  if (!existsSync(objects)) return 0;
+  return readdirSync(objects, { recursive: true }).filter((entry) => String(entry).endsWith('.gz')).length;
+}
+
+const saveCount = storedSaveCount(storeDir);
+if (saveCount > 0 && !process.argv.includes('--force')) {
+  console.error(`${storeDir} holds ${saveCount} stored save file(s).`);
+  console.error('Deleting it destroys them: nothing else on this machine has the content.');
+  console.error('Copy the directory somewhere first, or re-run with --force.');
   process.exit(1);
 }
 
@@ -64,7 +82,7 @@ for (const [target, label] of [
   [dbPath, 'server database'],
   [`${dbPath}-wal`, 'server database WAL'],
   [`${dbPath}-shm`, 'server database SHM'],
-  [artifactDir, 'server artifacts'],
+  [storeDir, 'save store'],
   [clientStatePath(), 'client state'],
 ]) {
   removedAnything = remove(target, label) || removedAnything;

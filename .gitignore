@@ -16,5 +16,5 @@ coverage.out
 # Local server data and secrets
 /omnisave.db
 /omnisave.db-*
-/artifacts/
+/store/
 bin

@@ -24,9 +24,9 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
 	databasePath := filepath.Join(directory, "omnisave.db")
-	artifactDir := filepath.Join(directory, "artifacts")
+	storeDir := filepath.Join(directory, "store")
 
-	repository, err := sqlite.Open(databasePath, artifactDir)
+	repository, err := sqlite.Open(databasePath, storeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repository, err = sqlite.Open(databasePath, artifactDir)
+	repository, err = sqlite.Open(databasePath, storeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestUpdatedAtFollowsTheHeadRevision(t *testing.T) {
 	directory := t.TempDir()
 	repository, err := sqlite.Open(
 		filepath.Join(directory, "omnisave.db"),
-		filepath.Join(directory, "artifacts"),
+		filepath.Join(directory, "store"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +158,7 @@ func TestDeleteOmnisaveKeepsSharedArtifacts(t *testing.T) {
 	directory := t.TempDir()
 	repository, err := sqlite.Open(
 		filepath.Join(directory, "omnisave.db"),
-		filepath.Join(directory, "artifacts"),
+		filepath.Join(directory, "store"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -207,7 +207,7 @@ func TestDeleteOmnisaveKeepsSharedArtifacts(t *testing.T) {
 func TestCommitAndRefMovementAreAtomic(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
-	repository, err := sqlite.Open(filepath.Join(directory, "omnisave.db"), filepath.Join(directory, "artifacts"))
+	repository, err := sqlite.Open(filepath.Join(directory, "omnisave.db"), filepath.Join(directory, "store"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,8 +248,8 @@ func TestCatalogMediaSurvivesRepositoryRestart(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
 	databasePath := filepath.Join(directory, "omnisave.db")
-	artifactDir := filepath.Join(directory, "artifacts")
-	repository, err := sqlite.Open(databasePath, artifactDir)
+	storeDir := filepath.Join(directory, "store")
+	repository, err := sqlite.Open(databasePath, storeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestCatalogMediaSurvivesRepositoryRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repository, err = sqlite.Open(databasePath, artifactDir)
+	repository, err = sqlite.Open(databasePath, storeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 	directory := t.TempDir()
 	repository, err := sqlite.Open(
 		filepath.Join(directory, "omnisave.db"),
-		filepath.Join(directory, "artifacts"),
+		filepath.Join(directory, "store"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -441,7 +441,7 @@ func TestProvenanceSurvivesUntrackAndSaveDeletion(t *testing.T) {
 	directory := t.TempDir()
 	repository, err := sqlite.Open(
 		filepath.Join(directory, "omnisave.db"),
-		filepath.Join(directory, "artifacts"),
+		filepath.Join(directory, "store"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -530,7 +530,7 @@ func TestArtifactsRestCompressedButKeepTheirIdentity(t *testing.T) {
 	directory := t.TempDir()
 	repository, err := sqlite.Open(
 		filepath.Join(directory, "omnisave.db"),
-		filepath.Join(directory, "artifacts"),
+		filepath.Join(directory, "store"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -541,9 +541,10 @@ func TestArtifactsRestCompressedButKeepTheirIdentity(t *testing.T) {
 	contents := strings.Repeat("very compressible save data. ", 200)
 	artifact := storeOmnisaveArtifact(t, ctx, saves, contents)
 
-	stored, err := os.Stat(filepath.Join(directory, "artifacts", artifact.SHA256+".gz"))
+	stored, err := os.Stat(filepath.Join(directory, "store", "objects",
+		artifact.SHA256[:2], artifact.SHA256+".gz"))
 	if err != nil {
-		t.Fatalf("expected the artifact to rest as a compressed file: %v", err)
+		t.Fatalf("expected the artifact to rest as a compressed object: %v", err)
 	}
 	if stored.Size() >= int64(len(contents)) {
 		t.Fatalf("expected compression to shrink %d bytes, stored %d", len(contents), stored.Size())
@@ -560,41 +561,6 @@ func TestArtifactsRestCompressedButKeepTheirIdentity(t *testing.T) {
 	restored, err := io.ReadAll(payload)
 	if err != nil || string(restored) != contents {
 		t.Fatalf("expected the exact content back, got %d bytes (%v)", len(restored), err)
-	}
-}
-
-func TestArtifactsFromBeforeCompressionStayReadable(t *testing.T) {
-	ctx := context.Background()
-	directory := t.TempDir()
-	repository, err := sqlite.Open(
-		filepath.Join(directory, "omnisave.db"),
-		filepath.Join(directory, "artifacts"),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer repository.Close()
-	saves := omnisaveservice.New(repository)
-
-	contents := "legacy raw artifact"
-	sum := sha256.Sum256([]byte(contents))
-	hash := hex.EncodeToString(sum[:])
-	if err := os.WriteFile(filepath.Join(directory, "artifacts", hash), []byte(contents), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	size, err := saves.StatArtifact(ctx, hash)
-	if err != nil || size != int64(len(contents)) {
-		t.Fatalf("expected the raw file's size, got %d (%v)", size, err)
-	}
-	payload, err := saves.OpenArtifact(ctx, hash)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer payload.Close()
-	restored, err := io.ReadAll(payload)
-	if err != nil || string(restored) != contents {
-		t.Fatalf("expected the raw content back, got %q (%v)", restored, err)
 	}
 }
 

@@ -12,7 +12,7 @@ ETC_DIR="${PACKAGE_ROOT}/etc"
 VAR_DIR="${PACKAGE_ROOT}/var"
 ENVIRONMENT="${ETC_DIR}/server.env"
 
-mkdir -p "${ETC_DIR}" "${VAR_DIR}/artifacts"
+mkdir -p "${ETC_DIR}" "${VAR_DIR}/store"
 
 # The owner token is generated here rather than asked for (ADR-010). Nobody
 # installing a package on their own NAS has a reason to invent 64 hexadecimal
@@ -35,8 +35,8 @@ if [ ! -f "${ENVIRONMENT}" ]; then
     cat > "${ENVIRONMENT}" << SETTINGS
 OMNISAVE_LISTEN_ADDR=:8080
 OMNISAVE_TOKEN=${OWNER_TOKEN}
+OMNISAVE_STORE_DIR=${VAR_DIR}/store
 OMNISAVE_DB_PATH=${VAR_DIR}/omnisave.db
-OMNISAVE_ARTIFACT_DIR=${VAR_DIR}/artifacts
 OMNISAVE_WEB_DIR=${PACKAGE_ROOT}/target/web
 SETTINGS
 else
