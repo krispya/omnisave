@@ -14,6 +14,7 @@ export type SaveHistory = {
   /** True only when there is nothing to show yet; a silent revalidation is not loading. */
   loading: boolean;
   error: string;
+  replaceRevision: (revision: Revision) => void;
 };
 
 type Snapshot = {
@@ -99,9 +100,20 @@ export function useSaveRevisions(token: string, save?: Omnisave): SaveHistory {
   }, [key, token]);
 
   const current = snapshot.key === key ? snapshot : read(key);
+  function replaceRevision(revision: Revision) {
+    if (!key) return;
+    const revisions = current.revisions?.map((candidate) =>
+      candidate.id === revision.id ? revision : candidate
+    );
+    if (!revisions) return;
+    histories.delete(key);
+    record(key, revisions);
+    setSnapshot({ key, revisions, error: '' });
+  }
   return {
     revisions: current.revisions ?? [],
     loading: Boolean(key) && current.revisions === undefined && !current.error,
     error: current.error,
+    replaceRevision,
   };
 }

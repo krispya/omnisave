@@ -42,6 +42,7 @@ type Service interface {
 	CommitRevision(ctx context.Context, omnisaveID string, input CreateRevision) (*Revision, error)
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*Revision, error)
 	ListRevisions(ctx context.Context, omnisaveID string) ([]Revision, error)
+	UpdateRevision(ctx context.Context, omnisaveID, revisionID string, input UpdateRevision) (*Revision, error)
 
 	StoreArtifact(ctx context.Context, artifact Artifact, payload io.Reader) error
 	StatArtifact(ctx context.Context, sha256 string) (int64, error)

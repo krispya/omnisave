@@ -82,6 +82,18 @@ func TestNetworkClientStory(t *testing.T) {
 		t.Fatalf("expected a complete manifest, got %v", history[0].Files)
 	}
 
+	response = request(t, handler, http.MethodPatch,
+		"/api/v1/omnisaves/"+save.ID+"/revisions/"+revision.ID,
+		"application/json", bytes.NewBufferString(`{"display_name":"Before the Elite Four"}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("rename revision returned %d: %s", response.Code, response.Body.String())
+	}
+	var renamed omnisave.Revision
+	decodeResponse(t, response, &renamed)
+	if renamed.DisplayName != "Before the Elite Four" || renamed.ID != revision.ID || len(renamed.Files) != 2 {
+		t.Fatalf("unexpected renamed revision: %+v", renamed)
+	}
+
 	response = request(t, handler, http.MethodGet, "/api/v1/omnisaves/"+save.ID, "", nil)
 	var storedSave omnisave.Omnisave
 	decodeResponse(t, response, &storedSave)

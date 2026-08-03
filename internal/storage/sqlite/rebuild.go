@@ -54,6 +54,7 @@ func (r *Repository) rebuild(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	revisionNames := make(map[string]map[string]string)
 
 	// Games first: they reference nothing, and the lineages imported after
 	// them read better with their titles already in place.
@@ -81,12 +82,13 @@ func (r *Repository) rebuild(ctx context.Context) error {
 	// interrupted — are not imported behind the owner's back.
 	tombstoned := make(map[string]bool)
 	if err := r.store.EachOmnisaveID(func(id string) error {
-		if knownSaves[id] {
-			return nil
-		}
 		record, err := r.store.GetOmnisave(id)
 		if err != nil {
 			note("save "+id, err)
+			return nil
+		}
+		revisionNames[id] = record.RevisionNames
+		if knownSaves[id] {
 			return nil
 		}
 		if record.DeletedAt != nil {
@@ -147,7 +149,9 @@ func (r *Repository) rebuild(ctx context.Context) error {
 			knownGames[game.ID] = true
 			imported.games++
 		}
-		count, missing, err := r.importRevisions(ctx, omnisaveID, manifests, knownRevisions)
+		count, missing, err := r.importRevisions(
+			ctx, omnisaveID, manifests, knownRevisions, revisionNames[omnisaveID],
+		)
 		if err != nil {
 			return err
 		}
@@ -205,7 +209,13 @@ func (r *Repository) importOmnisave(ctx context.Context, record store.Omnisave) 
 // those are counted rather than refused, because a partial copy loses the
 // missing bytes either way and the manifest is the only thing that still says
 // what they were.
-func (r *Repository) importRevisions(ctx context.Context, omnisaveID string, manifests []store.Revision, knownRevisions map[string]bool) (int, int, error) {
+func (r *Repository) importRevisions(
+	ctx context.Context,
+	omnisaveID string,
+	manifests []store.Revision,
+	knownRevisions map[string]bool,
+	revisionNames map[string]string,
+) (int, int, error) {
 	ordered, orphaned := orderForImport(manifests, knownRevisions)
 	for _, manifest := range orphaned {
 		log.Printf("save store: revision %s of save %s names parent %s, which is nowhere; importing it as a root",
@@ -228,8 +238,9 @@ func (r *Repository) importRevisions(ctx context.Context, omnisaveID string, man
 		if parent != nil && !knownRevisions[*parent] {
 			parent = nil
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO revisions(id, omnisave_id, parent_id, created_at, metadata)
-			VALUES (?, ?, ?, ?, ?)`, manifest.ID, omnisaveID, parent,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO revisions(
+			id, omnisave_id, display_name, parent_id, created_at, metadata
+		) VALUES (?, ?, ?, ?, ?, ?)`, manifest.ID, omnisaveID, revisionNames[manifest.ID], parent,
 			manifest.CreatedAt.Format(time.RFC3339Nano), string(metadata)); err != nil {
 			return 0, 0, err
 		}

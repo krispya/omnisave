@@ -1,95 +1,95 @@
 # Glossary
 
-The canonical vocabulary for Omnisave: UI surfaces, product concepts, authorization terms, and backend infrastructure. One line per entry (occasionally one short paragraph) — just enough to recognize the word and know where to read more.
+The canonical vocabulary for Omnisave: UI surfaces, product concepts, authorization terms, and backend infrastructure. One line per entry (occasionally one short paragraph) is just enough to recognize the word and know where to read more.
 
 This document is **also a naming surface**: when we need a name for a thing we're building, we add it here first. That's how vocabulary stays consistent across code, UI, docs, and conversation.
 
 This is **not** a tutorial, design doc, or API reference. If a concept needs more than a paragraph, link to the owning package, [`AGENTS.md`](../AGENTS.md), or a future FDR/ADR rather than inlining.
 
-Entries within each section are ordered by **conceptual flow** — foundational terms first, derivatives after — not alphabetically. See [`.agents/skills/glossary/SKILL.md`](../.agents/skills/glossary/SKILL.md) for the maintenance workflow.
+Entries within each section are ordered by **conceptual flow**, with foundational terms first and derivatives after, not alphabetically. See [`.agents/skills/glossary/SKILL.md`](../.agents/skills/glossary/SKILL.md) for the maintenance workflow.
 
 ## UI
 
-Names for visible surfaces. When a name here disagrees with a file or component name in the codebase, the glossary wins — the file is the one that should rename.
+Names for visible surfaces. When a name here disagrees with a file or component name in the codebase, the glossary wins. The file is the one that should rename.
 
-**Dash** — The web app (`apps/dash`) for managing the server: the Library, server settings, and debug features. Where omnisaves are created and browsed, where a Device's Pairing request is approved, and where Credentials are listed and revoked.
+**Dash**. The web app (`apps/dash`) for managing the server: the Library, server settings, and debug features. Where omnisaves are created and browsed, where a Device's Pairing request is approved, and where Credentials are listed and revoked.
 
-**Client CLI** — The terminal surface of the client binary: the `connect`, `scan`, `track`, `sync`, `watch`, and `bind` commands and the prompts they render (`internal/client/tui`). `connect` finds a server, pairs with it, and persists the Credential the Owner approved, so the other commands need no token or URL; `sync` and `watch` are headless and never prompt.
+**Client CLI**. The terminal surface of the client binary: the `connect`, `scan`, `track`, `sync`, `watch`, and `bind` commands and the prompts they render (`internal/client/tui`). `connect` finds a server, pairs with it, and persists the Credential the Owner approved, so the other commands need no token or URL. `sync` and `watch` are headless and never prompt.
 
 ## Product
 
 User-facing concepts. If a user might say the word, it goes here.
 
-**Library** — The user's collection of Games on the server — every Game resolved in, with or without saves. Dash's main surface (the poster wall) shows it. UI copy says "library", never "catalog" (see _Catalog_, Backend).
+**Library**. The user's collection of Games on the server. It includes every Game resolved in, with or without saves. Dash's main surface (the poster wall) shows it. UI copy says "library", never "catalog" (see _Catalog_, Backend).
 
-**Game** — One server-owned canonical record in the Library, with its own UUID. Identifiers and fingerprints accumulate on a Game over time as clients and providers contribute evidence (see _Evidence_, Backend).
+**Game**. One server-owned canonical record in the Library, with its own UUID. Identifiers and fingerprints accumulate on a Game over time as clients and providers contribute evidence (see _Evidence_, Backend).
 
-**Omnisave** — One independently versioned game save on the server; the unit users create, name, fork, and bind to. Technically the normalized save with lineage the server stores, but in everyday use it's just "save" — the two are interchangeable, and "sync a save" means sync with the omnisave (an adapter-native save on disk is always a _Local Save_). Always carries a display name: the server assigns one when creation omits it ("Save N"; forks inherit the source name plus " (fork)"), and a name can be changed but never cleared (see [FDR-003](fdr/FDR-003-automatic-save-binding.md)). Several omnisaves can exist for the same Game — separate playthroughs or forked lineages.
+**Omnisave**. One independently versioned game save on the server. It is the unit users create, name, fork, and bind to. Technically it is the normalized save with lineage the server stores, but in everyday use it is just "save." The two are interchangeable, and "sync a save" means sync with the omnisave. An adapter-native save on disk is always a _Local Save_. An omnisave always carries a display name. The server assigns one when creation omits it ("Save N," while forks inherit the source name plus " (fork)"). A name can be changed but never cleared (see [FDR-003](fdr/FDR-003-automatic-save-binding.md)). Several omnisaves can exist for the same Game as separate playthroughs or forked lineages.
 
-**Revision** — An immutable state in an omnisave's linear history, committed as file upserts/deletes against an expected head. The newest revision is the **head**; a commit naming a stale head is rejected (see _Head Conflict_, Backend).
+**Revision**. A content-immutable state in an omnisave's linear history, committed as file upserts/deletes against an expected head. A revision may have a mutable display name. Without one, the Dash shows its short identifier. Naming changes no content or history. The newest revision is the **head**. A commit naming a stale head is rejected (see _Head Conflict_, Backend).
 
-**Fork** — A new omnisave started from an existing revision's snapshot. The fork records its origin (source omnisave and revision) and then versions independently.
+**Fork**. A new omnisave started from an existing revision's snapshot. The fork records its origin (source omnisave and revision) and then versions independently.
 
-**Device** — One self-identified machine running the Client, e.g. a Steam Deck or a desktop. A device mints a stable ID and a human-readable name on first run, kept in local tracking state and reported to the server; identity belongs to the client installation, so wiping local state makes a new Device. A Device hosts Targets (see _Target_, Backend); it is not one itself. See [FDR-002](fdr/FDR-002-game-lifecycle.md).
+**Device**. One self-identified machine running the Client, e.g. a Steam Deck or a desktop. A device mints a stable ID and a human-readable name on first run, kept in local tracking state and reported to the server. Identity belongs to the client installation, so wiping local state makes a new Device. A Device hosts Targets (see _Target_, Backend), but it is not one itself. See [FDR-002](fdr/FDR-002-game-lifecycle.md).
 
-**Provenance** — A Game's append-only record of the Devices that have tracked it: per device, when it was first tracked, when it was last seen, whether the install is still present, and whether it has since been untracked. Provenance survives untracking, uninstalls, and deletion of every omnisave; only deleting the Game removes it. Distinct from a save's fork lineage (see _Fork_). See [FDR-002](fdr/FDR-002-game-lifecycle.md).
+**Provenance**. A Game's append-only record of the Devices that have tracked it: per device, when it was first tracked, when it was last seen, whether the install is still present, and whether it has since been untracked. Provenance survives untracking, uninstalls, and deletion of every omnisave. Only deleting the Game removes it. It is distinct from a save's fork lineage (see _Fork_). See [FDR-002](fdr/FDR-002-game-lifecycle.md).
 
-**Scan** — A read-only discovery pass across adapters, reporting each target, its installed games, and their current saves without modifying anything. Run with `omnisave scan`.
+**Scan**. A read-only discovery pass across adapters, reporting each target, its installed games, and their current saves without modifying anything. Run with `omnisave scan`.
 
-**Tracking** — A Device's selection of which discovered games to synchronize, chosen in the `track` prompt and persisted in local tracking state (`client.json` in the user config directory). Tracking is what makes Omnisave aware of a game: at track time the game is resolved from the Catalog into the Library, before any save is bound. Games that disappear from a scan stay tracked until explicitly unselected, or until a track run learns the game was deleted on the server (see [FDR-002](fdr/FDR-002-game-lifecycle.md)).
+**Tracking**. A Device's selection of which discovered games to synchronize, chosen in the `track` prompt and persisted in local tracking state (`client.json` in the user config directory). Tracking is what makes Omnisave aware of a game. At track time the game is resolved from the Catalog into the Library before any save is bound. Games that disappear from a scan stay tracked until explicitly unselected, or until a track run learns the game was deleted on the server (see [FDR-002](fdr/FDR-002-game-lifecycle.md)).
 
-**Local Save** — One adapter-native save set discovered on this machine; may contain multiple files.
+**Local Save**. One adapter-native save set discovered on this machine. It may contain multiple files.
 
-**Binding** — A machine-local mapping from one Local Save to one omnisave. Tracking creates bindings automatically when it seeds a new omnisave or finds one lineage with matching head content; `omnisave bind` remains available for corrections. A binding records the revision whose content the Local Save is known to equal — the **sync baseline**. A manual binding to non-matching content has no baseline and starts life diverged (see _Sync_).
+**Binding**. A machine-local mapping from one Local Save to one omnisave. Tracking creates bindings automatically when it seeds a new omnisave or finds one lineage with matching head content. `omnisave bind` remains available for corrections. A binding records the revision whose content the Local Save is known to equal, called the **sync baseline**. A manual binding to non-matching content has no baseline and starts life diverged (see _Sync_).
 
-**Sync** — The pass keeping a bound save and its omnisave equal: local progress commits up as revisions, server progress applies down to disk, and the sync baseline arbitrates which direction is safe. New progress on both sides is **divergence**, which sync never resolves on its own — an interactive track run asks, and both answers keep everything. Runs once via `omnisave sync` and continuously via `omnisave watch`. See [FDR-005](fdr/FDR-005-save-sync.md).
+**Sync**. The pass keeping a bound save and its omnisave equal: local progress commits up as revisions, server progress applies down to disk, and the sync baseline arbitrates which direction is safe. New progress on both sides is **divergence**, which sync never resolves on its own. An interactive track run asks, and both answers keep everything. Runs once via `omnisave sync` and continuously via `omnisave watch`. See [FDR-005](fdr/FDR-005-save-sync.md).
 
 ## Authorization
 
-Access vocabulary. Deliberately small: there are no accounts, roles, or users — one Owner, and access expressed as credentials rather than identities (see [ADR-007](adr/ADR-007-per-device-credentials.md)).
+Access vocabulary. Deliberately small. There are no accounts, roles, or users. There is one Owner, and access is expressed as credentials rather than identities (see [ADR-007](adr/ADR-007-per-device-credentials.md)).
 
-**Owner** — The single person a server belongs to. Not an account and not a login: ownership is held as credentials, and a server acquires an owner the first time someone claims it.
+**Owner**. The single person a server belongs to. Not an account and not a login: ownership is held as credentials, and a server acquires an owner the first time someone claims it.
 
-**Credential** — One issued, revocable bearer token, held by exactly one client — a Device, a browser, or a script. The server stores it hashed and can never recover it, records when it was last used, and can withdraw it without disturbing any other. Every way into a server ends at one of these, which is why the list in the Dash is the complete answer to what can reach it. See [ADR-007](adr/ADR-007-per-device-credentials.md).
+**Credential**. One issued, revocable bearer token held by exactly one client, whether a Device, a browser, or a script. The server stores it hashed and can never recover it, records when it was last used, and can withdraw it without disturbing any other. Every way into a server ends at one of these, which is why the list in the Dash is the complete answer to what can reach it. See [ADR-007](adr/ADR-007-per-device-credentials.md).
 
-**Claiming** — The first browser to reach a server that has issued nothing takes ownership of it, from the local network and without a secret, and chooses the Owner PIN while doing so. Permanent and one-shot: a claimed server refuses every later claim. See [ADR-010](adr/ADR-010-taking-ownership.md).
+**Claiming**. The first browser to reach a server that has issued nothing takes ownership of it, from the local network and without a secret, and chooses the Owner PIN while doing so. Permanent and one-shot: a claimed server refuses every later claim. See [ADR-010](adr/ADR-010-taking-ownership.md).
 
-**Owner PIN** — Four digits, one per server, chosen when the server is claimed. Every browser after the first proves it to be issued a Credential of its own. Short by design and safe by refusal rather than by length: wrong answers are counted per source address and across the server, and sign-in locks for escalating periods. See [ADR-010](adr/ADR-010-taking-ownership.md).
+**Owner PIN**. Four digits, one per server, chosen when the server is claimed. Every browser after the first proves it to be issued a Credential of its own. Short by design and safe by refusal rather than by length: wrong answers are counted per source address and across the server, and sign-in locks for escalating periods. See [ADR-010](adr/ADR-010-taking-ownership.md).
 
-**Pairing** — How a Device with no Credential gets one: it asks, displays a short **code**, and waits while holding a long **handle** that is the only thing able to collect the credential. The Owner approves the request whose code matches the screen in front of them — a request's name and address are supplied by whoever sent it, so the code is the only part that ties it to the Device that sent it. See [FDR-006](fdr/FDR-006-connecting-a-device.md).
+**Pairing**. How a Device with no Credential gets one: it asks, displays a short **code**, and waits while holding a long **handle** that is the only thing able to collect the credential. The Owner approves the request whose code matches the screen in front of them. A request's name and address are supplied by whoever sent it, so the code is the only part that ties it to the Device that sent it. See [FDR-006](fdr/FDR-006-connecting-a-device.md).
 
-**Owner Token** — The deployment-level credential, set with `OMNISAVE_TOKEN` (or `OMNISAVE_TOKEN_FILE`) and generated beside the database when neither is. It is the way in that never depends on the Dash: claiming from off the network, recovering a forgotten PIN, and automation. Never throttled, never locked, and never carried by a Device. See [ADR-010](adr/ADR-010-taking-ownership.md).
+**Owner Token**. The deployment-level credential, set with `OMNISAVE_TOKEN` (or `OMNISAVE_TOKEN_FILE`) and generated beside the database when neither is. It is the way in that never depends on the Dash: claiming from off the network, recovering a forgotten PIN, and automation. Never throttled, never locked, and never carried by a Device. See [ADR-010](adr/ADR-010-taking-ownership.md).
 
 ## Backend
 
 Infrastructure jargon. If only contributors say the word, it goes here.
 
-**Server** — The self-hosted Go service (NAS-first) that owns the Library, omnisaves, and artifacts, exposed as an HTTP API under `/api/v1`. The server is the source of truth; clients hold only machine-local state.
+**Server**. The self-hosted Go service (NAS-first) that owns the Library, omnisaves, and artifacts, exposed as an HTTP API under `/api/v1`. The server is the source of truth. Clients hold only machine-local state.
 
-**Client** — The portable `omnisave` binary that runs where games live (Steam Deck first). It scans, tracks, binds, and syncs, talking to one server through the authenticated `remote` HTTP client (`internal/client/remote`). One self-identified installation of it is a _Device_ (Product).
+**Client**. The portable `omnisave` binary that runs where games live (Steam Deck first). It scans, tracks, binds, and syncs, talking to one server through the authenticated `remote` HTTP client (`internal/client/remote`). One self-identified installation of it is a _Device_ (Product).
 
-**Repository** — The server's persistence boundary: Omnisave records, Game records, and artifact storage behind one interface (`internal/storage`), implemented on SQLite.
+**Repository**. The server's persistence boundary: Omnisave records, Game records, and artifact storage behind one interface (`internal/storage`), implemented on SQLite.
 
-**Artifact** — Content-addressed immutable bytes keyed by SHA-256, with a format and size. Revisions reference artifacts through **revision files** — canonical save path → artifact — so identical content is stored once and never rewritten.
+**Artifact**. Content-addressed immutable bytes keyed by SHA-256, with a format and size. Revisions reference artifacts through **revision files**, which map a canonical save path to an artifact, so identical content is stored once and never rewritten.
 
-**Head Conflict** — Rejection of a revision commit whose expected head is no longer the omnisave's actual head; optimistic concurrency for save history. The error carries the actual head so a client can reconcile.
+**Head Conflict**. Rejection of a revision commit whose expected head is no longer the omnisave's actual head. It provides optimistic concurrency for save history. The error carries the actual head so a client can reconcile.
 
-**Adapter** — Client component that discovers application targets, their installed games, and native saves. Two exist today: `retroarch`, which maps emulated platforms to playlist names and save extensions through per-platform profiles (SNES first), and `steam`.
+**Adapter**. Client component that discovers application targets, their installed games, and native saves. Two exist today: `retroarch`, which maps emulated platforms to playlist names and save extensions through per-platform profiles (SNES first), and `steam`.
 
-**Target** — One application installation resolved on this machine (e.g. a RetroArch install). Targets are found by **locators**, one per install type: Steam library, application bundle, or standalone installer.
+**Target**. One application installation resolved on this machine (e.g. a RetroArch install). Targets are found by **locators**, one per install type: Steam library, application bundle, or standalone installer.
 
-**Installed Game** — One game exposed through a target, carrying identity evidence (see _Evidence_), an install root, and the environment it runs in.
+**Installed Game**. One game exposed through a target, carrying identity evidence (see _Evidence_), an install root, and the environment it runs in.
 
-**Environment** — Where an installed game runs: host OS, runtime (native or Proton), home, store root, and prefix root. Save-location rules expand against the environment — under Proton, Windows paths resolve inside the prefix (`drive_c/…`).
+**Environment**. Where an installed game runs: host OS, runtime (native or Proton), home, store root, and prefix root. Save-location rules expand against the environment. Under Proton, Windows paths resolve inside the prefix (`drive_c/…`).
 
-**Save Profile** — Provider-neutral save-location knowledge for one game, expressed as **rules** — each a templated path plus the OS/store where it applies (Windows rules also apply under Proton). Currently sourced from the community Ludusavi manifest, keyed by Steam ID (`internal/client/saveprofile`).
+**Save Profile**. Provider-neutral save-location knowledge for one game, expressed as **rules**. Each rule is a templated path plus the OS/store where it applies (Windows rules also apply under Proton). Currently sourced from the community Ludusavi manifest, keyed by Steam ID (`internal/client/saveprofile`).
 
-**Catalog** — The provider-hosted universe of known games: what exists and can be matched against, not what the user has (that's the _Library_, Product). `internal/catalog` currently names the server's local cache of resolved identity and metadata — Games, exact ROM signatures (**GameROM**), provider media with attribution — pending rename.
+**Catalog**. The provider-hosted universe of known games: what exists and can be matched against, not what the user has (that's the _Library_, Product). `internal/catalog` currently names the server's local cache of resolved identity and metadata. This includes Games, exact ROM signatures (**GameROM**), and provider media with attribution. The code is pending rename.
 
-**Catalog Provider** — External service hosting the catalog, consulted to learn what games exist: resolves evidence into identity and metadata claims, searches by title, and serves media. The providers include Hasheous for ROMs and IGDB for everything else.
+**Catalog Provider**. External service hosting the catalog, consulted to learn what games exist: resolves evidence into identity and metadata claims, searches by title, and serves media. The providers include Hasheous for ROMs and IGDB for everything else.
 
-**Evidence** — What a client submits to resolve a Game: **identifiers** (external IDs scoped to a namespace — `steam.app`, `igdb.game`, `hasheous.game`), **fingerprints** (exact-content hashes `{platform, algorithm, value}` for ROM matching), and weak descriptive hints (title, platform).
+**Evidence**. What a client submits to resolve a Game: **identifiers** (external IDs scoped to a namespace such as `steam.app`, `igdb.game`, or `hasheous.game`), **fingerprints** (exact-content hashes `{platform, algorithm, value}` for ROM matching), and weak descriptive hints (title, platform).
 
-**Resolution** — The reuse-or-create outcome of resolving evidence into a canonical Game, reported as `existing` or `created`. Resolution fails with an **identity conflict** when supplied evidence is already assigned to different Games.
+**Resolution**. The reuse-or-create outcome of resolving evidence into a canonical Game, reported as `existing` or `created`. Resolution fails with an **identity conflict** when supplied evidence is already assigned to different Games.
 
-**Selection Token** — Provider-owned token attached to each search candidate; redeeming it via match applies that provider's claim to a game without requiring a local fingerprint.
+**Selection Token**. Provider-owned token attached to each search candidate. Redeeming it via match applies that provider's claim to a game without requiring a local fingerprint.

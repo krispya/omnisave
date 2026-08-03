@@ -302,6 +302,10 @@ var migrations = []string{
 		iterations INTEGER NOT NULL,
 		updated_at TEXT NOT NULL
 	);`,
+
+	// Revision names are mutable presentation metadata; an empty value keeps
+	// the revision's short identifier as its display fallback.
+	`ALTER TABLE revisions ADD COLUMN display_name TEXT NOT NULL DEFAULT '';`,
 }
 
 func migrate(db *sql.DB) error {

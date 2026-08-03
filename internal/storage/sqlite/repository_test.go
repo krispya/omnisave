@@ -46,6 +46,12 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	revisionName := "Before the Elite Four"
+	if _, err := saves.UpdateRevision(ctx, save.ID, revision.ID, omnisave.UpdateRevision{
+		DisplayName: &revisionName,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	fork, err := saves.Fork(ctx, save.ID, omnisave.ForkOmnisave{
 		RevisionID: revision.ID, DisplayName: "Alternate route",
 	})
@@ -74,7 +80,7 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(history) != 1 || history[0].ID != revision.ID {
+	if len(history) != 1 || history[0].ID != revision.ID || history[0].DisplayName != revisionName {
 		t.Fatalf("unexpected history: %v", history)
 	}
 	stored, err = saves.Get(ctx, save.ID)
