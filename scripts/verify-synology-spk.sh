@@ -42,10 +42,23 @@ for SPK in "$@"; do
     fi
 
     jq empty "${ROOT}/conf/privilege" "${ROOT}/conf/resource"
+    if ! jq -e '
+        .defaults["run-as"] == "package" and
+        ([.. | strings] | index("root") == null)
+    ' "${ROOT}/conf/privilege" >/dev/null; then
+        echo "${SPK}: conf/privilege must run only as the package user" >&2
+        exit 1
+    fi
     for SCRIPT in "${ROOT}/scripts/"*; do
         sh -n "${SCRIPT}"
         if [ ! -x "${SCRIPT}" ]; then
             echo "${SPK}: ${SCRIPT} is not executable" >&2
+            exit 1
+        fi
+    done
+    for ACTION in prestart prestop; do
+        if ! "${ROOT}/scripts/start-stop-status" "${ACTION}"; then
+            echo "${SPK}: start-stop-status rejects ${ACTION}" >&2
             exit 1
         fi
     done
