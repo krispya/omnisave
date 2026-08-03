@@ -7,6 +7,7 @@ export default defineConfig({
   // Dash routes are real paths, so assets must resolve from the root rather than from
   // whatever route the browser happens to be on.
   base: '/',
+  publicDir: '../../assets/icons',
   plugins: [react(), babel({ presets: [reactCompilerPreset()] }), tailwindcss()],
   server: {
     proxy: {
