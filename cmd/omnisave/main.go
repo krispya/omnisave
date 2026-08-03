@@ -17,6 +17,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/access"
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client"
+	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/binding"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
@@ -546,6 +547,7 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 	var outcome tui.TrackOutcome
 	var bindingErr error
 	waitErr := tui.Wait(ctx, "", func(taskCtx context.Context, session *tui.WaitSession) {
+		taskCtx = activity.WithReporter(taskCtx, session.SetLabel)
 		var confirmed map[string]bool
 		outcome, confirmed = syncTracking(taskCtx, server, &state, scans, removed, report)
 		if !outcome.Synced {
@@ -580,6 +582,7 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 			},
 		}
 		bindingErr = reconcileSaves(taskCtx, server, &state, scans, confirmed, &outcome, report, prompts, 0)
+		activity.Report(taskCtx, "finishing")
 	})
 	if waitErr != nil && !errors.Is(waitErr, tui.ErrAborted) {
 		return waitErr
@@ -703,6 +706,7 @@ func syncTracking(
 	device := state.EnsureDevice(deviceName())
 	outcome := tui.TrackOutcome{Tracked: len(state.Games)}
 	confirmed := make(map[string]bool)
+	activity.Report(ctx, "registering device")
 	err := server.RegisterDevice(ctx, device.ID, catalog.RegisterDevice{Name: device.Name, Platform: runtime.GOOS})
 	if err != nil {
 		report.SyncFailed(err)
@@ -720,11 +724,13 @@ func syncTracking(
 			continue
 		}
 		if game.ServerGameID == "" {
+			activity.Report(ctx, "looking up "+game.Title)
 			if !resolveIntoLibrary(ctx, server, state, &outcome, id, identity, report) {
 				continue
 			}
 			game = state.Games[id]
 		}
+		activity.Report(ctx, "updating library")
 		trackErr := server.TrackGame(ctx, game.ServerGameID, device.ID, catalog.TrackGame{
 			Adapter:   game.Adapter,
 			Installed: visible,
@@ -852,6 +858,7 @@ func reconcileSaves(
 	prompts *reconcilePrompts,
 	pushFloor time.Duration,
 ) error {
+	activity.Report(ctx, "checking saves")
 	type candidate struct {
 		local        tracking.LocalSave
 		save         target.Save
@@ -920,6 +927,7 @@ func reconcileSaves(
 	}
 
 	for _, candidate := range candidates {
+		activity.Report(ctx, "checking "+candidate.local.GameTitle)
 		if _, tracked := state.Games[candidate.local.GameID]; !tracked {
 			// An earlier candidate's server-side deletion untracked this
 			// game mid-pass; its remaining saves have nothing to bind to.
@@ -978,7 +986,7 @@ func reconcileSaves(
 		if loadFailed {
 			continue
 		}
-		matches, err := binding.FindContentMatches(candidate.save, lineages)
+		matches, err := binding.FindContentMatchesContext(ctx, candidate.save, lineages)
 		if err != nil {
 			outcome.Failed++
 			report.SaveFailed(candidate.local.GameTitle, err)
@@ -1317,7 +1325,7 @@ func syncBoundSave(
 		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
-	manifest, err := binding.Manifest(save)
+	manifest, err := binding.ManifestContext(ctx, save)
 	if err != nil {
 		outcome.Failed++
 		report.SaveFailed(local.GameTitle, err)
