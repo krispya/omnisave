@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Omnisave, Revision } from '../../lib/omnisave-api.js';
+import { updateRevisionDisplayName, type Omnisave, type Revision } from '../../lib/omnisave-api.js';
 import { GameArtwork, GameMediaImage } from './game-artwork.js';
 import type { GameSummary } from './game-summary.js';
 import { GameDetailsDialog } from './details-dialog.js';
@@ -62,6 +62,16 @@ export function GameDetail({
     game.publisher,
     genres.length > 0 ? genres.join(', ') : undefined,
   ].filter((fact): fact is string => Boolean(fact));
+
+  async function renameRevision(revision: Revision, displayName: string) {
+    const updated = await updateRevisionDisplayName(
+      token,
+      revision.omnisave_id,
+      revision.id,
+      displayName
+    );
+    history.replaceRevision(updated);
+  }
 
   // The open save is the selected one, so opening a save closes whichever was open and
   // becomes what the Debug menu and the revision fetch are pointed at.
@@ -195,6 +205,7 @@ export function GameDetail({
             onDownloadRevision={onDownloadRevision}
             onRequestDelete={onRequestDelete}
             onRenameSave={onRenameSave}
+            onRenameRevision={renameRevision}
             onOpenSave={openSaveAtRevision}
           />
         )}

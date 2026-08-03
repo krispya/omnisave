@@ -90,6 +90,7 @@ func (api *API) guardedRoutes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/omnisaves/{id}/revisions", api.addRevision)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions", api.listRevisions)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/{revisionID}", api.getRevision)
+	mux.HandleFunc("PATCH /api/v1/omnisaves/{id}/revisions/{revisionID}", api.updateRevision)
 	mux.HandleFunc("POST /api/v1/omnisaves/{id}/forks", api.fork)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/archive", api.archive)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/{revisionID}/archive", api.archiveRevision)
@@ -225,6 +226,23 @@ func (a *API) listRevisions(w http.ResponseWriter, r *http.Request) {
 		revisions = []omnisave.Revision{}
 	}
 	writeJSON(w, http.StatusOK, revisions)
+}
+
+func (a *API) updateRevision(w http.ResponseWriter, r *http.Request) {
+	var input omnisave.UpdateRevision
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, err)
+		return
+	}
+	revision, err := a.saves.UpdateRevision(
+		r.Context(), r.PathValue("id"), r.PathValue("revisionID"), input,
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	a.publishLibraryChanged()
+	writeJSON(w, http.StatusOK, revision)
 }
 
 func (a *API) fork(w http.ResponseWriter, r *http.Request) {

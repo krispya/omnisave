@@ -5,12 +5,12 @@ import "time"
 
 // Omnisave identifies one independently versioned game save.
 type Omnisave struct {
-	ID             string            `json:"id"`
-	GameID         string            `json:"game_id"`
-	DisplayName    string            `json:"display_name"`
-	HeadRevisionID *string           `json:"head_revision_id"`
-	ForkedFrom     *ForkOrigin       `json:"forked_from,omitempty"`
-	CreatedAt      time.Time         `json:"created_at"`
+	ID             string      `json:"id"`
+	GameID         string      `json:"game_id"`
+	DisplayName    string      `json:"display_name"`
+	HeadRevisionID *string     `json:"head_revision_id"`
+	ForkedFrom     *ForkOrigin `json:"forked_from,omitempty"`
+	CreatedAt      time.Time   `json:"created_at"`
 	// UpdatedAt is when the head revision was committed; CreatedAt if none.
 	UpdatedAt time.Time         `json:"updated_at"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
@@ -22,14 +22,17 @@ type ForkOrigin struct {
 	RevisionID string `json:"revision_id"`
 }
 
-// Revision is an immutable state in an Omnisave's linear history.
+// Revision is a content-immutable state in an Omnisave's linear history.
+// DisplayName is presentation metadata and may be changed without changing
+// the snapshot or its identity.
 type Revision struct {
-	ID         string            `json:"id"`
-	OmnisaveID string            `json:"omnisave_id"`
-	ParentID   *string           `json:"parent_id"`
-	CreatedAt  time.Time         `json:"created_at"`
-	Files      []RevisionFile    `json:"files"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
+	ID          string            `json:"id"`
+	OmnisaveID  string            `json:"omnisave_id"`
+	DisplayName string            `json:"display_name"`
+	ParentID    *string           `json:"parent_id"`
+	CreatedAt   time.Time         `json:"created_at"`
+	Files       []RevisionFile    `json:"files"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 // RevisionFile maps a canonical save path to immutable content.
@@ -54,6 +57,11 @@ type CreateOmnisave struct {
 
 // UpdateOmnisave describes mutable Omnisave fields.
 type UpdateOmnisave struct {
+	DisplayName *string `json:"display_name"`
+}
+
+// UpdateRevision describes mutable revision presentation metadata.
+type UpdateRevision struct {
 	DisplayName *string `json:"display_name"`
 }
 

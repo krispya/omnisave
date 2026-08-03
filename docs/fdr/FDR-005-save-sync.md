@@ -1,7 +1,7 @@
 # FDR-005: Save Sync
 
 **Status:** Experimental
-**Last reviewed:** 2026-07-26
+**Last reviewed:** 2026-08-03
 
 ## Overview
 
@@ -65,6 +65,12 @@ path, syncing-down built the read path; sync makes both routine.
   is attempted first, and only the content the server reports missing is
   uploaded — an unchanged file, or content another Device already
   uploaded, never travels twice.
+- The Dash shows an unnamed revision by its short identifier. Clicking that
+  label turns it into an inline name field; Enter or leaving the field saves,
+  and Escape cancels. A custom name replaces the identifier in flat and tree
+  history views and is used in that revision's download filename.
+- Naming a revision changes only its label. Its identifier, content, place in
+  history, and head status do not change.
 - Failures leave both sides valid: an interrupted upload leaves the head
   where it was; an interrupted download leaves the local save untouched.
 - `omnisave` with no command is the whole app, and it skips whatever
@@ -238,6 +244,19 @@ codecs because it is in the standard library: zero new dependencies.
 **Tradeoff:** CPU spent on every transfer, weaker ratios than zstd, and
 logical sizes need their own metadata since disk size no longer states
 them.
+
+### 10. Revision names are mutable labels, not revision content
+
+**Decision:** Revisions may have an owner-supplied display name. An unnamed
+revision falls back to its short identifier, and renaming is accepted
+last-write-wins without creating a revision or moving the head.
+**Why:** A memorable checkpoint such as "before the final boss" is more useful
+than a hash, but presentation metadata does not deserve the concurrency rules
+that protect irreplaceable save history. This follows ADR-001's proportional
+authority for labels.
+**Tradeoff:** Concurrent renames do not conflict; the last accepted name wins.
+The short identifier remains the only stable identity for integrations and
+diagnostics.
 
 ## Related
 

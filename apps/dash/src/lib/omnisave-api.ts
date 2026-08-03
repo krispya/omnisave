@@ -15,6 +15,7 @@ export type Omnisave = {
 export type Revision = {
   id: string;
   omnisave_id: string;
+  display_name: string;
   parent_id: string | null;
   created_at: string;
   files: Array<{
@@ -379,6 +380,19 @@ export function createOmnisave(
 
 export function listRevisions(token: string, omnisaveID: string, signal?: AbortSignal) {
   return request<Revision[]>(`/api/v1/omnisaves/${omnisaveID}/revisions`, token, { signal });
+}
+
+export function updateRevisionDisplayName(
+  token: string,
+  omnisaveID: string,
+  revisionID: string,
+  displayName: string
+) {
+  return request<Revision>(`/api/v1/omnisaves/${omnisaveID}/revisions/${revisionID}`, token, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ display_name: displayName }),
+  });
 }
 
 export function commitRevision(

@@ -63,6 +63,12 @@ func TestAServerThatLostItsDatabaseRebuildsEverything(t *testing.T) {
 		revisions = append(revisions, *revision)
 		head = &revisions[len(revisions)-1].ID
 	}
+	revisionName := "Before the Ocean Palace"
+	if _, err := saves.UpdateRevision(ctx, main.ID, revisions[1].ID, omnisave.UpdateRevision{
+		DisplayName: &revisionName,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	fork, err := saves.Fork(ctx, main.ID, omnisave.ForkOmnisave{
 		RevisionID: revisions[1].ID, DisplayName: "Ocean palace retry",
@@ -149,6 +155,9 @@ func TestAServerThatLostItsDatabaseRebuildsEverything(t *testing.T) {
 		if revision.ID != revisions[index].ID {
 			t.Fatalf("expected revision %d to keep identifier %s, got %s", index, revisions[index].ID, revision.ID)
 		}
+	}
+	if history[1].DisplayName != revisionName {
+		t.Fatalf("expected the revision name to survive rebuild, got %q", history[1].DisplayName)
 	}
 	if history[0].ParentID != nil || history[1].ParentID == nil || *history[1].ParentID != history[0].ID ||
 		history[2].ParentID == nil || *history[2].ParentID != history[1].ID {

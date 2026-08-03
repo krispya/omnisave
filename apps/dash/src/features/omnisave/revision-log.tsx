@@ -3,6 +3,7 @@ import type { Omnisave, Revision } from '../../lib/omnisave-api.js';
 import { ForkIcon } from './fork-icon.js';
 import { forkLineage, type ForkLink, type ForkOrigin } from './fork-lineage.js';
 import { formatBytes, formatDateTime, formatHistoryStamp } from '../../lib/format.js';
+import { RevisionNameEditor } from './revision-name-editor.js';
 
 /**
  * The revision to reveal after following a fork edge. `revisionID` is omitted when the
@@ -22,6 +23,7 @@ type RevisionLogProps = {
   error: string;
   focus?: RevisionFocus;
   onDownloadRevision: (revision: Revision) => void;
+  onRenameRevision: (revision: Revision, displayName: string) => Promise<void>;
   onOpenSave: (save: Omnisave, revisionID?: string) => void;
 };
 
@@ -109,6 +111,7 @@ export function RevisionLog({
   error,
   focus,
   onDownloadRevision,
+  onRenameRevision,
   onOpenSave,
 }: RevisionLogProps) {
   // One revision opens at a time: the log stays scannable however long the history is.
@@ -242,34 +245,40 @@ export function RevisionLog({
                 </div>
                 <div className={`min-w-0 ${focused ? 'rounded bg-[#e5a00d]/[0.07]' : ''}`}>
                   <div className="flex h-9 items-center gap-2.5">
-                    <button
-                      type="button"
-                      aria-expanded={open}
-                      onClick={() => setOpenRevisionID(open ? '' : revision.id)}
-                      className="flex h-full min-w-0 flex-1 items-center gap-2.5 rounded px-1.5 text-left transition hover:bg-white/5"
-                    >
-                      <span className="shrink-0 text-slate-600">
+                    <div className="relative flex h-full min-w-0 flex-1 items-center gap-2.5 px-1.5">
+                      <button
+                        type="button"
+                        aria-expanded={open}
+                        onClick={() => setOpenRevisionID(open ? '' : revision.id)}
+                        aria-label={`${open ? 'Collapse' : 'Expand'} revision ${revision.display_name || shortID(revision.id)}`}
+                        className="absolute inset-0 rounded text-left outline-none transition hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-[#e5a00d]"
+                      />
+                      <span className="pointer-events-none relative shrink-0 text-slate-600">
                         <ChevronIcon open={open} />
                       </span>
-                      <span className="shrink-0 font-mono text-xs text-slate-300" title={revision.id}>
-                        {shortID(revision.id)}
-                      </span>
+                      <RevisionNameEditor
+                        revision={revision}
+                        fallbackName={shortID(revision.id)}
+                        onSave={onRenameRevision}
+                      />
                       {isHead ? (
-                        <span className="shrink-0 rounded bg-[#e5a00d]/15 px-1.5 py-0.5 text-[10px] font-medium text-[#e5a00d]">
+                        <span className="pointer-events-none relative shrink-0 rounded bg-[#e5a00d]/15 px-1.5 py-0.5 text-[10px] font-medium text-[#e5a00d]">
                           head
                         </span>
                       ) : null}
-                      <span className="hidden truncate text-[11px] text-slate-500 sm:inline">
-                        {revision.files.length} {revision.files.length === 1 ? 'file' : 'files'} ·{' '}
-                        {formatBytes(totalSize)}
+                      <span className="pointer-events-none relative ml-auto flex shrink-0 items-center gap-4">
+                        <span className="text-[11px] text-slate-500">
+                          {revision.files.length} {revision.files.length === 1 ? 'file' : 'files'} ·{' '}
+                          {formatBytes(totalSize)}
+                        </span>
+                        <span
+                          className="text-[10px] text-slate-600"
+                          title={formatDateTime(revision.created_at)}
+                        >
+                          {formatHistoryStamp(revision.created_at)}
+                        </span>
                       </span>
-                      <span
-                        className="ml-auto shrink-0 text-[10px] text-slate-600"
-                        title={formatDateTime(revision.created_at)}
-                      >
-                        {formatHistoryStamp(revision.created_at)}
-                      </span>
-                    </button>
+                    </div>
                     <button
                       type="button"
                       onClick={() => onDownloadRevision(revision)}
