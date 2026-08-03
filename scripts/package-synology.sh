@@ -2,6 +2,7 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+ICON_DIR="${ROOT}/assets/icons"
 VERSION=${VERSION:-0.1.0}
 SPK_BUILD=${SPK_BUILD:-0001}
 SPK_ARCH=${SPK_ARCH:-x86_64}
@@ -51,8 +52,8 @@ sed \
     "${ROOT}/packaging/synology/INFO.template" > "${PACKAGE}/INFO"
 cp -R "${ROOT}/packaging/synology/scripts/." "${PACKAGE}/scripts/"
 cp -R "${ROOT}/packaging/synology/conf/." "${PACKAGE}/conf/"
-cp "${ROOT}/packaging/synology/PACKAGE_ICON.PNG" "${PACKAGE}/PACKAGE_ICON.PNG"
-cp "${ROOT}/packaging/synology/PACKAGE_ICON_256.PNG" "${PACKAGE}/PACKAGE_ICON_256.PNG"
+cp "${ICON_DIR}/omnisave-64.png" "${PACKAGE}/PACKAGE_ICON.PNG"
+cp "${ICON_DIR}/omnisave-256.png" "${PACKAGE}/PACKAGE_ICON_256.PNG"
 chmod 755 "${PACKAGE}/scripts/"*
 
 mkdir -p "${ROOT}/dist"

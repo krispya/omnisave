@@ -1,13 +1,5 @@
 {
   "defaults": {
     "run-as": "package"
-  },
-  "username": "omnisave",
-  "groupname": "omnisave",
-  "executable": [
-    {
-      "relpath": "bin/omnisave-server",
-      "run-as": "package"
-    }
-  ]
+  }
 }
