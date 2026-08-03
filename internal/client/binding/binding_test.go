@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/binding"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
@@ -31,7 +32,8 @@ func newFakeServer() *fakeServer {
 	}
 }
 
-func (f *fakeServer) UploadArtifact(_ context.Context, artifact omnisave.Artifact, content io.Reader) error {
+func (f *fakeServer) UploadArtifact(ctx context.Context, artifact omnisave.Artifact, content io.Reader) error {
+	activity.Report(ctx, "uploading")
 	f.uploadCalls++
 	data, err := io.ReadAll(content)
 	if err != nil {
@@ -188,8 +190,12 @@ func TestSeedUploadsContentAndCommitsInitialRevision(t *testing.T) {
 		},
 	}
 	server := newFakeServer()
+	var progress []string
+	ctx := activity.WithReporter(context.Background(), func(message string) {
+		progress = append(progress, message)
+	})
 
-	created, revision, err := binding.Seed(context.Background(), server, "server-game-1", save)
+	created, revision, err := binding.Seed(ctx, server, "server-game-1", save)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,6 +232,24 @@ func TestSeedUploadsContentAndCommitsInitialRevision(t *testing.T) {
 	}
 	if len(server.deleted) != 0 {
 		t.Fatalf("nothing should be deleted on success, got %v", server.deleted)
+	}
+	wantProgress := []string{
+		"preparing (1/2)",
+		"preparing (2/2)",
+		"checking server",
+		"reading (1/2)",
+		"uploading (1/2)",
+		"reading (2/2)",
+		"uploading (2/2)",
+		"finalizing",
+	}
+	if len(progress) != len(wantProgress) {
+		t.Fatalf("expected progress through preparation, upload, and finalization, got %v", progress)
+	}
+	for index := range wantProgress {
+		if progress[index] != wantProgress[index] {
+			t.Fatalf("progress %d: want %q, got %q", index, wantProgress[index], progress[index])
+		}
 	}
 }
 

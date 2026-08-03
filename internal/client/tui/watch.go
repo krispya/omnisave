@@ -100,6 +100,11 @@ func (d *WatchDisplay) PassStarted() {
 	d.program.Send(watchPassStartedMsg{at: time.Now()})
 }
 
+// Activity updates the short description beside the watch spinner.
+func (d *WatchDisplay) Activity(message string) {
+	d.program.Send(watchActivityMsg(message))
+}
+
 // PassFinished settles the view with a pass's final table and prints its
 // events above it. The table swaps in whole only when a pass completes —
 // mid-pass the previous settled table stays put and the footer spinner is
@@ -111,6 +116,7 @@ func (d *WatchDisplay) PassFinished(result PassResult) {
 type (
 	watchWatchingMsg     struct{ files int }
 	watchPassStartedMsg  struct{ at time.Time }
+	watchActivityMsg     string
 	watchPassFinishedMsg struct{ result PassResult }
 	watchSpinDoneMsg     struct{ generation int }
 	watchClockMsg        time.Time
@@ -131,6 +137,7 @@ type watchModel struct {
 	files          int
 	snapshot       ReportSnapshot
 	failure        string
+	activityLabel  string
 	syncing        bool
 	syncStarted    time.Time
 	spinGeneration int
@@ -167,8 +174,11 @@ func (m watchModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.files = message.files
 	case watchPassStartedMsg:
 		m.syncing = true
+		m.activityLabel = "syncing"
 		m.syncStarted = message.at
 		m.spinGeneration++
+	case watchActivityMsg:
+		m.activityLabel = string(message)
 	case watchPassFinishedMsg:
 		result := message.result
 		m.failure = passFailure(result)
@@ -188,6 +198,7 @@ func (m watchModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Results land immediately; the spinner finishes its rotation.
 		if remaining := spinnerMinimum - result.At.Sub(m.syncStarted); remaining > 0 {
+			m.activityLabel = "finishing"
 			generation := m.spinGeneration
 			commands = append(commands, tea.Tick(remaining, func(time.Time) tea.Msg {
 				return watchSpinDoneMsg{generation: generation}
@@ -209,7 +220,7 @@ func (m watchModel) View() string {
 	header := titleStyle.Render("▲ Omnisave") + mutedStyle.Render(" · watching")
 	if m.syncing {
 		// Activity lives here, appended, so no other line ever reflows.
-		header += " " + m.spinner.View()
+		header += " " + m.spinner.View() + " " + mutedStyle.Render(m.activityLabel)
 	}
 	view.WriteString(header + "\n\n")
 	lines := ComposeStanding(m.snapshot, m.now)

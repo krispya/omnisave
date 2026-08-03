@@ -13,6 +13,7 @@ import (
 	"github.com/mattn/go-isatty"
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
+	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
@@ -23,6 +24,7 @@ import (
 type watchSink interface {
 	Watching(files int)
 	PassStarted()
+	Activity(message string)
 	PassFinished(result tui.PassResult)
 	Requests() <-chan tui.WatchRequest
 }
@@ -235,13 +237,14 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	pass := func() []string {
 		started := time.Now()
 		sink.PassStarted()
+		passCtx := activity.WithReporter(ctx, sink.Activity)
 		state, err := l.store.Load()
 		if err != nil {
 			l.finish(sink, started, tui.ReportSnapshot{}, "", false, err)
 			return nil
 		}
 		report := &tui.TrackReport{}
-		outcome, files, err := syncPass(ctx, l.scanner, l.server, &state, report, l.floor)
+		outcome, files, err := syncPass(passCtx, l.scanner, l.server, &state, report, l.floor)
 		if err != nil {
 			l.finish(sink, started, report.Snapshot(), "", false, err)
 			return files
@@ -307,6 +310,8 @@ func (plainWatchSink) Watching(files int) {
 }
 
 func (plainWatchSink) PassStarted() {}
+
+func (plainWatchSink) Activity(string) {}
 
 func (plainWatchSink) PassFinished(result tui.PassResult) {
 	if result.Err != nil {

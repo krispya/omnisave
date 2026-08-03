@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
+	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
@@ -179,6 +180,7 @@ func (c *Client) UploadArtifact(ctx context.Context, artifact omnisave.Artifact,
 	// bytes. Saves are small, so buffering the compressed body to learn
 	// its length costs less than a chunked upload would complicate.
 	var compressed bytes.Buffer
+	activity.Report(ctx, "compressing")
 	compressor := gzip.NewWriter(&compressed)
 	if _, err := io.Copy(compressor, content); err != nil {
 		return fmt.Errorf("compress artifact: %w", err)
@@ -200,6 +202,7 @@ func (c *Client) UploadArtifact(ctx context.Context, artifact omnisave.Artifact,
 		format = "application/octet-stream"
 	}
 	request.Header.Set("Content-Type", format)
+	activity.Report(ctx, "uploading")
 	response, err := c.httpClient.Do(request)
 	if err != nil {
 		return fmt.Errorf("contact Omnisave server: %w", err)
@@ -221,6 +224,7 @@ func (c *Client) OpenArtifact(ctx context.Context, sha256 string) (io.ReadCloser
 		return nil, err
 	}
 	request.Header.Set("Authorization", "Bearer "+c.token)
+	activity.Report(ctx, "downloading")
 	response, err := c.httpClient.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("contact Omnisave server: %w", err)

@@ -44,3 +44,15 @@ func TestWaitAbortKeysCancelTheTaskContext(t *testing.T) {
 		t.Fatalf("expected the task context to be cancelled on abort")
 	}
 }
+
+func TestWaitUpdatesItsActivityLabel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	model := newWaitModel(ctx, cancel, &WaitSession{}, "Preparing saves", func(context.Context, *WaitSession) {})
+
+	updated, _ := model.Update(waitLabelMsg("uploading"))
+	view := updated.(waitModel).View()
+	if !strings.Contains(view, "uploading") || strings.Contains(view, "Preparing saves") {
+		t.Fatalf("expected the current activity label, got %q", view)
+	}
+}

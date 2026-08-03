@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
+	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
@@ -69,7 +70,9 @@ func syncPass(
 	report *tui.TrackReport,
 	pushFloor time.Duration,
 ) (tui.TrackOutcome, []string, error) {
+	activity.Report(ctx, "checking library")
 	reconciled := reconcileDeletedGames(ctx, server, state, report)
+	activity.Report(ctx, "scanning")
 	scans, err := scanner.ScanWithProgress(ctx, func(client.ScanProgress) {})
 	if err != nil {
 		return tui.TrackOutcome{}, nil, err

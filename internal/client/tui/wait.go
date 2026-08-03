@@ -11,12 +11,19 @@ import (
 )
 
 type waitFinishedMsg struct{}
+type waitLabelMsg string
 
 // WaitSession lets the running task hand the terminal to an interactive
 // prompt and take it back, keeping one activity line across a phase that
 // mixes server waits with occasional questions.
 type WaitSession struct {
 	program *tea.Program
+}
+
+// SetLabel replaces the activity line's description without restarting its
+// spinner. It is safe to call from the task goroutine.
+func (s *WaitSession) SetLabel(label string) {
+	s.program.Send(waitLabelMsg(label))
 }
 
 // Interact releases the terminal, runs fn — which may run its own
@@ -99,6 +106,8 @@ func (m waitModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case waitFinishedMsg:
 		m.done = true
 		return m, tea.Quit
+	case waitLabelMsg:
+		m.label = string(message)
 	}
 	return m, nil
 }
