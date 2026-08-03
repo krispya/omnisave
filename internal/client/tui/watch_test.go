@@ -98,6 +98,17 @@ func TestWatchSpinnerFinishesAFullRotationOnFastPasses(t *testing.T) {
 	}
 }
 
+func TestWatchShowsWhatTheCurrentPassIsDoing(t *testing.T) {
+	model := newTestWatchModel(make(chan WatchRequest, 1))
+	updated, _ := model.Update(watchPassStartedMsg{at: time.Now()})
+	updated, _ = updated.(watchModel).Update(watchActivityMsg("uploading (2/4)"))
+
+	view := ansi.Strip(updated.(watchModel).View())
+	if !strings.Contains(view, "uploading (2/4)") {
+		t.Fatalf("expected the current sync activity in the watch header, got:\n%s", view)
+	}
+}
+
 func TestAnOutageKeepsTheLastTableAndClockAndShowsTheCause(t *testing.T) {
 	model := newTestWatchModel(make(chan WatchRequest, 1))
 	synced := time.Now().Add(-2 * time.Minute)

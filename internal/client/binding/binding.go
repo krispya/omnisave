@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
@@ -59,7 +60,13 @@ func (m ContentMatch) MatchesHead() bool {
 // lineage. Equality means the canonical file paths and their content match;
 // revision ordering and media types do not affect the result.
 func FindContentMatches(save target.Save, lineages []Lineage) ([]ContentMatch, error) {
-	manifest, err := Manifest(save)
+	return FindContentMatchesContext(context.Background(), save, lineages)
+}
+
+// FindContentMatchesContext compares content while reporting file preparation
+// through ctx when the caller supplied an activity reporter.
+func FindContentMatchesContext(ctx context.Context, save target.Save, lineages []Lineage) ([]ContentMatch, error) {
+	manifest, err := ManifestContext(ctx, save)
 	if err != nil {
 		return nil, err
 	}
@@ -82,13 +89,20 @@ func FindContentMatches(save target.Save, lineages []Lineage) ([]ContentMatch, e
 // Manifest reads a local save into the canonical, content-addressed file list
 // used by server revisions.
 func Manifest(save target.Save) ([]omnisave.RevisionFile, error) {
+	return ManifestContext(context.Background(), save)
+}
+
+// ManifestContext reads and hashes a local save while reporting preparation
+// progress through ctx when the caller supplied an activity reporter.
+func ManifestContext(ctx context.Context, save target.Save) ([]omnisave.RevisionFile, error) {
 	if len(save.Files) == 0 {
 		return nil, fmt.Errorf("local save has no files to match")
 	}
 
 	manifest := make([]omnisave.RevisionFile, 0, len(save.Files))
 	paths := make(map[string]bool, len(save.Files))
-	for _, file := range save.Files {
+	for index, file := range save.Files {
+		activity.Report(ctx, fmt.Sprintf("preparing (%d/%d)", index+1, len(save.Files)))
 		canonical := CanonicalPath(file)
 		if canonical == "" || paths[canonical] {
 			return nil, fmt.Errorf("local save has duplicate or empty canonical paths")
@@ -152,7 +166,7 @@ func Seed(ctx context.Context, server Server, serverGameID string, save target.S
 		return nil, nil, fmt.Errorf("local save has no files to seed")
 	}
 
-	upserts, err := Manifest(save)
+	upserts, err := ManifestContext(ctx, save)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -186,7 +200,7 @@ func Push(ctx context.Context, server Server, omnisaveID string, save target.Sav
 	if len(save.Files) == 0 {
 		return nil, fmt.Errorf("local save has no files to push")
 	}
-	upserts, err := Manifest(save)
+	upserts, err := ManifestContext(ctx, save)
 	if err != nil {
 		return nil, err
 	}
@@ -215,6 +229,7 @@ func Push(ctx context.Context, server Server, omnisaveID string, save target.Sav
 // artifacts the server reports missing: identical content — an unchanged
 // file, another Device's earlier upload — never travels twice.
 func commitContent(ctx context.Context, server Server, omnisaveID string, save target.Save, input omnisave.CreateRevision) (*omnisave.Revision, error) {
+	activity.Report(ctx, "checking server")
 	revision, err := server.CommitRevision(ctx, omnisaveID, input)
 	var missing *omnisave.MissingArtifacts
 	if !errors.As(err, &missing) {
@@ -223,6 +238,7 @@ func commitContent(ctx context.Context, server Server, omnisaveID string, save t
 	if err := uploadMissing(ctx, server, save, input.Upserts, missing.SHA256); err != nil {
 		return nil, err
 	}
+	activity.Report(ctx, "finalizing")
 	return server.CommitRevision(ctx, omnisaveID, input)
 }
 
@@ -239,11 +255,14 @@ func uploadMissing(ctx context.Context, server Server, save target.Save, upserts
 	for _, file := range upserts {
 		artifacts[file.Path] = file.Artifact
 	}
+	uploaded := 0
 	for _, file := range save.Files {
 		artifact, known := artifacts[CanonicalPath(file)]
 		if !known || !wanted[artifact.SHA256] {
 			continue
 		}
+		uploaded++
+		activity.Report(ctx, fmt.Sprintf("reading (%d/%d)", uploaded, len(missing)))
 		content, err := os.ReadFile(file.Path)
 		if err != nil {
 			return fmt.Errorf("read local save file: %w", err)
@@ -252,7 +271,12 @@ func uploadMissing(ctx context.Context, server Server, save target.Save, upserts
 		if hex.EncodeToString(digest[:]) != artifact.SHA256 {
 			return fmt.Errorf("local save changed during upload")
 		}
-		if err := server.UploadArtifact(ctx, artifact, bytes.NewReader(content)); err != nil {
+		current := uploaded
+		total := len(missing)
+		uploadCtx := activity.WithReporter(ctx, func(message string) {
+			activity.Report(ctx, fmt.Sprintf("%s (%d/%d)", message, current, total))
+		})
+		if err := server.UploadArtifact(uploadCtx, artifact, bytes.NewReader(content)); err != nil {
 			return fmt.Errorf("upload %s: %w", filepath.Base(file.Path), err)
 		}
 		delete(wanted, artifact.SHA256)
