@@ -14,10 +14,10 @@ ENVIRONMENT="${ETC_DIR}/server.env"
 
 mkdir -p "${ETC_DIR}" "${VAR_DIR}/store"
 
-# The owner token is generated here rather than asked for (ADR-010). Nobody
-# installing a package on their own NAS has a reason to invent 64 hexadecimal
-# characters, and this is the one moment DSM reliably shows text to the person
-# doing it. od reads /dev/urandom without depending on openssl being present.
+# The owner token is generated here rather than asked for (ADR-010). It remains
+# available for recovery and automation, but ordinary setup claims the server
+# locally and never exposes this secret. od reads /dev/urandom without depending
+# on openssl being present.
 generate_token() {
     od -vAn -N32 -tx1 /dev/urandom | tr -d ' \n'
 }
@@ -54,13 +54,7 @@ else
 fi
 
 cat > "${SYNOPKG_TEMP_LOGFILE}" << MESSAGE
-Omnisave owner token:
-
-    ${OWNER_TOKEN}
-
-Open Omnisave and enter it once; it is traded for a credential this browser
-keeps, and connected devices never carry it. It is stored in
-${ENVIRONMENT}, which you can edit to set your own.
+Omnisave is installed. Open the Dash to create your PIN.
 MESSAGE
 
 exit 0

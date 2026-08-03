@@ -83,6 +83,7 @@ status() {
 }
 
 case "$1" in
+    prestart|prestop) exit 0 ;;
     start)   start ;;
     stop)    stop ;;
     status)  status ;;
