@@ -131,12 +131,13 @@ export function RevisionGraph({
           <ol>
             {nodes.map((node) => {
               const selected = node.save.id === selectedSave?.id;
+              const revisionName = node.revision.display_name || shortID(node.revision.id);
               return (
                 <li key={node.revision.id}>
                   <button
                     type="button"
                     aria-pressed={selected}
-                    aria-label={`Open ${node.saveName} at revision ${shortID(node.revision.id)}`}
+                    aria-label={`Open ${node.saveName} at revision ${revisionName}`}
                     onClick={() => onOpenSave(node.save, node.revision.id)}
                     style={{ height: rowHeight, paddingLeft: gutter + 4 }}
                     className={`flex w-full items-center gap-3 pr-5 text-left transition ${
@@ -144,11 +145,11 @@ export function RevisionGraph({
                     }`}
                   >
                     <span
-                      className={`shrink-0 font-mono text-xs ${
+                      className={`max-w-48 shrink-0 truncate font-mono text-xs ${
                         selected ? 'text-slate-200' : 'text-slate-400'
                       }`}
                     >
-                      {shortID(node.revision.id)}
+                      {revisionName}
                     </span>
                     <span
                       className={`min-w-0 flex-1 truncate text-xs ${

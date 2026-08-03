@@ -36,6 +36,7 @@ type OmnisaveRepository interface {
 	CommitRevision(ctx context.Context, expectedHeadID *string, revision omnisave.Revision) error
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*omnisave.Revision, error)
 	ListRevisions(ctx context.Context, omnisaveID string) ([]omnisave.Revision, error)
+	UpdateRevisionDisplayName(ctx context.Context, omnisaveID, revisionID, displayName string) error
 
 	StoreArtifact(ctx context.Context, artifact Artifact, payload io.Reader) error
 	OpenArtifact(ctx context.Context, sha256 string) (io.ReadCloser, error)

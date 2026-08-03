@@ -90,6 +90,34 @@ func TestPartialUpdatesMaterializeCompleteSnapshots(t *testing.T) {
 	}
 }
 
+func TestRevisionCanBeNamedWithoutChangingItsSnapshot(t *testing.T) {
+	ctx := context.Background()
+	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "chrono-trigger"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := storeBlob(t, ctx, saves, "ocean palace")
+	revision, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "chrono.srm", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	displayName := "  Before Lavos  "
+	renamed, err := saves.UpdateRevision(ctx, save.ID, revision.ID, omnisave.UpdateRevision{
+		DisplayName: &displayName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.DisplayName != "Before Lavos" || renamed.ID != revision.ID ||
+		len(renamed.Files) != 1 || renamed.Files[0].Artifact.SHA256 != artifact.SHA256 {
+		t.Fatalf("rename changed more than the label: %+v", renamed)
+	}
+}
+
 func TestStaleWriterCannotMoveTheSaveHead(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())

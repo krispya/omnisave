@@ -326,7 +326,7 @@ func (r *Repository) CommitRevision(ctx context.Context, expectedHeadID *string,
 
 func (r *Repository) GetRevision(ctx context.Context, saveID, revisionID string) (*omnisave.Revision, error) {
 	revision, err := scanRevision(r.db.QueryRowContext(ctx, `SELECT
-		id, omnisave_id, parent_id, created_at, metadata
+		id, omnisave_id, display_name, parent_id, created_at, metadata
 		FROM revisions WHERE omnisave_id = ? AND id = ?`, saveID, revisionID))
 	if err != nil {
 		return nil, translateNotFound(err)
@@ -340,7 +340,7 @@ func (r *Repository) ListRevisions(ctx context.Context, saveID string) ([]omnisa
 		return nil, err
 	}
 	rows, err := r.db.QueryContext(ctx, `SELECT
-		id, omnisave_id, parent_id, created_at, metadata
+		id, omnisave_id, display_name, parent_id, created_at, metadata
 		FROM revisions WHERE omnisave_id = ? ORDER BY created_at, id`, saveID)
 	if err != nil {
 		return nil, err
@@ -369,6 +369,23 @@ func (r *Repository) ListRevisions(ctx context.Context, saveID string) ([]omnisa
 		revisions[index].Files = files
 	}
 	return revisions, nil
+}
+
+func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revisionID, displayName string) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE revisions SET display_name = ?
+		WHERE omnisave_id = ? AND id = ?`, displayName, saveID, revisionID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return storage.ErrNotFound
+	}
+	r.noteStoreLag("revision name "+revisionID, r.recordOmnisave(ctx, saveID))
+	return nil
 }
 
 func (r *Repository) OpenArtifact(_ context.Context, hash string) (io.ReadCloser, error) {
@@ -489,7 +506,7 @@ func scanRevision(row scanner) (*omnisave.Revision, error) {
 	var createdAt, metadata string
 	var parent sql.NullString
 	if err := row.Scan(
-		&revision.ID, &revision.OmnisaveID, &parent, &createdAt, &metadata,
+		&revision.ID, &revision.OmnisaveID, &revision.DisplayName, &parent, &createdAt, &metadata,
 	); err != nil {
 		return nil, err
 	}

@@ -23,6 +23,7 @@ type SaveListProps = {
   onDownloadRevision: (save: Omnisave, name: string, revision: Revision) => void;
   onRequestDelete: (save: Omnisave, name: string) => void;
   onRenameSave: (save: Omnisave, displayName: string) => Promise<void>;
+  onRenameRevision: (revision: Revision, displayName: string) => Promise<void>;
   onOpenSave: (save: Omnisave, revisionID?: string) => void;
 };
 
@@ -76,6 +77,7 @@ export function SaveList({
   onDownloadRevision,
   onRequestDelete,
   onRenameSave,
+  onRenameRevision,
   onOpenSave,
 }: SaveListProps) {
   return (
@@ -172,6 +174,7 @@ export function SaveList({
                   error={revisionError}
                   focus={focus}
                   onDownloadRevision={(revision) => onDownloadRevision(save, name, revision)}
+                  onRenameRevision={onRenameRevision}
                   onOpenSave={onOpenSave}
                 />
               </div>

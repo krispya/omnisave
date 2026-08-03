@@ -350,7 +350,7 @@ function LibraryDashboard({
     try {
       saveArchiveToDisk(
         await downloadRevisionArchive(token, save.id, revision.id),
-        `${name} ${archiveStamp(revision.created_at)}.zip`
+        `${name} ${revision.display_name?.trim() || archiveStamp(revision.created_at)}.zip`
       );
     } catch (downloadError) {
       setRevisionError(

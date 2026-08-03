@@ -79,13 +79,15 @@ type RevisionFile struct {
 // and a field that had to be rewritten on every commit would be a field that
 // could be stale in a copy taken mid-write.
 type Omnisave struct {
-	Kind        string               `json:"kind"`
-	Version     int                  `json:"version"`
-	ID          string               `json:"id"`
-	GameID      string               `json:"game_id"`
-	DisplayName string               `json:"display_name"`
-	ForkedFrom  *omnisave.ForkOrigin `json:"forked_from,omitempty"`
-	CreatedAt   time.Time            `json:"created_at"`
+	Kind        string `json:"kind"`
+	Version     int    `json:"version"`
+	ID          string `json:"id"`
+	GameID      string `json:"game_id"`
+	DisplayName string `json:"display_name"`
+	// RevisionNames keeps mutable labels out of immutable snapshot manifests.
+	RevisionNames map[string]string    `json:"revision_names,omitempty"`
+	ForkedFrom    *omnisave.ForkOrigin `json:"forked_from,omitempty"`
+	CreatedAt     time.Time            `json:"created_at"`
 	// DeletedAt tombstones a lineage instead of erasing its record. Without
 	// this, restoring a store would resurrect every save its owner had
 	// deliberately thrown away.

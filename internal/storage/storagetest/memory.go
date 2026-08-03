@@ -180,6 +180,21 @@ func (r *MemoryRepository) ListRevisions(_ context.Context, saveID string) ([]om
 	return slices.Clone(r.revisions[saveID]), nil
 }
 
+func (r *MemoryRepository) UpdateRevisionDisplayName(_ context.Context, saveID, revisionID, displayName string) error {
+	revisions, exists := r.revisions[saveID]
+	if !exists {
+		return storage.ErrNotFound
+	}
+	for index := range revisions {
+		if revisions[index].ID == revisionID {
+			revisions[index].DisplayName = displayName
+			r.revisions[saveID] = revisions
+			return nil
+		}
+	}
+	return storage.ErrNotFound
+}
+
 func (r *MemoryRepository) OpenArtifact(_ context.Context, hash string) (io.ReadCloser, error) {
 	data, ok := r.blobs[hash]
 	if !ok {

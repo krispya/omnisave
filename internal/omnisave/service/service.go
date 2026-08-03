@@ -251,6 +251,20 @@ func (s *service) ListRevisions(ctx context.Context, saveID string) ([]omnisave.
 	return revisions, translateError(err)
 }
 
+func (s *service) UpdateRevision(ctx context.Context, saveID, revisionID string, input omnisave.UpdateRevision) (*omnisave.Revision, error) {
+	if input.DisplayName == nil {
+		return nil, omnisave.ErrInvalid
+	}
+	displayName, valid := normalizeDisplayName(*input.DisplayName)
+	if !valid || displayName == "" {
+		return nil, omnisave.ErrInvalid
+	}
+	if err := s.repository.UpdateRevisionDisplayName(ctx, saveID, revisionID, displayName); err != nil {
+		return nil, translateError(err)
+	}
+	return s.GetRevision(ctx, saveID, revisionID)
+}
+
 func (s *service) StoreArtifact(ctx context.Context, artifact omnisave.Artifact, payload io.Reader) error {
 	if payload == nil || artifact.Format == "" || !validSHA256(artifact.SHA256) || artifact.Size < 0 {
 		return omnisave.ErrInvalid

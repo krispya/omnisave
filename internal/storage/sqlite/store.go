@@ -158,6 +158,25 @@ func (r *Repository) buildOmnisave(ctx context.Context, id string) (store.Omnisa
 			return store.Omnisave{}, err
 		}
 	}
+	rows, err := r.db.QueryContext(ctx, `SELECT id, display_name FROM revisions
+		WHERE omnisave_id = ? AND display_name <> '' ORDER BY created_at, id`, id)
+	if err != nil {
+		return store.Omnisave{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var revisionID, displayName string
+		if err := rows.Scan(&revisionID, &displayName); err != nil {
+			return store.Omnisave{}, err
+		}
+		if record.RevisionNames == nil {
+			record.RevisionNames = make(map[string]string)
+		}
+		record.RevisionNames[revisionID] = displayName
+	}
+	if err := rows.Err(); err != nil {
+		return store.Omnisave{}, err
+	}
 	return record, nil
 }
 
