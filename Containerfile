@@ -10,6 +10,7 @@ COPY apps/dash/package.json apps/dash/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY apps/dash apps/dash
+COPY assets/icons assets/icons
 RUN pnpm --filter @omnisave/dash run build
 
 FROM golang:1.26-alpine AS server-builder
