@@ -24,7 +24,7 @@ for SPK in "$@"; do
     done
 
     # DSM 7 rejects a package missing any of these INFO fields.
-    for FIELD in package version os_min_ver description arch maintainer; do
+    for FIELD in package version os_min_ver description arch maintainer dsmuidir dsmappname; do
         if ! grep -q "^${FIELD}=" "${ROOT}/INFO"; then
             echo "${SPK}: INFO is missing ${FIELD}" >&2
             exit 1
@@ -64,7 +64,7 @@ for SPK in "$@"; do
     done
 
     tar -xzf "${ROOT}/package.tgz" -C "${PAYLOAD}"
-    for REQUIRED in bin/omnisave-server web/index.html port_conf/omnisave.sc; do
+    for REQUIRED in bin/omnisave-server web/index.html port_conf/omnisave.sc ui/config; do
         if [ ! -e "${PAYLOAD}/${REQUIRED}" ]; then
             echo "${SPK}: payload is missing ${REQUIRED}" >&2
             exit 1
@@ -74,6 +74,33 @@ for SPK in "$@"; do
         echo "${SPK}: package.tgz must not contain a nested target directory" >&2
         exit 1
     fi
+
+    jq empty "${PAYLOAD}/ui/config"
+    if ! grep -q '^dsmuidir="ui"$' "${ROOT}/INFO"; then
+        echo "${SPK}: INFO must expose the DSM application from ui" >&2
+        exit 1
+    fi
+    APP_NAME=$(sed -n 's/^dsmappname="\([^"]*\)"$/\1/p' "${ROOT}/INFO")
+    if ! jq -e --arg APP_NAME "${APP_NAME}" '
+        .[".url"][$APP_NAME] |
+        .type == "url" and
+        .title == "Omnisave" and
+        .icon == "images/omnisave-{0}.png" and
+        .protocol == "http" and
+        .port == "8080" and
+        .url == "/" and
+        .allUsers == true
+    ' "${PAYLOAD}/ui/config" >/dev/null; then
+        echo "${SPK}: ui/config does not register the Omnisave DSM application" >&2
+        exit 1
+    fi
+    for SIZE in 16 24 32 48 64 72 256; do
+        ICON="${PAYLOAD}/ui/images/omnisave-${SIZE}.png"
+        if ! file "${ICON}" | grep -q ", ${SIZE} x ${SIZE},"; then
+            echo "${SPK}: DSM application icon must be ${SIZE}x${SIZE}: ${ICON}" >&2
+            exit 1
+        fi
+    done
 
     case "${SPK}" in
         *-x86_64.spk) file "${PAYLOAD}/bin/omnisave-server" | grep -q 'x86-64' ;;

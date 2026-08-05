@@ -18,9 +18,11 @@ while respecting DSM's package lifecycle and persistent-directory conventions.
 Ship native DSM 7 SPKs containing the server and Dash for Synology
 `x86_64` and `armv8` package families.
 
-The package runs the server as DSM's unprivileged package user and registers
-port 8080 with Package Center. A package-owned environment file lives under the
-package `etc` directory, following the environment configuration contract in
+The package runs the server as DSM's unprivileged package user, registers port
+8080 with Package Center, and registers the Dash in DSM's Main Menu. The menu
+entry is visible to every DSM user; Omnisave still applies its own access model
+after launch. A package-owned environment file lives under the package `etc`
+directory, following the environment configuration contract in
 [ADR-003](ADR-003-environment-server-configuration.md); the lifecycle script
 exports it before launching the server. The SQLite database, content-addressed
 artifacts, PID, and service log live under the package's persistent `var`
@@ -50,7 +52,7 @@ payload without replacing configuration or durable state.
 Easier:
 
 - Synology users get native installation, start, stop, upgrade, port
-  registration, and access to the Dash.
+  registration, and direct Main Menu access to the Dash.
 - Configuration and durable state survive payload upgrades.
 - The pure-Go SQLite implementation cross-compiles without a Synology C
   toolchain.
