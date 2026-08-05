@@ -34,7 +34,7 @@ trap 'rm -rf "${STAGE}"' EXIT INT TERM
 PAYLOAD="${STAGE}/payload"
 PACKAGE="${STAGE}/package"
 mkdir -p "${PAYLOAD}/bin" "${PAYLOAD}/web" "${PAYLOAD}/port_conf" \
-    "${PACKAGE}/scripts" "${PACKAGE}/conf"
+    "${PAYLOAD}/ui/images" "${PACKAGE}/scripts" "${PACKAGE}/conf"
 
 (
     cd "${ROOT}"
@@ -43,6 +43,8 @@ mkdir -p "${PAYLOAD}/bin" "${PAYLOAD}/web" "${PAYLOAD}/port_conf" \
 )
 cp -R "${ROOT}/apps/dash/dist/." "${PAYLOAD}/web/"
 cp "${ROOT}/packaging/synology/port_conf/omnisave.sc" "${PAYLOAD}/port_conf/omnisave.sc"
+cp "${ROOT}/packaging/synology/ui/config" "${PAYLOAD}/ui/config"
+cp "${ROOT}/packaging/synology/ui/images/"*.png "${PAYLOAD}/ui/images/"
 tar -czf "${PACKAGE}/package.tgz" -C "${PAYLOAD}" .
 
 sed \
