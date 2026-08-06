@@ -176,6 +176,14 @@ func (r *TrackReport) CurrentMoved(title, omnisaveName string) {
 	r.event(title, omnisaveName+" moved on the server; the next sync pass will reconcile")
 }
 
+// PullDeferred records a pull held back because the game is being played:
+// applying now would let the running game overwrite the pulled files from
+// memory, so the sync waits for it to close.
+func (r *TrackReport) PullDeferred(title, omnisaveName string) {
+	r.mark(title, mutedStyle.Render("○"))
+	r.event(title, omnisaveName+" moved on the server; syncing down waits for the game to close")
+}
+
 // Diverged records a save with new progress on both sides, waiting for an
 // interactive run to resolve.
 func (r *TrackReport) Diverged(title, omnisaveName string) {
@@ -381,6 +389,9 @@ type TrackOutcome struct {
 	Pushed    int
 	Pulled    int
 	Diverged  int
+	// Deferred counts pulls held back because the game is being played;
+	// the pass after the game closes applies them.
+	Deferred int
 	// Conflicted counts commits the server refused because the Current
 	// Revision moved mid-pass; the next pass reconciles them.
 	Conflicted int
@@ -395,7 +406,7 @@ func (o TrackOutcome) Changed() bool {
 
 func (o TrackOutcome) changes() int {
 	return o.Added + o.Linked + o.Untracked + o.Pending + o.Seeded + o.Rebound + o.Jumped +
-		o.Forked + o.Bound + o.Unbound + o.Pushed + o.Pulled + o.Diverged + o.Conflicted + o.Failed
+		o.Forked + o.Bound + o.Unbound + o.Pushed + o.Pulled + o.Diverged + o.Deferred + o.Conflicted + o.Failed
 }
 
 // TrackSummary prints the closing dim tally.
@@ -441,6 +452,9 @@ func SummaryLine(outcome TrackOutcome) string {
 	}
 	if outcome.Diverged > 0 {
 		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d diverged", outcome.Diverged)))
+	}
+	if outcome.Deferred > 0 {
+		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d waiting", outcome.Deferred)))
 	}
 	if outcome.Conflicted > 0 {
 		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d conflicted", outcome.Conflicted)))

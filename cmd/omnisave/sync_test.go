@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	catalogservice "github.com/krisbaumgartner/omnisave/internal/catalog/service"
 	"github.com/krisbaumgartner/omnisave/internal/client/binding"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
+	"github.com/krisbaumgartner/omnisave/internal/client/running"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
@@ -114,7 +116,7 @@ func syncOnce(t *testing.T, server *remote.Client, fixture *bindingFixture, prom
 		t.Fatal("expected the library sync to reach the server")
 	}
 	if err := reconcileSaves(ctx, server, &fixture.state, fixture.scans, confirmed,
-		&outcome, &tui.TrackReport{}, prompts, floor); err != nil {
+		&outcome, &tui.TrackReport{}, prompts, nil, floor); err != nil {
 		t.Fatal(err)
 	}
 	return outcome
@@ -455,5 +457,86 @@ func TestDivergedSaveCanForkHereAndContinueLocally(t *testing.T) {
 	// The next pass is quiet: the fork's current revision is exactly the local content.
 	if outcome := syncOnce(t, server, &fixture, nil, 0); outcome.Changed() {
 		t.Fatalf("expected the forked lineage to be in sync, got %+v", outcome)
+	}
+}
+
+// stubLister serves a switchable process list, standing in for the platform
+// process sweep so tests decide when a game is "playing".
+type stubLister struct {
+	mu        sync.Mutex
+	processes []running.Process
+}
+
+func (l *stubLister) set(processes ...running.Process) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.processes = processes
+}
+
+func (l *stubLister) Processes(context.Context) ([]running.Process, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]running.Process(nil), l.processes...), nil
+}
+
+// syncOncePlaying mirrors syncOnce with a running-game detector in play.
+func syncOncePlaying(t *testing.T, server *remote.Client, fixture *bindingFixture, detector *running.Detector) tui.TrackOutcome {
+	t.Helper()
+	ctx := context.Background()
+	outcome, confirmed := syncTracking(ctx, server, &fixture.state, fixture.scans, nil, &tui.TrackReport{})
+	if !outcome.Synced {
+		t.Fatal("expected the library sync to reach the server")
+	}
+	playing := playingNow(ctx, detector, trackedRunningGames(&fixture.state, fixture.scans))
+	if err := reconcileSaves(ctx, server, &fixture.state, fixture.scans, confirmed,
+		&outcome, &tui.TrackReport{}, nil, playing, 0); err != nil {
+		t.Fatal(err)
+	}
+	return outcome
+}
+
+func TestARestoreWhileTheGameIsPlayingDefersThePull(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	installRoot := filepath.Join(t.TempDir(), "chrono-trigger")
+	fixture.scans[0].Games[0].Game.InstallRoot = installRoot
+	seed, bound := pushSecondRevision(t, server, &fixture, "second-progress")
+	if _, err := server.RestoreCurrentRevision(context.Background(), bound.OmnisaveID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: bound.LastSyncedRevisionID,
+		RevisionID:                seed.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lister := &stubLister{}
+	lister.set(running.Process{PID: 7, Executable: filepath.Join(installRoot, "game")})
+	detector := running.NewDetector(lister)
+
+	outcome := syncOncePlaying(t, server, &fixture, detector)
+	if outcome.Deferred != 1 || outcome.Pulled != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected the pull deferred under the playing game, got %+v", outcome)
+	}
+	content, _ := os.ReadFile(fixture.localPath)
+	if string(content) != "second-progress" {
+		t.Fatalf("expected the local save untouched while playing, got %q", content)
+	}
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	held, _ := fixture.state.BindingFor(local)
+	if held.LastSyncedRevisionID == nil || *held.LastSyncedRevisionID != *bound.LastSyncedRevisionID {
+		t.Fatalf("expected the baseline held while playing, got %+v", held)
+	}
+
+	// The game closes; the next pass applies the restore.
+	lister.set()
+	outcome = syncOncePlaying(t, server, &fixture, detector)
+	if outcome.Pulled != 1 || outcome.Deferred != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected the pull once the game closed, got %+v", outcome)
+	}
+	content, _ = os.ReadFile(fixture.localPath)
+	if string(content) != "first-progress" {
+		t.Fatalf("expected the restored revision placed, got %q", content)
+	}
+	pulled, _ := fixture.state.BindingFor(local)
+	if pulled.LastSyncedRevisionID == nil || *pulled.LastSyncedRevisionID != seed.ID {
+		t.Fatalf("expected the baseline at the restored revision, got %+v", pulled)
 	}
 }
