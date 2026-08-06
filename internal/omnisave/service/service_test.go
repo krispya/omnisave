@@ -60,8 +60,8 @@ func TestPartialUpdatesMaterializeCompleteSnapshots(t *testing.T) {
 
 	laterProgress := storeBlob(t, ctx, saves, "later game-save contents")
 	second, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
-		ExpectedHeadID: &first.ID,
-		Upserts:        []omnisave.RevisionFile{{Path: "progress.sav", Artifact: laterProgress}},
+		ExpectedCurrentRevisionID: &first.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "progress.sav", Artifact: laterProgress}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -74,13 +74,13 @@ func TestPartialUpdatesMaterializeCompleteSnapshots(t *testing.T) {
 		second.Files[1].Artifact.SHA256 != settings.SHA256 {
 		t.Fatalf("partial update did not retain a complete snapshot: %v", second)
 	}
-	if storedSave.HeadRevisionID == nil || *storedSave.HeadRevisionID != second.ID {
-		t.Fatalf("unexpected head: %v", storedSave.HeadRevisionID)
+	if storedSave.CurrentRevisionID == nil || *storedSave.CurrentRevisionID != second.ID {
+		t.Fatalf("unexpected current revision: %v", storedSave.CurrentRevisionID)
 	}
 
 	third, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
-		ExpectedHeadID: &second.ID,
-		Deletes:        []string{"settings.json"},
+		ExpectedCurrentRevisionID: &second.ID,
+		Deletes:                   []string{"settings.json"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func TestRevisionCanBeNamedWithoutChangingItsSnapshot(t *testing.T) {
 	}
 }
 
-func TestStaleWriterCannotMoveTheSaveHead(t *testing.T) {
+func TestStaleWriterCannotMoveTheCurrentRevision(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
@@ -133,19 +133,19 @@ func TestStaleWriterCannotMoveTheSaveHead(t *testing.T) {
 		t.Fatal(err)
 	}
 	winner, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
-		ExpectedHeadID: &root.ID,
-		Upserts:        []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+		ExpectedCurrentRevisionID: &root.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
-		ExpectedHeadID: &root.ID,
-		Upserts:        []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+		ExpectedCurrentRevisionID: &root.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
 	})
-	var conflict *omnisave.HeadConflict
-	if !errors.As(err, &conflict) || conflict.ActualHeadID == nil || *conflict.ActualHeadID != winner.ID {
-		t.Fatalf("expected the winning head in the conflict, got %v", err)
+	var conflict *omnisave.CurrentRevisionConflict
+	if !errors.As(err, &conflict) || conflict.ActualCurrentRevisionID == nil || *conflict.ActualCurrentRevisionID != winner.ID {
+		t.Fatalf("expected the winning current revision in the conflict, got %v", err)
 	}
 	history, err := saves.ListRevisions(ctx, save.ID)
 	if err != nil || len(history) != 2 {
@@ -249,15 +249,15 @@ func TestForkCreatesAnotherSelectableSaveWithItsOwnHistory(t *testing.T) {
 		fork.Omnisave.ForkedFrom.RevisionID != root.ID || fork.Omnisave.Metadata["platform"] != "gba" {
 		t.Fatalf("unexpected fork lineage: %v", fork.Omnisave)
 	}
-	if fork.Revision.ParentID != nil || len(fork.Revision.Files) != 1 ||
+	if fork.Revision.ID != root.ID || len(fork.Revision.Files) != 1 ||
 		fork.Revision.Files[0].Artifact.SHA256 != artifact.SHA256 {
-		t.Fatalf("fork should begin with a copied root snapshot: %v", fork.Revision)
+		t.Fatalf("fork should begin at the shared revision node: %v", fork.Revision)
 	}
 
 	forkUpdate := storeBlob(t, ctx, saves, "fork progress")
 	updatedFork, err := saves.CommitRevision(ctx, fork.Omnisave.ID, omnisave.CreateRevision{
-		ExpectedHeadID: fork.Omnisave.HeadRevisionID,
-		Upserts:        []omnisave.RevisionFile{{Path: "save.dat", Artifact: forkUpdate}},
+		ExpectedCurrentRevisionID: fork.Omnisave.CurrentRevisionID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: forkUpdate}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -266,9 +266,141 @@ func TestForkCreatesAnotherSelectableSaveWithItsOwnHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if storedSource.HeadRevisionID == nil || *storedSource.HeadRevisionID != root.ID ||
+	if storedSource.CurrentRevisionID == nil || *storedSource.CurrentRevisionID != root.ID ||
 		updatedFork.ParentID == nil || *updatedFork.ParentID != fork.Revision.ID {
 		t.Fatalf("source and fork should advance independently: source=%v fork=%v", storedSource, updatedFork)
+	}
+}
+
+func TestRestoreMovesCurrentAndTheNextCommitCreatesABranch(t *testing.T) {
+	ctx := context.Background()
+	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "chrono-trigger"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootContent := storeBlob(t, ctx, saves, "millennial fair")
+	root, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "chrono.srm", Artifact: rootContent}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	laterContent := storeBlob(t, ctx, saves, "ocean palace")
+	later, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &root.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "chrono.srm", Artifact: laterContent}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restored, err := saves.Restore(ctx, save.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &later.ID,
+		RevisionID:                root.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.CurrentRevisionID == nil || *restored.CurrentRevisionID != root.ID ||
+		!restored.CurrentRevisionCreatedAt.Equal(root.CreatedAt) {
+		t.Fatalf("restore should select the original node and date: %+v", restored)
+	}
+
+	alternateContent := storeBlob(t, ctx, saves, "future changed")
+	alternate, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &root.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "chrono.srm", Artifact: alternateContent}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alternate.ParentID == nil || *alternate.ParentID != root.ID {
+		t.Fatalf("the alternate future should branch from the restored node: %+v", alternate)
+	}
+	jumped, err := saves.Restore(ctx, save.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &alternate.ID,
+		RevisionID:                later.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jumped.CurrentRevisionID == nil || *jumped.CurrentRevisionID != later.ID {
+		t.Fatalf("a sibling future should remain directly selectable: %+v", jumped)
+	}
+	_, err = saves.Restore(ctx, save.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &alternate.ID,
+		RevisionID:                root.ID,
+	})
+	var conflict *omnisave.CurrentRevisionConflict
+	if !errors.As(err, &conflict) || conflict.ActualCurrentRevisionID == nil ||
+		*conflict.ActualCurrentRevisionID != later.ID {
+		t.Fatalf("a stale Device must not move the pointer, got %v", err)
+	}
+	history, err := saves.ListRevisions(ctx, save.ID)
+	if err != nil || len(history) != 3 {
+		t.Fatalf("both futures must remain recoverable: history=%+v err=%v", history, err)
+	}
+}
+
+func TestAForkKeepsItsForkPointAfterRewindingBelowIt(t *testing.T) {
+	ctx := context.Background()
+	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	source, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeBlob(t, ctx, saves, "start")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mid, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &root.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeBlob(t, ctx, saves, "midgame")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tip, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &mid.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeBlob(t, ctx, saves, "endgame")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fork, err := saves.Fork(ctx, source.ID, omnisave.ForkOmnisave{RevisionID: mid.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rewound, err := saves.Restore(ctx, fork.Omnisave.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &mid.ID,
+		RevisionID:                root.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fork was started at mid, so mid stays in its tree wherever current sits.
+	history, err := saves.ListRevisions(ctx, fork.Omnisave.ID)
+	if err != nil || len(history) != 2 {
+		t.Fatalf("the rewound fork should still see its fork point: history=%+v err=%v", history, err)
+	}
+	returned, err := saves.Restore(ctx, fork.Omnisave.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: rewound.CurrentRevisionID,
+		RevisionID:                mid.ID,
+	})
+	if err != nil || returned.CurrentRevisionID == nil || *returned.CurrentRevisionID != mid.ID {
+		t.Fatalf("the fork should fast-forward back to its fork point: save=%+v err=%v", returned, err)
+	}
+	// The source's later progress was never shared with the fork.
+	_, err = saves.Restore(ctx, fork.Omnisave.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &mid.ID,
+		RevisionID:                tip.ID,
+	})
+	if !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("a source-only descendant must stay outside the fork's tree, got %v", err)
 	}
 }
 
@@ -314,9 +446,9 @@ func TestRejectInvalidChangesAndReportMissingArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
-		ExpectedHeadID: &root.ID,
-		Upserts:        []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
-		Deletes:        []string{"save.dat"},
+		ExpectedCurrentRevisionID: &root.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+		Deletes:                   []string{"save.dat"},
 	})
 	if !errors.Is(err, omnisave.ErrInvalid) {
 		t.Fatalf("a path cannot be updated and deleted together, got %v", err)

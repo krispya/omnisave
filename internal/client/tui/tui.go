@@ -371,10 +371,10 @@ func bindingChoices(local []tracking.LocalSave, remote []omnisave.Omnisave, bind
 	remoteChoices := make([]bindingChoice, 0, len(remote))
 	for index, save := range remote {
 		parts := []string{save.DisplayName, "game " + shortID(save.GameID)}
-		if save.HeadRevisionID == nil {
+		if save.CurrentRevisionID == nil {
 			parts = append(parts, "no revisions")
 		} else {
-			parts = append(parts, "head "+shortID(*save.HeadRevisionID))
+			parts = append(parts, "current "+shortID(*save.CurrentRevisionID))
 		}
 		remoteChoices = append(remoteChoices, bindingChoice{label: strings.Join(parts, " · "), index: index})
 	}

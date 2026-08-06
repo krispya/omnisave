@@ -55,6 +55,11 @@ func (r *Repository) rebuild(ctx context.Context) error {
 		return err
 	}
 	revisionNames := make(map[string]map[string]string)
+	storeCurrents := make(map[string]*string)
+	// Saves this rebuild imports take the Current Revision the store recorded
+	// for them; saves the database already held keep the database's pointer —
+	// the database is the live authority on what it already knows.
+	importedSaves := make(map[string]bool)
 
 	// Games first: they reference nothing, and the lineages imported after
 	// them read better with their titles already in place.
@@ -88,6 +93,7 @@ func (r *Repository) rebuild(ctx context.Context) error {
 			return nil
 		}
 		revisionNames[id] = record.RevisionNames
+		storeCurrents[id] = record.CurrentRevisionID
 		if knownSaves[id] {
 			return nil
 		}
@@ -99,6 +105,7 @@ func (r *Repository) rebuild(ctx context.Context) error {
 			return err
 		}
 		knownSaves[id] = true
+		importedSaves[id] = true
 		imported.saves++
 		return nil
 	}); err != nil {
@@ -123,10 +130,7 @@ func (r *Repository) rebuild(ctx context.Context) error {
 	}
 
 	for omnisaveID, manifests := range arrivals {
-		if tombstoned[omnisaveID] {
-			continue
-		}
-		if !knownSaves[omnisaveID] {
+		if !knownSaves[omnisaveID] && !tombstoned[omnisaveID] {
 			// No lineage record and no row: the record was lost. The manifests
 			// carry the lineage's identity themselves, so the save is
 			// reconstructed from them rather than abandoned with them.
@@ -137,6 +141,7 @@ func (r *Repository) rebuild(ctx context.Context) error {
 				return err
 			}
 			knownSaves[omnisaveID] = true
+			importedSaves[omnisaveID] = true
 			imported.saves++
 		}
 		// A game known nowhere else is reconstructed the same way, whether its
@@ -149,15 +154,13 @@ func (r *Repository) rebuild(ctx context.Context) error {
 			knownGames[game.ID] = true
 			imported.games++
 		}
-		count, missing, err := r.importRevisions(
-			ctx, omnisaveID, manifests, knownRevisions, revisionNames[omnisaveID],
-		)
-		if err != nil {
-			return err
-		}
-		imported.revisions += count
-		imported.missingObjects += missing
 	}
+	count, missing, err := r.importRevisions(ctx, arrivals, knownRevisions, revisionNames, importedSaves, storeCurrents)
+	if err != nil {
+		return err
+	}
+	imported.revisions += count
+	imported.missingObjects += missing
 
 	if imported.games+imported.saves+imported.revisions > 0 {
 		log.Printf("save store: rebuilt index from the store: %d game(s), %d save(s), %d revision(s) imported",
@@ -193,33 +196,43 @@ func (r *Repository) importOmnisave(ctx context.Context, record store.Omnisave) 
 		return err
 	}
 	_, err = r.db.ExecContext(ctx, `INSERT INTO omnisaves(
-		id, game_id, display_name, head_revision_id,
+		id, game_id, display_name, current_revision_id,
 		forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
-	) VALUES (?, ?, ?, NULL, ?, ?, ?, ?)`,
-		record.ID, record.GameID, record.DisplayName,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		record.ID, record.GameID, record.DisplayName, record.CurrentRevisionID,
 		forkOmnisaveID(record.ForkedFrom), forkRevisionID(record.ForkedFrom),
 		record.CreatedAt.Format(time.RFC3339Nano), string(metadata))
 	return err
 }
 
-// importRevisions inserts a lineage's arrived manifests parents-first, then
-// derives the head — the revision no other revision of the lineage claims as
-// its parent — and settles it in the row. It reports how many revisions were
-// imported and how many of their files name objects the store does not hold:
-// those are counted rather than refused, because a partial copy loses the
-// missing bytes either way and the manifest is the only thing that still says
-// what they were.
+// importRevisions inserts the arrived manifests parents-first across every
+// lineage at once: a fork's first own commit names a parent its source
+// created, so ordering each lineage's batch on its own could reach that child
+// before its parent exists anywhere, severing the chain. Each save imported
+// this rebuild then settles its Current Revision — the pointer its record
+// carried, or the newest tip for a legacy record from before the pointer
+// existed. Saves the database already held are not touched here; their pointer
+// is the database's to keep. It reports how many revisions were imported and
+// how many of their files name objects the store does not hold: those are
+// counted rather than refused, because a partial copy loses the missing bytes
+// either way and the manifest is the only thing that still says what they
+// were.
 func (r *Repository) importRevisions(
 	ctx context.Context,
-	omnisaveID string,
-	manifests []store.Revision,
+	arrivals map[string][]store.Revision,
 	knownRevisions map[string]bool,
-	revisionNames map[string]string,
+	revisionNames map[string]map[string]string,
+	importedSaves map[string]bool,
+	storeCurrents map[string]*string,
 ) (int, int, error) {
+	var manifests []store.Revision
+	for _, batch := range arrivals {
+		manifests = append(manifests, batch...)
+	}
 	ordered, orphaned := orderForImport(manifests, knownRevisions)
 	for _, manifest := range orphaned {
 		log.Printf("save store: revision %s of save %s names parent %s, which is nowhere; importing it as a root",
-			manifest.ID, omnisaveID, *manifest.Parent)
+			manifest.ID, manifest.Omnisave.ID, *manifest.Parent)
 	}
 
 	missingObjects := 0
@@ -239,8 +252,9 @@ func (r *Repository) importRevisions(
 			parent = nil
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO revisions(
-			id, omnisave_id, display_name, parent_id, created_at, metadata
-		) VALUES (?, ?, ?, ?, ?, ?)`, manifest.ID, omnisaveID, revisionNames[manifest.ID], parent,
+			id, game_id, omnisave_id, display_name, parent_id, created_at, metadata
+		) VALUES (?, ?, ?, ?, ?, ?, ?)`, manifest.ID, manifest.Game.ID, manifest.Omnisave.ID,
+			revisionNames[manifest.Omnisave.ID][manifest.ID], parent,
 			manifest.CreatedAt.Format(time.RFC3339Nano), string(metadata)); err != nil {
 			return 0, 0, err
 		}
@@ -261,13 +275,19 @@ func (r *Repository) importRevisions(
 		knownRevisions[manifest.ID] = true
 	}
 
-	if _, err := tx.ExecContext(ctx, `UPDATE omnisaves SET head_revision_id = (
+	for omnisaveID := range importedSaves {
+		if storeCurrents[omnisaveID] != nil {
+			// The record's pointer was written when the save was imported.
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE omnisaves SET current_revision_id = COALESCE(current_revision_id, (
 			SELECT r.id FROM revisions r WHERE r.omnisave_id = omnisaves.id
 			AND NOT EXISTS (SELECT 1 FROM revisions c
 				WHERE c.omnisave_id = r.omnisave_id AND c.parent_id = r.id)
 			ORDER BY r.created_at DESC, r.id DESC LIMIT 1
-		) WHERE id = ?`, omnisaveID); err != nil {
-		return 0, 0, err
+		)) WHERE id = ?`, omnisaveID); err != nil {
+			return 0, 0, err
+		}
 	}
 	return len(ordered), missingObjects, tx.Commit()
 }
@@ -340,10 +360,11 @@ func lineageFromManifests(manifests []store.Revision) store.Omnisave {
 		}
 	}
 	return store.Omnisave{
-		ID:          newest.Omnisave.ID,
-		GameID:      newest.Game.ID,
-		DisplayName: newest.Omnisave.DisplayName,
-		CreatedAt:   oldest.CreatedAt,
+		ID:                newest.Omnisave.ID,
+		GameID:            newest.Game.ID,
+		DisplayName:       newest.Omnisave.DisplayName,
+		CurrentRevisionID: &newest.ID,
+		CreatedAt:         oldest.CreatedAt,
 	}
 }
 

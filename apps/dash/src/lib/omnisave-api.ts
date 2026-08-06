@@ -2,13 +2,14 @@ export type Omnisave = {
   id: string;
   game_id: string;
   display_name: string;
-  head_revision_id: string | null;
+  current_revision_id: string | null;
   forked_from?: {
     omnisave_id: string;
     revision_id: string;
   };
   created_at: string;
-  updated_at: string;
+  /** Original creation time of the snapshot selected as current. */
+  current_revision_created_at: string;
   metadata?: Record<string, string>;
 };
 
@@ -31,22 +32,25 @@ export type Artifact = {
   size: number;
 };
 
-export class HeadConflictError extends Error {
-  expectedHeadID: string | null;
-  actualHeadID: string | null;
+export class CurrentRevisionConflictError extends Error {
+  expectedCurrentRevisionID: string | null;
+  actualCurrentRevisionID: string | null;
 
-  constructor(input: { expected_head_id: string | null; actual_head_id: string | null }) {
-    super(`The save moved to ${input.actual_head_id?.slice(0, 8) ?? 'no revision'}.`);
-    this.name = 'HeadConflictError';
-    this.expectedHeadID = input.expected_head_id;
-    this.actualHeadID = input.actual_head_id;
+  constructor(input: {
+    expected_current_revision_id: string | null;
+    actual_current_revision_id: string | null;
+  }) {
+    super(`The save moved to ${input.actual_current_revision_id?.slice(0, 8) ?? 'no revision'}.`);
+    this.name = 'CurrentRevisionConflictError';
+    this.expectedCurrentRevisionID = input.expected_current_revision_id;
+    this.actualCurrentRevisionID = input.actual_current_revision_id;
   }
 }
 
 type ErrorResponse = {
   error?: string;
-  expected_head_id?: string | null;
-  actual_head_id?: string | null;
+  expected_current_revision_id?: string | null;
+  actual_current_revision_id?: string | null;
 };
 
 type CommitFile = {
@@ -210,10 +214,10 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
 
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as ErrorResponse | null;
-    if (response.status === 409 && body?.error === 'head_conflict') {
-      throw new HeadConflictError({
-        expected_head_id: body.expected_head_id ?? null,
-        actual_head_id: body.actual_head_id ?? null,
+    if (response.status === 409 && body?.error === 'current_revision_conflict') {
+      throw new CurrentRevisionConflictError({
+        expected_current_revision_id: body.expected_current_revision_id ?? null,
+        actual_current_revision_id: body.actual_current_revision_id ?? null,
       });
     }
     if (response.status === 401) throw new UnauthorizedError();
@@ -399,7 +403,7 @@ export function commitRevision(
   token: string,
   omnisaveID: string,
   input: {
-    expectedHeadID: string | null;
+    expectedCurrentRevisionID: string | null;
     upserts?: CommitFile[];
     deletes?: string[];
     metadata?: Record<string, string>;
@@ -409,10 +413,26 @@ export function commitRevision(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      expected_head_id: input.expectedHeadID,
+      expected_current_revision_id: input.expectedCurrentRevisionID,
       upserts: input.upserts,
       deletes: input.deletes,
       metadata: input.metadata,
+    }),
+  });
+}
+
+export function restoreRevision(
+  token: string,
+  omnisaveID: string,
+  revisionID: string,
+  expectedCurrentRevisionID: string | null
+) {
+  return request<Omnisave>(`/api/v1/omnisaves/${omnisaveID}/current-revision`, token, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      revision_id: revisionID,
+      expected_current_revision_id: expectedCurrentRevisionID,
     }),
   });
 }

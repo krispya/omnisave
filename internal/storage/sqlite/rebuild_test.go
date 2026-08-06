@@ -2,6 +2,7 @@ package sqlite_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -50,18 +51,18 @@ func TestAServerThatLostItsDatabaseRebuildsEverything(t *testing.T) {
 	}
 	contents := []string{"millennial fair", "ocean palace", "black omen"}
 	var revisions []omnisave.Revision
-	var head *string
+	var current *string
 	for _, payload := range contents {
 		artifact := storeOmnisaveArtifact(t, ctx, saves, payload)
 		revision, err := saves.CommitRevision(ctx, main.ID, omnisave.CreateRevision{
-			ExpectedHeadID: head,
-			Upserts:        []omnisave.RevisionFile{{Path: "saves/chrono.srm", Artifact: artifact}},
+			ExpectedCurrentRevisionID: current,
+			Upserts:                   []omnisave.RevisionFile{{Path: "saves/chrono.srm", Artifact: artifact}},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		revisions = append(revisions, *revision)
-		head = &revisions[len(revisions)-1].ID
+		current = &revisions[len(revisions)-1].ID
 	}
 	revisionName := "Before the Ocean Palace"
 	if _, err := saves.UpdateRevision(ctx, main.ID, revisions[1].ID, omnisave.UpdateRevision{
@@ -140,8 +141,8 @@ func TestAServerThatLostItsDatabaseRebuildsEverything(t *testing.T) {
 	if rebuilt.DisplayName != "Main run, renamed" {
 		t.Fatalf("expected the name as last renamed, got %q", rebuilt.DisplayName)
 	}
-	if rebuilt.HeadRevisionID == nil || *rebuilt.HeadRevisionID != revisions[2].ID {
-		t.Fatalf("expected the head at the newest revision, got %v", rebuilt.HeadRevisionID)
+	if rebuilt.CurrentRevisionID == nil || *rebuilt.CurrentRevisionID != revisions[2].ID {
+		t.Fatalf("expected the newest revision to remain current, got %v", rebuilt.CurrentRevisionID)
 	}
 
 	history, err := repository.ListRevisions(ctx, main.ID)
@@ -198,8 +199,9 @@ func TestAServerThatLostItsDatabaseRebuildsEverything(t *testing.T) {
 
 // A database restored from an older backup is missing the revisions committed
 // after the backup was taken, and the store still holds their manifests. They
-// are imported and the head moves to where the store says history ended, not
-// where the stale backup remembers it.
+// are imported — but the Current Revision stays where the database says: the
+// database is the live authority on a save it already knows, and the imported
+// history remains reachable to fast-forward onto.
 func TestRebuildImportsRevisionsADatabaseBackupMissed(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
@@ -237,8 +239,8 @@ func TestRebuildImportsRevisionsADatabaseBackupMissed(t *testing.T) {
 	saves = omnisaveservice.New(repository)
 	artifact = storeOmnisaveArtifact(t, ctx, saves, "after the backup")
 	second, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
-		ExpectedHeadID: &first.ID,
-		Upserts:        []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+		ExpectedCurrentRevisionID: &first.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -265,12 +267,19 @@ func TestRebuildImportsRevisionsADatabaseBackupMissed(t *testing.T) {
 	if len(history) != 2 {
 		t.Fatalf("expected the missed revision imported, got %d revision(s)", len(history))
 	}
+	imported, err := repository.GetRevision(ctx, save.ID, second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imported.ParentID == nil || *imported.ParentID != first.ID {
+		t.Fatalf("expected the imported revision to keep its parent, got %v", imported.ParentID)
+	}
 	restored, err := repository.GetOmnisave(ctx, save.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.HeadRevisionID == nil || *restored.HeadRevisionID != second.ID {
-		t.Fatalf("expected the head where the store says history ended, got %v", restored.HeadRevisionID)
+	if restored.CurrentRevisionID == nil || *restored.CurrentRevisionID != first.ID {
+		t.Fatalf("expected current where the database remembers it, got %v", restored.CurrentRevisionID)
 	}
 }
 
@@ -329,8 +338,8 @@ func TestALineageWhoseRecordWasLostIsRebuiltFromItsManifests(t *testing.T) {
 	if rebuilt.DisplayName != "Sole survivor" {
 		t.Fatalf("expected the name the manifests carry, got %q", rebuilt.DisplayName)
 	}
-	if rebuilt.HeadRevisionID == nil || *rebuilt.HeadRevisionID != revision.ID {
-		t.Fatalf("expected the head derived from the manifests, got %v", rebuilt.HeadRevisionID)
+	if rebuilt.CurrentRevisionID == nil || *rebuilt.CurrentRevisionID != revision.ID {
+		t.Fatalf("expected current derived from the manifests, got %v", rebuilt.CurrentRevisionID)
 	}
 
 	// Reconciling wrote the reconstructed record back, healing the store.
@@ -385,8 +394,8 @@ func TestACommitOutlivesAStoreThatCannotRecordIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.HeadRevisionID == nil || *after.HeadRevisionID != revision.ID {
-		t.Fatalf("expected the committed revision at the head, got %v", after.HeadRevisionID)
+	if after.CurrentRevisionID == nil || *after.CurrentRevisionID != revision.ID {
+		t.Fatalf("expected the committed revision to be current, got %v", after.CurrentRevisionID)
 	}
 	if err := repository.Close(); err != nil {
 		t.Fatal(err)
@@ -408,6 +417,235 @@ func TestACommitOutlivesAStoreThatCannotRecordIt(t *testing.T) {
 	}
 	if len(manifest.Files) != 1 || manifest.Files[0].Path != "save.dat" {
 		t.Fatalf("expected the healed manifest to name the file, got %+v", manifest.Files)
+	}
+}
+
+// A fork's first own commit names a parent its source created, so rebuild has
+// to order imports across every lineage at once: resolved per lineage, a fork
+// whose manifests were reached before its source's would import that commit
+// as a root and sever the chain for good. Three forks make a wrong order
+// near-certain, and the loss is repeated because the old failure depended on
+// map iteration order.
+func TestForkRevisionChainsSurviveLosingTheDatabase(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "omnisave.db")
+	storeDir := filepath.Join(directory, "store")
+
+	repository, err := sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := omnisaveservice.New(repository)
+
+	source, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-chrono", DisplayName: "Main run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootArtifact := storeOmnisaveArtifact(t, ctx, saves, "the start")
+	root, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: rootArtifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	forkPointArtifact := storeOmnisaveArtifact(t, ctx, saves, "the fork point")
+	forkPoint, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &root.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: forkPointArtifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	forkIDs := make([]string, 3)
+	tips := make(map[string][]string)
+	for index := range forkIDs {
+		fork, err := saves.Fork(ctx, source.ID, omnisave.ForkOmnisave{
+			RevisionID: forkPoint.ID, DisplayName: "Retry",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		forkIDs[index] = fork.Omnisave.ID
+		parent := forkPoint.ID
+		for step := 0; step < 2; step++ {
+			artifact := storeOmnisaveArtifact(t, ctx, saves,
+				fmt.Sprintf("fork %d progress %d", index, step))
+			revision, err := saves.CommitRevision(ctx, fork.Omnisave.ID, omnisave.CreateRevision{
+				ExpectedCurrentRevisionID: &parent,
+				Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tips[fork.Omnisave.ID] = append(tips[fork.Omnisave.ID], revision.ID)
+			parent = revision.ID
+		}
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for cycle := 0; cycle < 3; cycle++ {
+		for _, leftover := range []string{databasePath, databasePath + "-wal", databasePath + "-shm"} {
+			if err := os.Remove(leftover); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+		}
+		repository, err = sqlite.Open(databasePath, storeDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forkID := range forkIDs {
+			history, err := repository.ListRevisions(ctx, forkID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parents := make(map[string]*string, len(history))
+			for _, revision := range history {
+				parents[revision.ID] = revision.ParentID
+			}
+			if len(history) != 4 {
+				t.Fatalf("cycle %d: expected the fork's chain of 4, got %d revision(s)", cycle, len(history))
+			}
+			own := tips[forkID]
+			for id, wantParent := range map[string]string{
+				own[1]:       own[0],
+				own[0]:       forkPoint.ID,
+				forkPoint.ID: root.ID,
+			} {
+				if parents[id] == nil || *parents[id] != wantParent {
+					t.Fatalf("cycle %d: revision %s lost its parent %s, got %v", cycle, id, wantParent, parents[id])
+				}
+			}
+			if parents[root.ID] != nil {
+				t.Fatalf("cycle %d: the true root grew a parent: %v", cycle, parents[root.ID])
+			}
+		}
+		if err := repository.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Restoring an ancestor is recorded with the Omnisave record, so a save
+// reconstructed from the store adopts that pointer rather than a newest tip.
+func TestARewoundCurrentSurvivesLosingTheDatabase(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "omnisave.db")
+	storeDir := filepath.Join(directory, "store")
+
+	repository, err := sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := omnisaveservice.New(repository)
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Only save"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeOmnisaveArtifact(t, ctx, saves, "early")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &first.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeOmnisaveArtifact(t, ctx, saves, "late")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saves.Restore(ctx, save.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &second.ID,
+		RevisionID:                first.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(databasePath); err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err = sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	restored, err := repository.GetOmnisave(ctx, save.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.CurrentRevisionID == nil || *restored.CurrentRevisionID != first.ID {
+		t.Fatalf("expected the rewound pointer to survive, got %v", restored.CurrentRevisionID)
+	}
+}
+
+// Ancestors retained past their creator's deletion belong to the database as
+// much as any revision, so a store directory lost under a healthy database
+// gets their manifests back too — not only the ones surviving saves created.
+func TestReconcileRewritesAncestorsRetainedPastTheirCreator(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "omnisave.db")
+	storeDir := filepath.Join(directory, "store")
+
+	repository, err := sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := omnisaveservice.New(repository)
+	source, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeOmnisaveArtifact(t, ctx, saves, "early")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &first.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeOmnisaveArtifact(t, ctx, saves, "late")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fork, err := saves.Fork(ctx, source.ID, omnisave.ForkOmnisave{RevisionID: second.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saves.Delete(ctx, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The store is lost while the database survives; reconcile regrows it.
+	if err := os.RemoveAll(storeDir); err != nil {
+		t.Fatal(err)
+	}
+	repository, err = sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+
+	for _, revisionID := range []string{first.ID, second.ID} {
+		if !repository.Store().HasRevision(revisionID) {
+			t.Fatalf("expected the retained ancestor %s recorded again", revisionID)
+		}
+	}
+	history, err := repository.ListRevisions(ctx, fork.Omnisave.ID)
+	if err != nil || len(history) != 2 {
+		t.Fatalf("expected the fork's ancestry intact: history=%+v err=%v", history, err)
 	}
 }
 

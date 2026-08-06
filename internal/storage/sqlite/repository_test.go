@@ -18,6 +18,7 @@ import (
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
 	"github.com/krisbaumgartner/omnisave/internal/storage"
 	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
+	"github.com/krisbaumgartner/omnisave/internal/storage/storagetest"
 )
 
 func TestRecordsSurviveRepositoryRestart(t *testing.T) {
@@ -84,8 +85,8 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 		t.Fatalf("unexpected history: %v", history)
 	}
 	stored, err = saves.Get(ctx, save.ID)
-	if err != nil || stored.HeadRevisionID == nil || *stored.HeadRevisionID != revision.ID {
-		t.Fatalf("unexpected head after restart: %v, %v", stored, err)
+	if err != nil || stored.CurrentRevisionID == nil || *stored.CurrentRevisionID != revision.ID {
+		t.Fatalf("unexpected current revision after restart: %v, %v", stored, err)
 	}
 	storedFork, err := saves.Get(ctx, fork.Omnisave.ID)
 	if err != nil || storedFork.ForkedFrom == nil || storedFork.ForkedFrom.RevisionID != revision.ID {
@@ -109,7 +110,7 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 	}
 }
 
-func TestUpdatedAtFollowsTheHeadRevision(t *testing.T) {
+func TestCurrentRevisionDateFollowsTheSelectedSnapshot(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
 	repository, err := sqlite.Open(
@@ -130,8 +131,8 @@ func TestUpdatedAtFollowsTheHeadRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !stored.UpdatedAt.Equal(stored.CreatedAt) {
-		t.Fatalf("expected a fresh save updated at its creation, got %v", stored.UpdatedAt)
+	if !stored.CurrentRevisionCreatedAt.Equal(stored.CreatedAt) {
+		t.Fatalf("expected a fresh save current at its creation, got %v", stored.CurrentRevisionCreatedAt)
 	}
 
 	artifact := storeOmnisaveArtifact(t, ctx, saves, "game-save contents")
@@ -145,8 +146,8 @@ func TestUpdatedAtFollowsTheHeadRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !stored.UpdatedAt.Equal(revision.CreatedAt) {
-		t.Fatalf("expected the commit to move updated_at to %v, got %v", revision.CreatedAt, stored.UpdatedAt)
+	if !stored.CurrentRevisionCreatedAt.Equal(revision.CreatedAt) {
+		t.Fatalf("expected the commit to select the new revision date %v, got %v", revision.CreatedAt, stored.CurrentRevisionCreatedAt)
 	}
 
 	displayName := "After the commit"
@@ -154,12 +155,12 @@ func TestUpdatedAtFollowsTheHeadRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !renamed.UpdatedAt.Equal(revision.CreatedAt) {
-		t.Fatalf("expected a rename to leave updated_at at %v, got %v", revision.CreatedAt, renamed.UpdatedAt)
+	if !renamed.CurrentRevisionCreatedAt.Equal(revision.CreatedAt) {
+		t.Fatalf("expected a rename to leave the current revision date at %v, got %v", revision.CreatedAt, renamed.CurrentRevisionCreatedAt)
 	}
 }
 
-func TestDeleteOmnisaveKeepsSharedArtifacts(t *testing.T) {
+func TestDeletingASourceKeepsTheRevisionGraphSharedByAFork(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
 	repository, err := sqlite.Open(
@@ -176,25 +177,24 @@ func TestDeleteOmnisaveKeepsSharedArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	artifact := storeOmnisaveArtifact(t, ctx, saves, "shared contents")
-	_, err = saves.CommitRevision(ctx, first.ID, omnisave.CreateRevision{
+	root, err := saves.CommitRevision(ctx, first.ID, omnisave.CreateRevision{
 		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := saves.CommitRevision(ctx, second.ID, omnisave.CreateRevision{
-		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
-	}); err != nil {
+	second, err := saves.Fork(ctx, first.ID, omnisave.ForkOmnisave{RevisionID: root.ID})
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	if err := saves.Delete(ctx, first.ID); err != nil {
 		t.Fatal(err)
+	}
+	history, err := saves.ListRevisions(ctx, second.Omnisave.ID)
+	if err != nil || len(history) != 1 || history[0].ID != root.ID {
+		t.Fatalf("the fork should retain its shared ancestry: history=%+v err=%v", history, err)
 	}
 	payload, err := saves.OpenArtifact(ctx, artifact.SHA256)
 	if err != nil {
@@ -202,11 +202,90 @@ func TestDeleteOmnisaveKeepsSharedArtifacts(t *testing.T) {
 	}
 	payload.Close()
 
-	if err := saves.Delete(ctx, second.ID); err != nil {
+	if err := saves.Delete(ctx, second.Omnisave.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := saves.OpenArtifact(ctx, artifact.SHA256); !errors.Is(err, omnisave.ErrNotFound) {
 		t.Fatalf("unreferenced artifact should be deleted, got %v", err)
+	}
+}
+
+func TestDeletingASourceKeepsAForkPointTheForkRewoundBelow(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repository, err := sqlite.Open(
+		filepath.Join(directory, "omnisave.db"),
+		filepath.Join(directory, "store"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves := omnisaveservice.New(repository)
+
+	source, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootArtifact := storeOmnisaveArtifact(t, ctx, saves, "start")
+	root, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: rootArtifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	forkPointArtifact := storeOmnisaveArtifact(t, ctx, saves, "midgame")
+	forkPoint, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &root.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: forkPointArtifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tipArtifact := storeOmnisaveArtifact(t, ctx, saves, "endgame")
+	tip, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &forkPoint.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: tipArtifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fork, err := saves.Fork(ctx, source.ID, omnisave.ForkOmnisave{RevisionID: forkPoint.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saves.Restore(ctx, fork.Omnisave.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &forkPoint.ID,
+		RevisionID:                root.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := saves.Delete(ctx, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The fork was started at the fork point, so deleting the source must not
+	// erase that node even while the fork's current sits below it.
+	history, err := saves.ListRevisions(ctx, fork.Omnisave.ID)
+	if err != nil || len(history) != 2 {
+		t.Fatalf("the fork should keep its fork point and ancestry: history=%+v err=%v", history, err)
+	}
+	payload, err := saves.OpenArtifact(ctx, forkPointArtifact.SHA256)
+	if err != nil {
+		t.Fatalf("the fork point's content should remain: %v", err)
+	}
+	payload.Close()
+	if _, err := saves.GetRevision(ctx, fork.Omnisave.ID, tip.ID); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("the source-only descendant should be gone, got %v", err)
+	}
+	if _, err := saves.OpenArtifact(ctx, tipArtifact.SHA256); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("the source-only artifact should be deleted, got %v", err)
+	}
+	if _, err := saves.Restore(ctx, fork.Omnisave.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &root.ID,
+		RevisionID:                forkPoint.ID,
+	}); err != nil {
+		t.Fatalf("the fork should fast-forward back to its fork point: %v", err)
 	}
 }
 
@@ -231,21 +310,21 @@ func TestCommitAndRefMovementAreAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	winner, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
-		ExpectedHeadID: &root.ID,
-		Upserts:        []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+		ExpectedCurrentRevisionID: &root.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
-		ExpectedHeadID: &root.ID,
-		Upserts:        []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+		ExpectedCurrentRevisionID: &root.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
 	}); !errors.Is(err, omnisave.ErrConflict) {
 		t.Fatalf("expected stale commit conflict, got %v", err)
 	}
 	history, err := saves.ListRevisions(ctx, save.ID)
 	stored, headErr := saves.Get(ctx, save.ID)
-	if err != nil || headErr != nil || len(history) != 2 || stored.HeadRevisionID == nil || *stored.HeadRevisionID != winner.ID {
+	if err != nil || headErr != nil || len(history) != 2 || stored.CurrentRevisionID == nil || *stored.CurrentRevisionID != winner.ID {
 		t.Fatalf("stale revision became visible: history=%v save=%v errors=%v/%v", history, stored, err, headErr)
 	}
 }
@@ -398,9 +477,10 @@ func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	shared := storeOmnisaveArtifact(t, ctx, saves, "shared contents")
-	if _, err := saves.CommitRevision(ctx, doomed.ID, omnisave.CreateRevision{
+	doomedRevision, err := saves.CommitRevision(ctx, doomed.ID, omnisave.CreateRevision{
 		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: shared}},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	survivor, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "another-game"})
@@ -423,6 +503,9 @@ func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 	if _, err := saves.Get(ctx, doomed.ID); !errors.Is(err, omnisave.ErrNotFound) {
 		t.Fatalf("the game's save should be gone, got %v", err)
 	}
+	if repository.Store().HasRevision(doomedRevision.ID) {
+		t.Fatal("the game's revision manifest should be gone")
+	}
 	if _, err := saves.OpenArtifact(ctx, coverHash); !errors.Is(err, omnisave.ErrNotFound) {
 		t.Fatalf("unreferenced cover artifact should be deleted, got %v", err)
 	}
@@ -436,6 +519,252 @@ func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 	}
 	if err := repository.DeleteGame(ctx, game.ID); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("deleting a missing game should report not found, got %v", err)
+	}
+}
+
+// Deleting a game has to drop the manifests of every node in its graph by the
+// game identity revisions carry — nodes whose creator save was already
+// deleted, retained for a fork, have no surviving lineage to find them
+// through. Missing them, the next open would resurrect the game from its
+// leftover manifests.
+func TestADeletedGameStaysDeletedWhenAForkOutlivedItsSource(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "omnisave.db")
+	storeDir := filepath.Join(directory, "store")
+	repository, err := sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := omnisaveservice.New(repository)
+
+	game := catalog.Game{
+		ID: "super-metroid", Title: "Super Metroid",
+		MetadataSource: "hasheous", RefreshedAt: time.Now().UTC(),
+	}
+	if err := repository.SaveGame(ctx, game, nil); err != nil {
+		t.Fatal(err)
+	}
+	source, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: game.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeOmnisaveArtifact(t, ctx, saves, "early")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &first.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeOmnisaveArtifact(t, ctx, saves, "late")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saves.Fork(ctx, source.ID, omnisave.ForkOmnisave{RevisionID: second.ID}); err != nil {
+		t.Fatal(err)
+	}
+	// The source dies first, orphaning its nodes onto the surviving fork.
+	if err := saves.Delete(ctx, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.DeleteGame(ctx, game.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, revisionID := range []string{first.ID, second.ID} {
+		if repository.Store().HasRevision(revisionID) {
+			t.Fatalf("the deleted game's manifest %s should be gone", revisionID)
+		}
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err = sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	if _, err := repository.GetGame(ctx, game.ID); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("the deleted game was resurrected by the rebuild: %v", err)
+	}
+	all, err := repository.ListOmnisaves(ctx)
+	if err != nil || len(all) != 0 {
+		t.Fatalf("the deleted game's saves should stay deleted, got %+v (%v)", all, err)
+	}
+}
+
+// The current-revision check is what makes a restore atomic; a stale
+// expectation is refused with the actual pointer, on the real repository and
+// not only the memory fake.
+func TestRestoreWithAStaleExpectationReportsTheActualCurrent(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repository, err := sqlite.Open(
+		filepath.Join(directory, "omnisave.db"),
+		filepath.Join(directory, "store"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves := omnisaveservice.New(repository)
+
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeOmnisaveArtifact(t, ctx, saves, "early")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &first.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeOmnisaveArtifact(t, ctx, saves, "late")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = repository.RestoreOmnisave(ctx, save.ID, first.ID, &first.ID)
+	var conflict *storage.CurrentRevisionConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a current revision conflict, got %v", err)
+	}
+	if conflict.ActualCurrentRevisionID == nil || *conflict.ActualCurrentRevisionID != second.ID {
+		t.Fatalf("expected the conflict to carry the actual current %s, got %v",
+			second.ID, conflict.ActualCurrentRevisionID)
+	}
+	stored, err := repository.GetOmnisave(ctx, save.ID)
+	if err != nil || stored.CurrentRevisionID == nil || *stored.CurrentRevisionID != second.ID {
+		t.Fatalf("a stale restore moved the pointer: %v (%v)", stored, err)
+	}
+}
+
+// Committing after restoring an ancestor branches the history inside the same
+// Omnisave: two children of one parent, both listed.
+func TestCommitAfterARestoreBranchesTheHistory(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repository, err := sqlite.Open(
+		filepath.Join(directory, "omnisave.db"),
+		filepath.Join(directory, "store"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves := omnisaveservice.New(repository)
+
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeOmnisaveArtifact(t, ctx, saves, "start")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	older, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &root.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeOmnisaveArtifact(t, ctx, saves, "one way")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saves.Restore(ctx, save.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &older.ID,
+		RevisionID:                root.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	newer, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &root.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeOmnisaveArtifact(t, ctx, saves, "another way")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newer.ParentID == nil || *newer.ParentID != root.ID {
+		t.Fatalf("expected the commit to extend the restored revision, got parent %v", newer.ParentID)
+	}
+
+	history, err := repository.ListRevisions(ctx, save.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 3 {
+		t.Fatalf("expected both branches listed, got %d revision(s)", len(history))
+	}
+	children := 0
+	for _, revision := range history {
+		if revision.ParentID != nil && *revision.ParentID == root.ID {
+			children++
+		}
+	}
+	if children != 2 {
+		t.Fatalf("expected two children of the branch point, got %d", children)
+	}
+}
+
+// A deleted save's URLs must be dead even while shared-ancestry rows still
+// name it as their creator; sqlite and the memory fake have to agree.
+func TestADeletedSavesRevisionsAreUnreachableThroughItsID(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	sqliteRepository, err := sqlite.Open(
+		filepath.Join(directory, "omnisave.db"),
+		filepath.Join(directory, "store"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqliteRepository.Close()
+
+	repositories := map[string]storage.OmnisaveRepository{
+		"sqlite": sqliteRepository,
+		"memory": storagetest.NewMemoryRepository(),
+	}
+	for name, repository := range repositories {
+		t.Run(name, func(t *testing.T) {
+			now := time.Now().UTC()
+			source := omnisave.Omnisave{ID: "source-" + name, GameID: "game-1", CreatedAt: now}
+			if err := repository.InsertOmnisave(ctx, source); err != nil {
+				t.Fatal(err)
+			}
+			revision := omnisave.Revision{ID: "revision-" + name, OmnisaveID: source.ID, CreatedAt: now}
+			if err := repository.CommitRevision(ctx, nil, revision); err != nil {
+				t.Fatal(err)
+			}
+			fork := omnisave.Omnisave{
+				ID: "fork-" + name, GameID: "game-1", CurrentRevisionID: &revision.ID,
+				ForkedFrom: &omnisave.ForkOrigin{OmnisaveID: source.ID, RevisionID: revision.ID},
+				CreatedAt:  now,
+			}
+			if err := repository.ForkOmnisave(ctx, fork); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.DeleteOmnisave(ctx, source.ID); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := repository.GetRevision(ctx, source.ID, revision.ID); !errors.Is(err, storage.ErrNotFound) {
+				t.Fatalf("a deleted save's revision stayed readable: %v", err)
+			}
+			if _, err := repository.ListRevisions(ctx, source.ID); !errors.Is(err, storage.ErrNotFound) {
+				t.Fatalf("a deleted save's history stayed listable: %v", err)
+			}
+			if err := repository.UpdateRevisionDisplayName(ctx, source.ID, revision.ID, "renamed"); !errors.Is(err, storage.ErrNotFound) {
+				t.Fatalf("a deleted save's revision stayed renamable: %v", err)
+			}
+			if _, err := repository.GetRevision(ctx, fork.ID, revision.ID); err != nil {
+				t.Fatalf("the fork should still reach the shared node: %v", err)
+			}
+		})
 	}
 }
 

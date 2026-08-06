@@ -40,9 +40,11 @@ games/ab/<id>.json        catalog identity
 the lineage it belongs to, so one manifest read alone is enough to place its
 files even if every other record were lost.
 
-**Heads are derived.** The head is the revision no other revision claims as its
-parent, so nothing is rewritten when a commit lands and a copy taken mid-write
-cannot point at a revision it does not have.
+**Current revisions are recorded.** Each Omnisave record carries its movable
+Current Revision pointer. It cannot be derived from timestamps or graph tips:
+restoring may select any ancestor, descendant, or sibling branch. Updating the
+pointer replaces only the small Omnisave record atomically; revision manifests
+remain immutable.
 
 **Server state lives outside the store.** Credentials, pairing state, and the
 owner's PIN
@@ -58,16 +60,17 @@ therefore costs credentials and pairings, never a save: a server pointed at a
 surviving store lists everything in it again, under the same revision
 identifiers a device's sync baseline already names.
 
-**Nothing is rewritten in place.** Objects and manifests are immutable. The two
-records that change — a lineage's name and its tombstone — are replaced
-atomically.
+**Nothing is rewritten in place.** Objects and manifests are immutable. The
+Omnisave record that carries a save's name, Current Revision, fork origin,
+revision labels, and tombstone is replaced atomically.
 
-**Deletion is recorded, not merely performed.** Deleting a save drops its
-manifests and tombstones its lineage, so restoring a store does not resurrect
-what its owner threw away.
+**Deletion is recorded, not merely performed.** Deleting a save tombstones its
+record. A revision manifest is dropped only when no surviving Omnisave retains
+that node through shared fork ancestry, so deleting a fork source cannot erase
+history still active through another save.
 
 **A commit is recorded after the database accepts it; a deletion before.** The
-expected-head check is what makes a commit atomic, so for commits the database
+expected-current check is what makes a commit atomic, so for commits the database
 decides: a manifest written first could describe a commit that check rejected,
 and an invented revision is worse than a missing one. Deletion inverts because
 the failure inverts. A deletion recorded late leaves a save the database has

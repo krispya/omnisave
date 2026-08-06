@@ -1,7 +1,7 @@
 # FDR-003: Automatic Save Binding
 
 **Status:** Experimental
-**Last reviewed:** 2026-07-26
+**Last reviewed:** 2026-08-03
 
 ## Overview
 
@@ -28,13 +28,13 @@ establishes the baseline that sync will later diff against.
   appears in the Dash under that name with no further action.
 - If the server already has Omnisaves for the game, the local save is
   compared by content against their full revision histories.
-- Matching the head of exactly one Omnisave rebinds automatically with the
-  head as the baseline — this Device is simply up to date, and the result
+- Matching the Current Revision of exactly one Omnisave rebinds automatically with that
+  revision as the baseline — this Device is simply up to date, and the result
   reads "Save N · synced just now."
 - Matching an older revision of exactly one Omnisave means the save went
   stale: it was tracked at some point and play continued on another
-  Device. The user chooses between fast-forwarding — the head's content
-  replaces the local save and the binding starts at the head — or forking
+  Device. The user chooses between fast-forwarding — the Current Revision's content
+  replaces the local save and the binding starts there — or forking
   at the matched revision, keeping the lineage and continuing this
   playthrough independently.
 - If the local save matches nothing, or matches more than one Omnisave, the
@@ -102,7 +102,7 @@ since tracking already does.
 
 **Decision:** A Local Save matches a revision when its file set and content
 are identical. Any revision in an Omnisave's history counts, not just the
-head.
+Current Revision.
 **Why:** Artifacts are content-addressed, so equality is trustworthy.
 Matching history rather than only heads means a Device that sat offline —
 or was wiped and re-minted its identity, the acknowledged cost of
@@ -116,22 +116,22 @@ through to the prompt.
 ### 5. A stale match asks: fast-forward or fork
 
 **Decision:** When the local save equals an out-of-date revision, the pass
-does not silently rebind. The user picks fast-forward — adopt the head —
+does not silently rebind. The user picks fast-forward — adopt the Current Revision —
 or fork at the matched revision.
 **Why:** The match proves what happened: this save was tracked once, went
 stale, and play continued on another Device. The two futures are
 incompatible, and both are safe to offer — fast-forwarding discards
 nothing because the local content already exists as the matched revision,
 and playing on from the stale point on the same lineage would only
-guarantee a head conflict at the first commit. Asking at bind time, when
+guarantee a current revision conflict at the first commit. Asking at bind time, when
 "this device is behind" is visible and explainable, converts that
 inevitable conflict into an informed choice. Forking keeps the lineage:
 the new Omnisave records its origin, so the Dash shows where the
 playthrough split.
 **Tradeoff:** Fast-forward pulls download-and-apply machinery into this
 feature ahead of synchronization proper. The client must download and verify
-the complete head before moving any local file, then restore the matched local
-snapshot if applying the head fails. The replaced content also remains
+the complete Current Revision before moving any local file, then restore the matched local
+snapshot if applying it fails. The replaced content also remains
 recoverable as the older server revision that triggered the choice.
 
 ### 6. Ambiguity prompts; the pass never guesses

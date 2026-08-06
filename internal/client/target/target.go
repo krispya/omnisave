@@ -121,7 +121,7 @@ type SaveLocation struct {
 // SaveDestination describes where an adapter-native save would live before any of
 // its files exist. Its ID is the Local Save identity used after placement.
 type SaveDestination struct {
-	// ID remains the Local Save identity after the head is materialized.
+	// ID remains the Local Save identity after the current revision is materialized.
 	ID        string
 	TargetID  string
 	GameID    string

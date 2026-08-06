@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -178,6 +179,24 @@ func TestEveryStoreNamesItsOwnFormat(t *testing.T) {
 	version, err := os.ReadFile(filepath.Join(root, "VERSION"))
 	if err != nil || !strings.HasPrefix(string(version), "omnisave-store ") {
 		t.Fatalf("expected the store to name its own format, got %q (%v)", version, err)
+	}
+}
+
+func TestOpeningAnOlderStoreAdvancesItsFormatMarker(t *testing.T) {
+	root := t.TempDir()
+	openStore(t, root)
+	if err := os.WriteFile(filepath.Join(root, "VERSION"),
+		[]byte("omnisave-store 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	openStore(t, root)
+	version, err := os.ReadFile(filepath.Join(root, "VERSION"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(version) != fmt.Sprintf("omnisave-store %d\n", store.Version) {
+		t.Fatalf("expected the marker to advance to the writable format, got %q", version)
 	}
 }
 
