@@ -9,6 +9,7 @@ import (
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
+	"github.com/krisbaumgartner/omnisave/internal/client/running"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
@@ -222,5 +223,81 @@ func TestAServerEventTriggersAPassThatAppliesADashRewind(t *testing.T) {
 	}
 	if string(content) != "first-progress" {
 		t.Fatalf("expected the pass to pull the restored revision, got %q", content)
+	}
+}
+
+func TestADeferredPullAppliesOnceTheGameCloses(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	installRoot := t.TempDir()
+	fixture.scans[0].Games[0].Game.InstallRoot = installRoot
+	seed, bound := pushSecondRevision(t, server, &fixture, "second-progress")
+
+	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(fixture.state); err != nil {
+		t.Fatal(err)
+	}
+	lister := &stubLister{}
+	lister.set(running.Process{PID: 7, Executable: filepath.Join(installRoot, "game")})
+	movement := make(chan string)
+	loop := watchLoop{
+		scanner:  client.NewScanner(nil, fixtureAdapter{fixture: &fixture}),
+		server:   server,
+		store:    store,
+		poll:     30 * time.Millisecond,
+		pull:     time.Hour,
+		floor:    0,
+		settle:   time.Millisecond,
+		events:   newAnnouncer(),
+		detector: running.NewDetector(lister),
+		movement: func(context.Context) <-chan string {
+			return movement
+		},
+		watched: []string{fixture.localPath},
+	}
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+
+	if _, err := server.RestoreCurrentRevision(context.Background(), bound.OmnisaveID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: bound.LastSyncedRevisionID,
+		RevisionID:                seed.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	movement <- remote.LibraryChangedEvent
+
+	// The event-triggered pass runs while the game is "playing": deferred.
+	select {
+	case result := <-sink.finished:
+		if result.Err != nil {
+			t.Fatalf("expected the deferring pass to succeed, got %v", result.Err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the deferring pass")
+	}
+	content, _ := os.ReadFile(fixture.localPath)
+	if string(content) != "second-progress" {
+		t.Fatalf("expected the local save untouched while playing, got %q", content)
+	}
+
+	// The game closes; the poll sweep notices the exit and applies the pull.
+	lister.set()
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case result := <-sink.finished:
+			if result.Err != nil {
+				t.Fatalf("expected the applying pass to succeed, got %v", result.Err)
+			}
+			content, _ := os.ReadFile(fixture.localPath)
+			if string(content) == "first-progress" {
+				return
+			}
+		case <-deadline:
+			content, _ := os.ReadFile(fixture.localPath)
+			t.Fatalf("timed out waiting for the deferred pull to apply, local save is %q", content)
+		}
 	}
 }

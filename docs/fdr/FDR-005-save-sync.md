@@ -59,6 +59,9 @@ path, syncing-down built the read path; sync makes both routine.
   all-or-nothing. Immediately before placing, the local content is
   re-checked against the baseline; any change — the game just wrote —
   aborts untouched and the next pass reconsiders.
+- Syncing down also waits for the game: a pull whose game is being played
+  is deferred — "syncing down waits for the game to close" — and watch
+  applies it within a poll interval of the game exiting (decision 13).
 - Commits are gated: nothing commits when the bytes did not change,
   an empty local save never commits over good server content, and each
   save has a spacing floor so continuously flushing saves (emulator SRAM)
@@ -174,7 +177,8 @@ revision, which the server keeps — and the pre-placement re-check turns
 "the game started writing mid-download" into a clean abort.
 **Tradeoff:** A game already running during a pull can later overwrite
 the pulled files from memory and push that state; history keeps every
-revision, but the Current Revision follows the running game.
+revision, but the Current Revision follows the running game. Decision 13
+closes most of that window by holding pulls while the game runs.
 
 ### 4. Divergence prompts, and both answers keep everything
 
@@ -307,13 +311,31 @@ duplicate at every fork point.
 ancestors must remain until no surviving Omnisave graph needs them. There are
 no branch names, branch deletion, or merges.
 
+### 13. A pull never lands under a running game
+
+**Decision:** Before the automatic pull applies, the pass checks whether
+the bound game is being played — a live process executing from the game's
+install root or its target's. A playing game defers the pull: the save
+reports "syncing down waits for the game to close", and watch applies it
+within a poll interval of the game exiting. Detection is best-effort and
+fails open — an unreadable process list gates nothing.
+**Why:** A running game holds its save in memory. A pull applied mid-session
+is overwritten from memory at the next save and pushed back, silently
+undoing the restore the user asked for — the exact failure decision 3
+accepted as a tradeoff. Waiting for the game to close is what the user
+means by "rewind" anyway: the restored content is what loads next.
+**Tradeoff:** A rewind issued mid-session is not visible in the game until
+it closes and reopens, and process detection can miss games launched
+through wrappers whose executables live outside both roots — those fall
+back to decision 3's pre-placement re-check.
+
 ## Related
 
 - **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — heads move
   only by commit against expected state, which is what makes the baseline
   comparison trustworthy; [ADR-002](../adr/ADR-002-sse-view-invalidation.md)
-  — the server event stream that could someday wake watch instead of
-  polling; [ADR-012](../adr/ADR-012-portable-save-store.md) — where a
+  — the server event stream that wakes watch the moment the library
+  changes; [ADR-012](../adr/ADR-012-portable-save-store.md) — where a
   committed revision comes to rest, and why the content a sync-down replaces
   is recoverable from the store alone.
 - **FDRs:** [FDR-003](FDR-003-automatic-save-binding.md) — the binding

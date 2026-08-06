@@ -20,6 +20,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/binding"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
+	"github.com/krisbaumgartner/omnisave/internal/client/running"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/retroarch"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/steam"
@@ -581,7 +582,8 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 				return choice, err
 			},
 		}
-		bindingErr = reconcileSaves(taskCtx, server, &state, scans, confirmed, &outcome, report, prompts, 0)
+		playing := playingNow(taskCtx, running.PlatformDetector(), trackedRunningGames(&state, scans))
+		bindingErr = reconcileSaves(taskCtx, server, &state, scans, confirmed, &outcome, report, prompts, playing, 0)
 		activity.Report(taskCtx, "finishing")
 	})
 	if waitErr != nil && !errors.Is(waitErr, tui.ErrAborted) {
@@ -658,6 +660,7 @@ func keepTracking(
 		floor:    settings.floor,
 		settle:   serverSettle,
 		events:   events,
+		detector: running.PlatformDetector(),
 		movement: server.ServerEvents,
 		watched:  watchedFiles(state, scans),
 	}
@@ -842,7 +845,8 @@ func bindUnboundSaves(
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 ) error {
-	return reconcileSaves(ctx, server, state, scans, confirmed, outcome, report, interactivePrompts(), 0)
+	playing := playingNow(ctx, running.PlatformDetector(), trackedRunningGames(state, scans))
+	return reconcileSaves(ctx, server, state, scans, confirmed, outcome, report, interactivePrompts(), playing, 0)
 }
 
 // reconcileSaves is the shared reconcile pass (FDR-003, FDR-005): unbound
@@ -858,6 +862,7 @@ func reconcileSaves(
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 	prompts *reconcilePrompts,
+	playing map[string]bool,
 	pushFloor time.Duration,
 ) error {
 	activity.Report(ctx, "checking saves")
@@ -938,7 +943,8 @@ func reconcileSaves(
 		if bound, isBound := state.BindingFor(candidate.local); isBound {
 			if remoteSave, exists := savesByID[bound.OmnisaveID]; exists {
 				if err := syncBoundSave(ctx, server, state, candidate.local, candidate.save,
-					bound, remoteSave, loadHistory, outcome, report, prompts, pushFloor); err != nil {
+					bound, remoteSave, loadHistory, outcome, report, prompts,
+					playing[candidate.local.GameID], pushFloor); err != nil {
 					return err
 				}
 				continue
@@ -1173,7 +1179,7 @@ func syncSaveToDevice(
 	}
 	type availableSave struct {
 		save        omnisave.Omnisave
-		current        omnisave.Revision
+		current     omnisave.Revision
 		destination target.SaveDestination
 	}
 	options := make([]tui.SyncToDeviceOption, 0, len(gameSaves))
@@ -1319,6 +1325,7 @@ func syncBoundSave(
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 	prompts *reconcilePrompts,
+	playing bool,
 	pushFloor time.Duration,
 ) error {
 	history, err := loadHistory(remoteSave.ID)
@@ -1400,6 +1407,15 @@ func syncBoundSave(
 		return nil
 	}
 	if binding.MatchesManifest(manifest, baseline) {
+		if playing {
+			// A pull never lands under a running game: the game would
+			// overwrite the pulled files from memory and push that state
+			// back, silently undoing the restore (FDR-005, decision 13).
+			// The pass after the game closes applies it.
+			outcome.Deferred++
+			report.PullDeferred(local.GameTitle, name)
+			return nil
+		}
 		// Pull. Lossless: the replaced content is the baseline revision,
 		// which the server keeps; placement re-verifies local is unchanged.
 		if err := binding.ApplyCurrent(ctx, server, save, baseline, current); err != nil {

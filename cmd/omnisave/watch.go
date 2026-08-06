@@ -15,6 +15,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client"
 	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
+	"github.com/krisbaumgartner/omnisave/internal/client/running"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
 )
@@ -144,6 +145,7 @@ func runWatch(ctx context.Context, scanner *client.Scanner, arguments []string) 
 		floor:    settings.floor,
 		settle:   serverSettle,
 		events:   newAnnouncer(),
+		detector: running.PlatformDetector(),
 		movement: server.ServerEvents,
 	}
 	url, _ := serverConnection(initial, *serverURL, *token)
@@ -222,6 +224,9 @@ type watchLoop struct {
 	floor   time.Duration
 	settle  time.Duration
 	events  *announcer
+	// detector notices games being played, which is what defers pulls and
+	// what lets the loop apply them the moment the game closes.
+	detector *running.Detector
 	// movement subscribes to the server's change feed; nil leaves the
 	// periodic pull as the only way server-side movement is noticed.
 	movement func(context.Context) <-chan string
@@ -247,6 +252,9 @@ func (l watchLoop) finish(sink watchSink, started time.Time, snapshot tui.Report
 // run polls until ctx ends. State reloads every pass so a concurrent track
 // run's changes are honored; a failed pass leaves work for the next one.
 func (l watchLoop) run(ctx context.Context, sink watchSink) {
+	// deferred carries the playing games whose exit resolves a held-back
+	// pull; each pass replaces it wholesale.
+	var deferred []running.Game
 	pass := func() []string {
 		started := time.Now()
 		sink.PassStarted()
@@ -257,7 +265,8 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			return nil
 		}
 		report := &tui.TrackReport{}
-		outcome, files, err := syncPass(passCtx, l.scanner, l.server, &state, report, l.floor)
+		outcome, files, passDeferred, err := syncPass(passCtx, l.scanner, l.server, l.detector, &state, report, l.floor)
+		deferred = passDeferred
 		if err != nil {
 			l.finish(sink, started, report.Snapshot(), "", false, err)
 			return files
@@ -321,6 +330,13 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			signature = statSignature(watched)
 			dirty = false
 		case <-pollTicker.C:
+			if deferredGameExited(ctx, l.detector, deferred) {
+				watched = pass()
+				sink.Watching(len(watched))
+				signature = statSignature(watched)
+				dirty = false
+				continue
+			}
 			next := statSignature(watched)
 			if next != signature {
 				// Writes are still landing; wait for one quiet interval so
@@ -337,6 +353,24 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			}
 		}
 	}
+}
+
+// deferredGameExited reports whether a game holding back a pull has closed
+// since the pass that deferred it — the moment that pull can safely land.
+func deferredGameExited(ctx context.Context, detector *running.Detector, deferred []running.Game) bool {
+	if len(deferred) == 0 || detector == nil {
+		return false
+	}
+	playing, err := detector.Playing(ctx, deferred)
+	if err != nil {
+		return false
+	}
+	for _, game := range deferred {
+		if !playing[game.ID] {
+			return true
+		}
+	}
+	return false
 }
 
 // plainWatchSink logs events line by line — the no-TTY behavior. There is
