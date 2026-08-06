@@ -16,13 +16,13 @@ var ErrNotFound = errors.New("storage: not found")
 var ErrConflict = errors.New("storage: conflict")
 var ErrArtifactMismatch = errors.New("storage: artifact mismatch")
 
-// HeadConflict carries the actual head observed during an atomic commit.
-type HeadConflict struct {
-	ActualHeadID *string
+// CurrentRevisionConflict carries the actual current revision observed atomically.
+type CurrentRevisionConflict struct {
+	ActualCurrentRevisionID *string
 }
 
-func (e *HeadConflict) Error() string { return ErrConflict.Error() }
-func (e *HeadConflict) Unwrap() error { return ErrConflict }
+func (e *CurrentRevisionConflict) Error() string { return ErrConflict.Error() }
+func (e *CurrentRevisionConflict) Unwrap() error { return ErrConflict }
 
 // OmnisaveRepository persists save records without applying application rules.
 type OmnisaveRepository interface {
@@ -31,9 +31,10 @@ type OmnisaveRepository interface {
 	GetOmnisave(ctx context.Context, id string) (*omnisave.Omnisave, error)
 	UpdateOmnisaveDisplayName(ctx context.Context, id, displayName string) error
 	DeleteOmnisave(ctx context.Context, id string) error
-	ForkOmnisave(ctx context.Context, save omnisave.Omnisave, initial omnisave.Revision) error
+	ForkOmnisave(ctx context.Context, save omnisave.Omnisave) error
+	RestoreOmnisave(ctx context.Context, id, revisionID string, expectedCurrentRevisionID *string) error
 
-	CommitRevision(ctx context.Context, expectedHeadID *string, revision omnisave.Revision) error
+	CommitRevision(ctx context.Context, expectedCurrentRevisionID *string, revision omnisave.Revision) error
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*omnisave.Revision, error)
 	ListRevisions(ctx context.Context, omnisaveID string) ([]omnisave.Revision, error)
 	UpdateRevisionDisplayName(ctx context.Context, omnisaveID, revisionID, displayName string) error

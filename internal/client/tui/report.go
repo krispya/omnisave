@@ -159,11 +159,21 @@ func (r *TrackReport) SyncedWith(title, omnisaveName string, at time.Time) {
 	r.changed()
 }
 
-// Behind records a save matching an older revision, waiting for an
-// interactive run to choose between advancing and forking.
-func (r *TrackReport) Behind(title, omnisaveName string) {
+// Stale records a save matching a revision that is not the Omnisave's
+// current one — the device may be behind it or ahead of a restored current —
+// waiting for an interactive run to choose between jumping and forking.
+func (r *TrackReport) Stale(title, omnisaveName string) {
 	r.mark(title, mutedStyle.Render("○"))
-	r.event(title, "save is behind "+omnisaveName+", run omnisave track to resolve")
+	r.event(title, "save matches a revision of "+omnisaveName+" that is not current, run omnisave track to resolve")
+}
+
+// CurrentMoved records a commit the server refused because the Omnisave's
+// Current Revision moved during the pass — another device committed or a
+// restore moved the pointer. The next pass reads the moved pointer and
+// reconciles; retrying now would guess.
+func (r *TrackReport) CurrentMoved(title, omnisaveName string) {
+	r.mark(title, mutedStyle.Render("○"))
+	r.event(title, omnisaveName+" moved on the server; the next sync pass will reconcile")
 }
 
 // Diverged records a save with new progress on both sides, waiting for an
@@ -364,15 +374,18 @@ type TrackOutcome struct {
 	Pending   int
 	Seeded    int
 	Rebound   int
-	Advanced  int
+	Jumped    int
 	Forked    int
 	Bound     int
 	Unbound   int
 	Pushed    int
 	Pulled    int
 	Diverged  int
-	Failed    int
-	Synced    bool
+	// Conflicted counts commits the server refused because the Current
+	// Revision moved mid-pass; the next pass reconciles them.
+	Conflicted int
+	Failed     int
+	Synced     bool
 }
 
 // Changed reports whether the run did anything worth showing.
@@ -381,8 +394,8 @@ func (o TrackOutcome) Changed() bool {
 }
 
 func (o TrackOutcome) changes() int {
-	return o.Added + o.Linked + o.Untracked + o.Pending + o.Seeded + o.Rebound + o.Advanced +
-		o.Forked + o.Bound + o.Unbound + o.Pushed + o.Pulled + o.Diverged + o.Failed
+	return o.Added + o.Linked + o.Untracked + o.Pending + o.Seeded + o.Rebound + o.Jumped +
+		o.Forked + o.Bound + o.Unbound + o.Pushed + o.Pulled + o.Diverged + o.Conflicted + o.Failed
 }
 
 // TrackSummary prints the closing dim tally.
@@ -411,8 +424,8 @@ func SummaryLine(outcome TrackOutcome) string {
 	if outcome.Rebound > 0 {
 		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d rebound", outcome.Rebound)))
 	}
-	if outcome.Advanced > 0 {
-		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d advanced", outcome.Advanced)))
+	if outcome.Jumped > 0 {
+		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d jumped", outcome.Jumped)))
 	}
 	if outcome.Forked > 0 {
 		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d forked", outcome.Forked)))
@@ -428,6 +441,9 @@ func SummaryLine(outcome TrackOutcome) string {
 	}
 	if outcome.Diverged > 0 {
 		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d diverged", outcome.Diverged)))
+	}
+	if outcome.Conflicted > 0 {
+		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d conflicted", outcome.Conflicted)))
 	}
 	if outcome.Failed > 0 {
 		segments = append(segments, errorStyle.Render(fmt.Sprintf("%d failed", outcome.Failed)))

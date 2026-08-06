@@ -102,7 +102,7 @@ func revisionFile(path, content, format string) omnisave.RevisionFile {
 	}
 }
 
-func TestFindContentMatchesRecognizesTheUniqueMatchingHead(t *testing.T) {
+func TestFindContentMatchesRecognizesTheUniqueMatchingCurrentRevision(t *testing.T) {
 	directory := t.TempDir()
 	local := target.Save{Files: []target.File{
 		writeFile(t, directory, "Zelda.srm", "battery-content"),
@@ -111,7 +111,7 @@ func TestFindContentMatchesRecognizesTheUniqueMatchingHead(t *testing.T) {
 	headID := "revision-a2"
 	lineages := []binding.Lineage{
 		{
-			Omnisave: omnisave.Omnisave{ID: "save-a", HeadRevisionID: &headID},
+			Omnisave: omnisave.Omnisave{ID: "save-a", CurrentRevisionID: &headID},
 			Revisions: []omnisave.Revision{
 				{ID: "revision-a1", Files: []omnisave.RevisionFile{revisionFile("battery/Zelda.srm", "old", "application/octet-stream")}},
 				{ID: headID, Files: []omnisave.RevisionFile{
@@ -133,17 +133,17 @@ func TestFindContentMatchesRecognizesTheUniqueMatchingHead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(matches) != 1 || matches[0].Omnisave.ID != "save-a" || !matches[0].MatchesHead() {
-		t.Fatalf("expected only save-a's head to match, got %+v", matches)
+	if len(matches) != 1 || matches[0].Omnisave.ID != "save-a" || !matches[0].MatchesCurrent() {
+		t.Fatalf("expected only save-a's current revision to match, got %+v", matches)
 	}
 }
 
-func TestFindContentMatchesRecognizesAnOlderRevisionWithoutCallingItTheHead(t *testing.T) {
+func TestFindContentMatchesRecognizesAnOlderRevisionWithoutCallingItCurrent(t *testing.T) {
 	directory := t.TempDir()
 	local := target.Save{Files: []target.File{writeFile(t, directory, "Metroid.srm", "checkpoint")}}
 	headID := "revision-2"
 	lineage := binding.Lineage{
-		Omnisave: omnisave.Omnisave{ID: "save-a", HeadRevisionID: &headID},
+		Omnisave: omnisave.Omnisave{ID: "save-a", CurrentRevisionID: &headID},
 		Revisions: []omnisave.Revision{
 			{ID: "revision-1", Files: []omnisave.RevisionFile{revisionFile("battery/Metroid.srm", "checkpoint", "application/octet-stream")}},
 			{ID: headID, Files: []omnisave.RevisionFile{revisionFile("battery/Metroid.srm", "continued", "application/octet-stream")}},
@@ -154,7 +154,7 @@ func TestFindContentMatchesRecognizesAnOlderRevisionWithoutCallingItTheHead(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(matches) != 1 || matches[0].MatchesHead() || len(matches[0].Revisions) != 1 || matches[0].Revisions[0].ID != "revision-1" {
+	if len(matches) != 1 || matches[0].MatchesCurrent() || len(matches[0].Revisions) != 1 || matches[0].Revisions[0].ID != "revision-1" {
 		t.Fatalf("expected an older-only match in save-a, got %+v", matches)
 	}
 }
@@ -166,8 +166,8 @@ func TestFindContentMatchesKeepsIdenticalForksAmbiguous(t *testing.T) {
 	headA, headB := "revision-a", "revision-b"
 
 	matches, err := binding.FindContentMatches(local, []binding.Lineage{
-		{Omnisave: omnisave.Omnisave{ID: "save-a", HeadRevisionID: &headA}, Revisions: []omnisave.Revision{{ID: headA, Files: []omnisave.RevisionFile{file}}}},
-		{Omnisave: omnisave.Omnisave{ID: "save-b", HeadRevisionID: &headB}, Revisions: []omnisave.Revision{{ID: headB, Files: []omnisave.RevisionFile{file}}}},
+		{Omnisave: omnisave.Omnisave{ID: "save-a", CurrentRevisionID: &headA}, Revisions: []omnisave.Revision{{ID: headA, Files: []omnisave.RevisionFile{file}}}},
+		{Omnisave: omnisave.Omnisave{ID: "save-b", CurrentRevisionID: &headB}, Revisions: []omnisave.Revision{{ID: headB, Files: []omnisave.RevisionFile{file}}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -216,8 +216,8 @@ func TestSeedUploadsContentAndCommitsInitialRevision(t *testing.T) {
 	if !ok {
 		t.Fatal("no revision was committed")
 	}
-	if commit.ExpectedHeadID != nil {
-		t.Fatalf("seed must commit against an empty head, got %v", *commit.ExpectedHeadID)
+	if commit.ExpectedCurrentRevisionID != nil {
+		t.Fatalf("seed must commit against an empty head, got %v", *commit.ExpectedCurrentRevisionID)
 	}
 	if len(commit.Upserts) != 2 {
 		t.Fatalf("expected 2 upserts, got %d", len(commit.Upserts))
@@ -263,7 +263,7 @@ func TestPushSkipsUploadingContentTheServerAlreadyHas(t *testing.T) {
 	settingsDigest := sha256.Sum256([]byte("same-settings"))
 	server.uploads[hex.EncodeToString(settingsDigest[:])] = []byte("same-settings")
 
-	revision, err := binding.Push(context.Background(), server, "omnisave-1", save, "head-1", nil)
+	revision, err := binding.Push(context.Background(), server, "omnisave-1", save, "revision-1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

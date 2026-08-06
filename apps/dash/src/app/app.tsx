@@ -20,10 +20,12 @@ import {
   denyPairingRequest,
   listOmnisaves,
   listPairingRequests,
+  forkOmnisave,
+  restoreRevision,
   serverAccess,
   UnauthorizedError,
   signIn,
-  HeadConflictError,
+  CurrentRevisionConflictError,
   updateOmnisaveDisplayName,
   type CatalogGame,
   type IssuedCredential,
@@ -227,7 +229,7 @@ function LibraryDashboard({
 
   useEffect(() => onSnapshot(snapshot), [onSnapshot, snapshot]);
 
-  // The save's history follows its head, so reloading the library is enough to refresh it.
+  // The selected save owns the history and revision-action error currently shown.
   useEffect(() => setRevisionError(''), [selectedSaveID]);
 
   // A link can name a game that is gone, and a save can be deleted while it is open.
@@ -293,12 +295,12 @@ function LibraryDashboard({
     setDebugAction('revision');
     setRevisionError('');
     try {
-      await createTestRevision(token, selectedSave.id, selectedSave.head_revision_id);
+      await createTestRevision(token, selectedSave.id, selectedSave.current_revision_id);
       await onReload();
     } catch (createError) {
-      if (createError instanceof HeadConflictError) await onReload();
+      if (createError instanceof CurrentRevisionConflictError) await onReload();
       setRevisionError(
-        createError instanceof HeadConflictError
+        createError instanceof CurrentRevisionConflictError
           ? 'This save changed elsewhere. History was refreshed; fork it to preserve both versions.'
           : createError instanceof Error
             ? createError.message
@@ -310,7 +312,7 @@ function LibraryDashboard({
   }
 
   async function forkSave() {
-    if (!token || !selectedSave || !selectedSave.head_revision_id) return;
+    if (!token || !selectedSave || !selectedSave.current_revision_id) return;
 
     setDebugAction('fork');
     setRevisionError('');
@@ -318,7 +320,7 @@ function LibraryDashboard({
       const result = await forkTestSave(
         token,
         selectedSave.id,
-        selectedSave.head_revision_id,
+        selectedSave.current_revision_id,
         selectedSave.display_name || 'Save'
       );
       await onReload();
@@ -367,6 +369,28 @@ function LibraryDashboard({
       saves: saves.map((candidate) => (candidate.id === updated.id ? updated : candidate)),
       error: '',
     });
+  }
+
+  async function restoreSaveRevision(save: Omnisave, revision: Revision) {
+    if (!token) return;
+    try {
+      await restoreRevision(token, save.id, revision.id, save.current_revision_id);
+      await onReload();
+      setSelectedSaveID(save.id);
+    } catch (restoreError) {
+      if (restoreError instanceof CurrentRevisionConflictError) await onReload();
+      throw restoreError;
+    }
+  }
+
+  async function forkSaveAtRevision(save: Omnisave, revision: Revision, displayName: string) {
+    if (!token) return;
+    const result = await forkOmnisave(token, save.id, {
+      revisionID: revision.id,
+      displayName,
+    });
+    await onReload();
+    setSelectedSaveID(result.omnisave.id);
   }
 
   function requestDeleteGame(game: GameSummary) {
@@ -459,7 +483,7 @@ function LibraryDashboard({
           game={selectedGame}
           selectedSave={selectedSave}
           action={debugAction}
-          canFork={Boolean(selectedSave?.head_revision_id)}
+          canFork={Boolean(selectedSave?.current_revision_id)}
           onAddRandomGame={() => void addRandomGame()}
           onAddSave={() => void addSave()}
           onAddRevision={() => void addRevision()}
@@ -487,6 +511,8 @@ function LibraryDashboard({
           onDownloadRevision={(save, name, revision) => void downloadRevision(save, name, revision)}
           onRequestDelete={requestDeleteSave}
           onRenameSave={renameSave}
+          onRestoreRevision={restoreSaveRevision}
+          onForkRevision={forkSaveAtRevision}
         />
       ) : (
         <section className="mt-8" aria-label="Game library" aria-busy={libraryPending}>

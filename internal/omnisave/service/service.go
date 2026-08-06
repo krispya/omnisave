@@ -50,12 +50,12 @@ func (s *service) Create(ctx context.Context, input omnisave.CreateOmnisave) (*o
 	}
 	now := time.Now().UTC()
 	save := omnisave.Omnisave{
-		ID:          uuid.NewString(),
-		GameID:      input.GameID,
-		DisplayName: displayName,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		Metadata:    cloneMap(input.Metadata),
+		ID:                       uuid.NewString(),
+		GameID:                   input.GameID,
+		DisplayName:              displayName,
+		CreatedAt:                now,
+		CurrentRevisionCreatedAt: now,
+		Metadata:                 cloneMap(input.Metadata),
 	}
 	if err := s.repository.InsertOmnisave(ctx, save); err != nil {
 		return nil, translateError(err)
@@ -111,31 +111,46 @@ func (s *service) Fork(ctx context.Context, saveID string, input omnisave.ForkOm
 		displayName = truncateDisplayName(source.DisplayName + " (fork)")
 	}
 	now := time.Now().UTC()
-	revisionID := uuid.NewString()
 	fork := omnisave.Omnisave{
-		ID:             uuid.NewString(),
-		GameID:         source.GameID,
-		DisplayName:    displayName,
-		HeadRevisionID: &revisionID,
+		ID:                uuid.NewString(),
+		GameID:            source.GameID,
+		DisplayName:       displayName,
+		CurrentRevisionID: &sourceRevision.ID,
 		ForkedFrom: &omnisave.ForkOrigin{
 			OmnisaveID: source.ID,
 			RevisionID: sourceRevision.ID,
 		},
-		CreatedAt: now,
-		UpdatedAt: now,
-		Metadata:  mergeMaps(source.Metadata, input.Metadata),
+		CreatedAt:                now,
+		CurrentRevisionCreatedAt: sourceRevision.CreatedAt,
+		Metadata:                 mergeMaps(source.Metadata, input.Metadata),
 	}
-	initial := omnisave.Revision{
-		ID:         revisionID,
-		OmnisaveID: fork.ID,
-		CreatedAt:  now,
-		Files:      cloneFiles(sourceRevision.Files),
-		Metadata:   cloneMap(sourceRevision.Metadata),
-	}
-	if err := s.repository.ForkOmnisave(ctx, fork, initial); err != nil {
+	if err := s.repository.ForkOmnisave(ctx, fork); err != nil {
 		return nil, translateError(err)
 	}
-	return &omnisave.ForkResult{Omnisave: fork, Revision: initial}, nil
+	return &omnisave.ForkResult{Omnisave: fork, Revision: *sourceRevision}, nil
+}
+
+func (s *service) Restore(ctx context.Context, saveID string, input omnisave.RestoreRevision) (*omnisave.Omnisave, error) {
+	if input.RevisionID == "" ||
+		(input.ExpectedCurrentRevisionID != nil && *input.ExpectedCurrentRevisionID == "") {
+		return nil, omnisave.ErrInvalid
+	}
+	if _, err := s.repository.GetRevision(ctx, saveID, input.RevisionID); err != nil {
+		return nil, translateError(err)
+	}
+	if err := s.repository.RestoreOmnisave(
+		ctx, saveID, input.RevisionID, input.ExpectedCurrentRevisionID,
+	); err != nil {
+		var conflict *storage.CurrentRevisionConflict
+		if errors.As(err, &conflict) {
+			return nil, &omnisave.CurrentRevisionConflict{
+				ExpectedCurrentRevisionID: cloneString(input.ExpectedCurrentRevisionID),
+				ActualCurrentRevisionID:   cloneString(conflict.ActualCurrentRevisionID),
+			}
+		}
+		return nil, translateError(err)
+	}
+	return s.Get(ctx, saveID)
 }
 
 func (s *service) CommitRevision(ctx context.Context, saveID string, input omnisave.CreateRevision) (*omnisave.Revision, error) {
@@ -143,18 +158,18 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 	if err != nil {
 		return nil, translateError(err)
 	}
-	if input.ExpectedHeadID != nil && *input.ExpectedHeadID == "" {
+	if input.ExpectedCurrentRevisionID != nil && *input.ExpectedCurrentRevisionID == "" {
 		return nil, omnisave.ErrInvalid
 	}
-	if !sameString(save.HeadRevisionID, input.ExpectedHeadID) {
-		return nil, &omnisave.HeadConflict{
-			ExpectedHeadID: cloneString(input.ExpectedHeadID),
-			ActualHeadID:   cloneString(save.HeadRevisionID),
+	if !sameString(save.CurrentRevisionID, input.ExpectedCurrentRevisionID) {
+		return nil, &omnisave.CurrentRevisionConflict{
+			ExpectedCurrentRevisionID: cloneString(input.ExpectedCurrentRevisionID),
+			ActualCurrentRevisionID:   cloneString(save.CurrentRevisionID),
 		}
 	}
 	filesByPath := make(map[string]omnisave.RevisionFile)
-	if input.ExpectedHeadID != nil {
-		parent, err := s.repository.GetRevision(ctx, saveID, *input.ExpectedHeadID)
+	if input.ExpectedCurrentRevisionID != nil {
+		parent, err := s.repository.GetRevision(ctx, saveID, *input.ExpectedCurrentRevisionID)
 		if err != nil {
 			return nil, translateError(err)
 		}
@@ -223,17 +238,17 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 	revision := omnisave.Revision{
 		ID:         uuid.NewString(),
 		OmnisaveID: saveID,
-		ParentID:   cloneString(input.ExpectedHeadID),
+		ParentID:   cloneString(input.ExpectedCurrentRevisionID),
 		CreatedAt:  time.Now().UTC(),
 		Files:      files,
 		Metadata:   cloneMap(input.Metadata),
 	}
-	if err := s.repository.CommitRevision(ctx, input.ExpectedHeadID, revision); err != nil {
-		var conflict *storage.HeadConflict
+	if err := s.repository.CommitRevision(ctx, input.ExpectedCurrentRevisionID, revision); err != nil {
+		var conflict *storage.CurrentRevisionConflict
 		if errors.As(err, &conflict) {
-			return nil, &omnisave.HeadConflict{
-				ExpectedHeadID: cloneString(input.ExpectedHeadID),
-				ActualHeadID:   cloneString(conflict.ActualHeadID),
+			return nil, &omnisave.CurrentRevisionConflict{
+				ExpectedCurrentRevisionID: cloneString(input.ExpectedCurrentRevisionID),
+				ActualCurrentRevisionID:   cloneString(conflict.ActualCurrentRevisionID),
 			}
 		}
 		return nil, translateError(err)
@@ -316,10 +331,6 @@ func mergeMaps(base, changes map[string]string) map[string]string {
 		merged[key] = value
 	}
 	return merged
-}
-
-func cloneFiles(source []omnisave.RevisionFile) []omnisave.RevisionFile {
-	return append([]omnisave.RevisionFile(nil), source...)
 }
 
 func cloneString(source *string) *string {

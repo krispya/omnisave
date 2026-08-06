@@ -19,8 +19,8 @@ func TestSyncToDevicePromptOffersEverySaveAndDeferral(t *testing.T) {
 	for _, text := range []string{
 		"Chrono Trigger",
 		"No local save exists on this device",
-		"Main Playthrough · sync latest revision to this device",
-		"New Game+ · sync latest revision to this device",
+		"Main Playthrough · sync current revision to this device",
+		"New Game+ · sync current revision to this device",
 		"Decide later · leave this device without a save",
 	} {
 		if !strings.Contains(view, text) {

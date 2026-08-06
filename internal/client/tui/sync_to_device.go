@@ -44,7 +44,7 @@ func syncToDeviceForm(gameTitle string, options []SyncToDeviceOption, selected *
 	selections := make([]huh.Option[string], 0, len(options)+1)
 	for _, option := range options {
 		selections = append(selections,
-			huh.NewOption(option.Name+" · sync latest revision to this device", option.OmnisaveID))
+			huh.NewOption(option.Name+" · sync current revision to this device", option.OmnisaveID))
 	}
 	selections = append(selections,
 		huh.NewOption("Decide later · leave this device without a save", syncToDeviceDefer))

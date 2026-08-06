@@ -271,7 +271,7 @@ func (a *Adapter) DiscoverSaves(ctx context.Context, discovered target.Target, g
 }
 
 // DiscoverSaveDestinations reports the native battery-save paths even before the
-// files exist, allowing a server head to be placed on a fresh Device.
+// files exist, allowing a server revision to be placed on a fresh Device.
 func (a *Adapter) DiscoverSaveDestinations(ctx context.Context, discovered target.Target, game target.InstalledGame) ([]target.SaveDestination, error) {
 	if discovered.Adapter != adapterName || game.TargetID != discovered.ID {
 		return nil, fmt.Errorf("invalid RetroArch game")

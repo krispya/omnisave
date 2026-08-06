@@ -24,11 +24,15 @@ User-facing concepts. If a user might say the word, it goes here.
 
 **Game**. One server-owned canonical record in the Library, with its own UUID. Identifiers and fingerprints accumulate on a Game over time as clients and providers contribute evidence (see _Evidence_, Backend).
 
-**Omnisave**. One independently versioned game save on the server. It is the unit users create, name, fork, and bind to. Technically it is the normalized save with lineage the server stores, but in everyday use it is just "save." The two are interchangeable, and "sync a save" means sync with the omnisave. An adapter-native save on disk is always a _Local Save_. An omnisave always carries a display name. The server assigns one when creation omits it ("Save N," while forks inherit the source name plus " (fork)"). A name can be changed but never cleared (see [FDR-003](fdr/FDR-003-automatic-save-binding.md)). Several omnisaves can exist for the same Game as separate playthroughs or forked lineages.
+**Omnisave**. One independently named and synchronized game save on the server. It owns a revision tree and one global _Current Revision_; restoring moves that pointer, while forking creates another omnisave when progress must synchronize independently. In everyday use it is just "save"; an adapter-native save on disk is always a _Local Save_. An omnisave always carries a display name. The server assigns one when creation omits it ("Save N," while forks inherit the source name plus " (fork)"). A name can be changed but never cleared (see [FDR-003](fdr/FDR-003-automatic-save-binding.md) and [FDR-005](fdr/FDR-005-save-sync.md)).
 
-**Revision**. A content-immutable state in an omnisave's linear history, committed as file upserts/deletes against an expected head. A revision may have a mutable display name. Without one, the Dash shows its short identifier. Naming changes no content or history. The newest revision is the **head**. A commit naming a stale head is rejected (see _Head Conflict_, Backend).
+**Revision**. A content-immutable save snapshot with at most one parent. A revision may have a mutable display name shared by every fork that shares the node; naming changes no content or history. Revisions form unnamed branches naturally when one node has several children, and Omnisave does not support merges.
 
-**Fork**. A new omnisave started from an existing revision's snapshot. The fork records its origin (source omnisave and revision) and then versions independently.
+**Current Revision**. The one revision an omnisave presently represents and every bound Device synchronizes toward. Restoring another node moves this global pointer without changing either revision; the next commit becomes a child of the selected node. A **tip** is any revision without children and need not be current.
+
+**Restore**. Make any revision in an omnisave's tree current without creating or changing a revision. Moving to an ancestor is a **rewind**, moving to a descendant is a **fast-forward**, and moving between sibling branches is a **jump**.
+
+**Fork**. A new omnisave started at an existing revision. It shares that node, its name, and its ancestor path, then synchronizes independently; later revisions belong only to the omnisave that creates them. Forks, rather than branches, are named and bound to Devices.
 
 **Device**. One self-identified machine running the Client, e.g. a Steam Deck or a desktop. A device mints a stable ID and a human-readable name on first run, kept in local tracking state and reported to the server. Identity belongs to the client installation, so wiping local state makes a new Device. A Device hosts Targets (see _Target_, Backend), but it is not one itself. See [FDR-002](fdr/FDR-002-game-lifecycle.md).
 
@@ -40,7 +44,7 @@ User-facing concepts. If a user might say the word, it goes here.
 
 **Local Save**. One adapter-native save set discovered on this machine. It may contain multiple files.
 
-**Binding**. A machine-local mapping from one Local Save to one omnisave. Tracking creates bindings automatically when it seeds a new omnisave or finds one lineage with matching head content. `omnisave bind` remains available for corrections. A binding records the revision whose content the Local Save is known to equal, called the **sync baseline**. A manual binding to non-matching content has no baseline and starts life diverged (see _Sync_).
+**Binding**. A machine-local mapping from one Local Save to one omnisave. Tracking creates bindings automatically when it seeds a new omnisave or finds one lineage with matching current content. `omnisave bind` remains available for corrections. A binding records the revision whose content the Local Save is known to equal, called the **sync baseline**. A manual binding to non-matching content has no baseline and starts life diverged (see _Sync_).
 
 **Sync**. The pass keeping a bound save and its omnisave equal: local progress commits up as revisions, server progress applies down to disk, and the sync baseline arbitrates which direction is safe. New progress on both sides is **divergence**, which sync never resolves on its own. An interactive track run asks, and both answers keep everything. Runs once via `omnisave sync` and continuously via `omnisave watch`. See [FDR-005](fdr/FDR-005-save-sync.md).
 
@@ -72,7 +76,7 @@ Infrastructure jargon. If only contributors say the word, it goes here.
 
 **Artifact**. Content-addressed immutable bytes keyed by SHA-256, with a format and size. Revisions reference artifacts through **revision files**, which map a canonical save path to an artifact, so identical content is stored once and never rewritten.
 
-**Head Conflict**. Rejection of a revision commit whose expected head is no longer the omnisave's actual head. It provides optimistic concurrency for save history. The error carries the actual head so a client can reconcile.
+**Current Revision Conflict**. Rejection of a commit or restore whose expected Current Revision is no longer the omnisave's actual Current Revision. It provides optimistic concurrency for save history. The error carries the actual revision so a client can reconcile without a stale Device silently reactivating an old branch.
 
 **Adapter**. Client component that discovers application targets, their installed games, and native saves. Two exist today: `retroarch`, which maps emulated platforms to playlist names and save extensions through per-platform profiles (SNES first), and `steam`.
 

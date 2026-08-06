@@ -1,16 +1,16 @@
 # FDR-004: Syncing Saves to a Device
 
 **Status:** Experimental
-**Last reviewed:** 2026-07-20
+**Last reviewed:** 2026-08-03
 
 ## Overview
 
 How server-side saves reach a Device that has none. When a tracked game has
 one or more Omnisaves on the server but no local save on this Device — a
 fresh install, a new Device, a wiped machine — the binding pass offers to
-sync one of them down. Choosing one syncs it right away: the head revision's
+sync one of them down. Choosing one syncs it right away: the Current Revision's
 files are placed at the game's native save location, and the binding starts
-in sync at the head. This is the read counterpart of
+in sync at that revision. This is the read counterpart of
 [FDR-003](FDR-003-automatic-save-binding.md)'s seeding — the second slice of
 synchronization, and the main workflow for putting an existing playthrough
 onto a new machine.
@@ -21,9 +21,9 @@ onto a new machine.
   whose server has Omnisaves triggers the offer.
 - The offer lists the game's Omnisaves by name, plus "decide later". It is
   always asked, even when exactly one Omnisave exists.
-- Choosing an Omnisave syncs it immediately: its head revision's files are
+- Choosing an Omnisave syncs it immediately: its Current Revision's files are
   downloaded, verified, and placed at the game's native save location for
-  this Device. The binding records the head as the sync baseline, so the
+  this Device. The binding records that revision as the sync baseline, so the
   Device is up to date the moment the pass finishes — launch the game and
   continue the playthrough.
 - The result names the selected omnisave and shows it synced just now; the
@@ -35,7 +35,7 @@ onto a new machine.
   no save exists there yet. When the adapter cannot determine it, nothing
   downloads and the result says the game is waiting for its first local
   save.
-- A server save is offered only when its head maps to exactly one prospective
+- A server save is offered only when its Current Revision maps to exactly one prospective
   native destination. An absent or ambiguous destination is reported honestly
   and nothing downloads.
 - Placement never overwrites: the flow only runs when the Device has no
@@ -63,11 +63,11 @@ where the game plays.
 **Tradeoff:** One more prompt in the fresh-Device flow that automation
 could have removed.
 
-### 2. The head is what syncs
+### 2. The Current Revision is what syncs
 
-**Decision:** Choosing an Omnisave materializes its head revision, and the
-binding's baseline is the head.
-**Why:** The head is the lineage's present; a Device joining a playthrough
+**Decision:** Choosing an Omnisave materializes its Current Revision, and the
+binding's baseline is that revision.
+**Why:** The Current Revision is the save's present; a Device joining a playthrough
 should join where it left off. Starting anywhere else would silently fork
 history. Older revisions stay reachable through forking when someone
 actually wants the past.

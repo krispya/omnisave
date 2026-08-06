@@ -7,23 +7,11 @@ export type ForkLink = {
   name: string;
 };
 
-/** The revision a save was forked from, in the save that owns that revision. */
-export type ForkOrigin = {
-  revisionID: string;
-  /** Absent once the source save has been deleted; the revision id is all that survives. */
-  save?: Omnisave;
-  name: string;
-};
-
-/** Both directions of the fork edges that touch one save's revision history. */
+/** Fork edges leaving one save's revision history. */
 export type ForkLineage = {
-  /** Where this save came from; absent for saves that started their own lineage. */
-  origin?: ForkOrigin;
   /** Forks started from this save, keyed by the revision each one branched at. */
   forks: Map<string, ForkLink[]>;
 };
-
-const unavailableSaveName = 'unavailable save';
 
 /**
  * Reads one save's fork edges out of the saves it shares a game with. Forks record
@@ -38,17 +26,5 @@ export function forkLineage(save: Omnisave, saves: Omnisave[]): ForkLineage {
     forks.set(origin.revision_id, [...(forks.get(origin.revision_id) ?? []), link]);
   }
 
-  const origin = save.forked_from;
-  if (!origin) return { forks };
-
-  const index = saves.findIndex((candidate) => candidate.id === origin.omnisave_id);
-  const source = index >= 0 ? saves[index] : undefined;
-  return {
-    origin: {
-      revisionID: origin.revision_id,
-      save: source,
-      name: source ? displaySaveName(source, defaultSaveName(index)) : unavailableSaveName,
-    },
-    forks,
-  };
+  return { forks };
 }

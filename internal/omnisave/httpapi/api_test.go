@@ -33,7 +33,7 @@ func TestNetworkClientStory(t *testing.T) {
 	var save omnisave.Omnisave
 	decodeResponse(t, response, &save)
 	missingBody := bytes.NewBufferString(`{
-		"expected_head_id":null,
+		"expected_current_revision_id":null,
 		"upserts":[{"path":"missing.sav","artifact":{
 			"format":"application/octet-stream",
 			"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -94,17 +94,44 @@ func TestNetworkClientStory(t *testing.T) {
 		t.Fatalf("unexpected renamed revision: %+v", renamed)
 	}
 
+	laterBody, err := json.Marshal(omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &revision.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "pokemon.sav", Artifact: progress}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = request(t, handler, http.MethodPost,
+		"/api/v1/omnisaves/"+save.ID+"/revisions", "application/json", bytes.NewReader(laterBody))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("add later revision returned %d: %s", response.Code, response.Body.String())
+	}
+	var later omnisave.Revision
+	decodeResponse(t, response, &later)
+	restoreBody, err := json.Marshal(omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &later.ID,
+		RevisionID:                revision.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = request(t, handler, http.MethodPut,
+		"/api/v1/omnisaves/"+save.ID+"/current-revision", "application/json", bytes.NewReader(restoreBody))
+	if response.Code != http.StatusOK {
+		t.Fatalf("restore returned %d: %s", response.Code, response.Body.String())
+	}
+
 	response = request(t, handler, http.MethodGet, "/api/v1/omnisaves/"+save.ID, "", nil)
 	var storedSave omnisave.Omnisave
 	decodeResponse(t, response, &storedSave)
-	if storedSave.HeadRevisionID == nil || *storedSave.HeadRevisionID != revision.ID {
-		t.Fatalf("unexpected head: %v", storedSave.HeadRevisionID)
+	if storedSave.CurrentRevisionID == nil || *storedSave.CurrentRevisionID != revision.ID {
+		t.Fatalf("unexpected current revision: %v", storedSave.CurrentRevisionID)
 	}
 
 	response = request(t, handler, http.MethodPost, "/api/v1/omnisaves/"+save.ID+"/revisions",
 		"application/json", bytes.NewReader(revisionBody))
-	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"error":"head_conflict"`) ||
-		!strings.Contains(response.Body.String(), `"actual_head_id":"`+revision.ID+`"`) {
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"error":"current_revision_conflict"`) ||
+		!strings.Contains(response.Body.String(), `"actual_current_revision_id":"`+revision.ID+`"`) {
 		t.Fatalf("stale root returned %d: %s", response.Code, response.Body.String())
 	}
 
@@ -137,6 +164,16 @@ func TestNetworkClientStory(t *testing.T) {
 	response = request(t, handler, http.MethodGet, "/api/v1/omnisaves/"+save.ID, "", nil)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("deleted save returned %d: %s", response.Code, response.Body.String())
+	}
+	response = request(t, handler, http.MethodGet,
+		"/api/v1/omnisaves/"+fork.Omnisave.ID+"/revisions", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("source deletion broke the fork's shared history: %d: %s", response.Code, response.Body.String())
+	}
+	var forkHistory []omnisave.Revision
+	decodeResponse(t, response, &forkHistory)
+	if len(forkHistory) != 1 || forkHistory[0].ID != revision.ID {
+		t.Fatalf("fork should retain the shared fork point, got %+v", forkHistory)
 	}
 	response = request(t, handler, http.MethodGet,
 		"/api/v1/artifacts/"+progress.SHA256, "", nil)
@@ -292,7 +329,7 @@ func TestDownloadRevisionArchive(t *testing.T) {
 	response = request(t, handler, http.MethodGet,
 		"/api/v1/omnisaves/"+save.ID+"/revisions/"+head.ID+"/archive", "", nil)
 	if response.Code != http.StatusOK {
-		t.Fatalf("head revision archive returned %d: %s", response.Code, response.Body.String())
+		t.Fatalf("current revision archive returned %d: %s", response.Code, response.Body.String())
 	}
 	archive, err = zip.NewReader(bytes.NewReader(response.Body.Bytes()), int64(response.Body.Len()))
 	if err != nil {
@@ -314,8 +351,8 @@ func commitTestRevision(t *testing.T, handler http.Handler, saveID string, paren
 	t.Helper()
 	artifact := uploadArtifact(t, handler, contents)
 	body, err := json.Marshal(omnisave.CreateRevision{
-		ExpectedHeadID: parentID,
-		Upserts:        []omnisave.RevisionFile{{Path: "pokemon.sav", Artifact: artifact}},
+		ExpectedCurrentRevisionID: parentID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "pokemon.sav", Artifact: artifact}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -346,6 +383,72 @@ func archiveContents(t *testing.T, archive *zip.Reader) map[string]string {
 		contents[file.Name] = string(data)
 	}
 	return contents
+}
+
+func TestRestoreRefusalsNameTheStateTheyJudged(t *testing.T) {
+	handler := newHandler(t, storagetest.NewMemoryRepository())
+
+	response := request(t, handler, http.MethodPost, "/api/v1/omnisaves", "application/json",
+		bytes.NewBufferString(`{"game_id":"pokemon-emerald-usa"}`))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create returned %d: %s", response.Code, response.Body.String())
+	}
+	var save omnisave.Omnisave
+	decodeResponse(t, response, &save)
+	first := commitTestRevision(t, handler, save.ID, nil, "first")
+	second := commitTestRevision(t, handler, save.ID, &first.ID, "second")
+
+	restore := func(saveID, revisionID string, expected *string) *httptest.ResponseRecorder {
+		body, err := json.Marshal(omnisave.RestoreRevision{
+			ExpectedCurrentRevisionID: expected,
+			RevisionID:                revisionID,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return request(t, handler, http.MethodPut,
+			"/api/v1/omnisaves/"+saveID+"/current-revision", "application/json", bytes.NewReader(body))
+	}
+
+	response = restore(save.ID, first.ID, &first.ID)
+	if response.Code != http.StatusConflict ||
+		!strings.Contains(response.Body.String(), `"error":"current_revision_conflict"`) ||
+		!strings.Contains(response.Body.String(), `"actual_current_revision_id":"`+second.ID+`"`) {
+		t.Fatalf("stale restore returned %d: %s", response.Code, response.Body.String())
+	}
+
+	response = request(t, handler, http.MethodPost, "/api/v1/omnisaves", "application/json",
+		bytes.NewBufferString(`{"game_id":"pokemon-emerald-usa"}`))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create returned %d: %s", response.Code, response.Body.String())
+	}
+	var other omnisave.Omnisave
+	decodeResponse(t, response, &other)
+	foreign := commitTestRevision(t, handler, other.ID, nil, "another playthrough")
+
+	response = restore(save.ID, foreign.ID, &second.ID)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("foreign-revision restore returned %d: %s", response.Code, response.Body.String())
+	}
+
+	response = restore(save.ID, "does-not-exist", &second.ID)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("unknown-revision restore returned %d: %s", response.Code, response.Body.String())
+	}
+
+	response = restore(save.ID, "", &second.ID)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("empty-revision restore returned %d: %s", response.Code, response.Body.String())
+	}
+
+	response = request(t, handler, http.MethodDelete, "/api/v1/omnisaves/"+save.ID, "", nil)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("delete returned %d: %s", response.Code, response.Body.String())
+	}
+	response = restore(save.ID, first.ID, &second.ID)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("deleted-save restore returned %d: %s", response.Code, response.Body.String())
+	}
 }
 
 func TestAuthenticationTakesTheOwnerTokenAndIssuedCredentialsOnly(t *testing.T) {

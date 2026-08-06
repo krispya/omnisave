@@ -16,7 +16,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
-// ArtifactSource opens immutable server content for a fast-forward.
+// ArtifactSource opens immutable server content for applying a revision locally.
 type ArtifactSource interface {
 	OpenArtifact(ctx context.Context, sha256 string) (io.ReadCloser, error)
 }
@@ -29,6 +29,10 @@ type localLayout struct {
 type stagedFile struct {
 	target string
 	stage  string
+	// fresh marks a target path the local save did not carry when the
+	// apply checked it, so placing files must refuse anything that
+	// appeared there since.
+	fresh bool
 }
 
 type plannedFile struct {
@@ -41,12 +45,12 @@ type backupFile struct {
 	backup   string
 }
 
-// FastForward replaces a local save that still equals matched with the head
+// ApplyCurrent replaces a local save that still equals matched with the current
 // snapshot. Every artifact is downloaded and verified before local files move;
 // failures during the move restore the original snapshot.
-func FastForward(ctx context.Context, source ArtifactSource, save target.Save, matched, head omnisave.Revision) error {
-	if matched.ID == "" || head.ID == "" {
-		return fmt.Errorf("fast-forward revisions must not be empty")
+func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, matched, current omnisave.Revision) error {
+	if matched.ID == "" || current.ID == "" {
+		return fmt.Errorf("apply needs a matched and a current revision")
 	}
 	stillMatches, err := FindContentMatches(save, []Lineage{{
 		Omnisave:  omnisave.Omnisave{ID: matched.OmnisaveID},
@@ -56,7 +60,7 @@ func FastForward(ctx context.Context, source ArtifactSource, save target.Save, m
 		return err
 	}
 	if len(stillMatches) != 1 {
-		return fmt.Errorf("local save changed before fast-forward")
+		return fmt.Errorf("local save changed before applying the current revision")
 	}
 
 	layout, err := describeLocalLayout(save)
@@ -73,7 +77,7 @@ func FastForward(ctx context.Context, source ArtifactSource, save target.Save, m
 		if temporary := temporaryRoots[root]; temporary != "" {
 			return temporary, nil
 		}
-		temporary, err := os.MkdirTemp(root, ".omnisave-fast-forward-")
+		temporary, err := os.MkdirTemp(root, ".omnisave-apply-")
 		if err != nil {
 			return "", fmt.Errorf("prepare local save update: %w", err)
 		}
@@ -86,20 +90,21 @@ func FastForward(ctx context.Context, source ArtifactSource, save target.Save, m
 			return err
 		}
 	}
-	staged := make([]stagedFile, 0, len(head.Files))
-	headTargets := make(map[string]bool, len(head.Files))
-	for index, file := range head.Files {
+	staged := make([]stagedFile, 0, len(current.Files))
+	currentTargets := make(map[string]bool, len(current.Files))
+	for index, file := range current.Files {
 		targetPath, root, err := layout.pathFor(file.Path)
 		if err != nil {
 			return err
 		}
-		if headTargets[targetPath] {
-			return fmt.Errorf("head revision has duplicate local paths")
+		if currentTargets[targetPath] {
+			return fmt.Errorf("current revision has duplicate local paths")
 		}
-		headTargets[targetPath] = true
-		if _, current := layout.currentPath[targetPath]; !current {
+		currentTargets[targetPath] = true
+		_, current := layout.currentPath[targetPath]
+		if !current {
 			if _, err := os.Lstat(targetPath); err == nil {
-				return fmt.Errorf("fast-forward would overwrite an untracked local file")
+				return fmt.Errorf("applying the current revision would overwrite an untracked local file")
 			} else if !os.IsNotExist(err) {
 				return fmt.Errorf("inspect local save path: %w", err)
 			}
@@ -112,7 +117,7 @@ func FastForward(ctx context.Context, source ArtifactSource, save target.Save, m
 		if err := downloadArtifact(ctx, source, file.Artifact, stagePath); err != nil {
 			return err
 		}
-		staged = append(staged, stagedFile{target: targetPath, stage: stagePath})
+		staged = append(staged, stagedFile{target: targetPath, stage: stagePath, fresh: !current})
 	}
 
 	backups := make([]backupFile, 0, len(layout.currentPath))
@@ -130,7 +135,20 @@ func FastForward(ctx context.Context, source ArtifactSource, save target.Save, m
 		if err := os.MkdirAll(filepath.Dir(file.target), 0o700); err != nil {
 			return joinRollback(fmt.Errorf("prepare local save directory: %w", err), rollbackApplied(applied, backups))
 		}
-		if err := os.Rename(file.stage, file.target); err != nil {
+		if file.fresh {
+			// A path new to this device was only checked absent before the
+			// downloads ran. Linking is an atomic no-replace operation on
+			// the same filesystem as the staging directory, so anything
+			// that appeared during that window wins and the apply
+			// aborts into the rollback instead of overwriting it.
+			if err := os.Link(file.stage, file.target); err != nil {
+				operation := fmt.Errorf("place local save file: %w", err)
+				if os.IsExist(err) {
+					operation = fmt.Errorf("applying the current revision would overwrite an untracked local file")
+				}
+				return joinRollback(operation, rollbackApplied(applied, backups))
+			}
+		} else if err := os.Rename(file.stage, file.target); err != nil {
 			return joinRollback(fmt.Errorf("replace local save file: %w", err), rollbackApplied(applied, backups))
 		}
 		applied = append(applied, file.target)
@@ -138,11 +156,11 @@ func FastForward(ctx context.Context, source ArtifactSource, save target.Save, m
 	return nil
 }
 
-// Materialize places a complete verified head into an empty native destination.
+// Materialize places a complete verified Current Revision into an empty native destination.
 // Target files are checked before and after download, and linked into place
 // without replacement so content appearing concurrently is never overwritten.
-func Materialize(ctx context.Context, source ArtifactSource, destination target.SaveDestination, head omnisave.Revision) (target.Save, error) {
-	planned, err := materializationPlan(destination, head)
+func Materialize(ctx context.Context, source ArtifactSource, destination target.SaveDestination, current omnisave.Revision) (target.Save, error) {
+	planned, err := materializationPlan(destination, current)
 	if err != nil {
 		return target.Save{}, err
 	}
@@ -234,21 +252,21 @@ func Materialize(ctx context.Context, source ArtifactSource, destination target.
 	}, nil
 }
 
-// CanMaterialize reports whether one head maps into one native destination.
+// CanMaterialize reports whether one current maps into one native destination.
 // It validates layout only and does not inspect or change the filesystem.
-func CanMaterialize(destination target.SaveDestination, head omnisave.Revision) error {
-	_, err := materializationPlan(destination, head)
+func CanMaterialize(destination target.SaveDestination, current omnisave.Revision) error {
+	_, err := materializationPlan(destination, current)
 	return err
 }
 
-func materializationPlan(destination target.SaveDestination, head omnisave.Revision) ([]plannedFile, error) {
-	if destination.ID == "" || destination.TargetID == "" || destination.GameID == "" || head.ID == "" || len(head.Files) == 0 {
-		return nil, fmt.Errorf("materialize needs a save destination and non-empty head")
+func materializationPlan(destination target.SaveDestination, current omnisave.Revision) ([]plannedFile, error) {
+	if destination.ID == "" || destination.TargetID == "" || destination.GameID == "" || current.ID == "" || len(current.Files) == 0 {
+		return nil, fmt.Errorf("materialize needs a save destination and non-empty current")
 	}
-	return planMaterialization(destination, head)
+	return planMaterialization(destination, current)
 }
 
-func planMaterialization(destination target.SaveDestination, head omnisave.Revision) ([]plannedFile, error) {
+func planMaterialization(destination target.SaveDestination, current omnisave.Revision) ([]plannedFile, error) {
 	locations := make(map[string]target.SaveLocation, len(destination.Locations))
 	for _, location := range destination.Locations {
 		if location.ID == "" || location.Path == "" || !filepath.IsAbs(location.Path) {
@@ -260,7 +278,7 @@ func planMaterialization(destination target.SaveDestination, head omnisave.Revis
 		locations[location.ID] = location
 	}
 	counts := make(map[string]int)
-	for _, file := range head.Files {
+	for _, file := range current.Files {
 		locationID, _, err := splitCanonicalPath(file.Path)
 		if err != nil {
 			return nil, err
@@ -268,23 +286,23 @@ func planMaterialization(destination target.SaveDestination, head omnisave.Revis
 		counts[locationID]++
 	}
 
-	planned := make([]plannedFile, 0, len(head.Files))
-	targets := make(map[string]bool, len(head.Files))
-	for _, file := range head.Files {
+	planned := make([]plannedFile, 0, len(current.Files))
+	targets := make(map[string]bool, len(current.Files))
+	for _, file := range current.Files {
 		locationID, relative, err := splitCanonicalPath(file.Path)
 		if err != nil {
 			return nil, err
 		}
 		location, exists := locations[locationID]
 		if !exists {
-			return nil, fmt.Errorf("head revision uses an unknown save location")
+			return nil, fmt.Errorf("current revision uses an unknown save location")
 		}
 		targetPath, err := materializedPath(location, relative, counts[locationID])
 		if err != nil {
 			return nil, err
 		}
 		if targets[targetPath] {
-			return nil, fmt.Errorf("head revision has duplicate local paths")
+			return nil, fmt.Errorf("current revision has duplicate local paths")
 		}
 		targets[targetPath] = true
 		planned = append(planned, plannedFile{revision: file, target: targetPath})
@@ -295,11 +313,11 @@ func planMaterialization(destination target.SaveDestination, head omnisave.Revis
 func splitCanonicalPath(canonical string) (string, string, error) {
 	locationID, relative, found := strings.Cut(canonical, "/")
 	if !found || locationID == "" || relative == "" || path.Clean(relative) != relative || strings.HasPrefix(relative, "/") {
-		return "", "", fmt.Errorf("head revision has an invalid canonical path")
+		return "", "", fmt.Errorf("current revision has an invalid canonical path")
 	}
 	for _, segment := range strings.Split(relative, "/") {
 		if segment == "" || segment == "." || segment == ".." {
-			return "", "", fmt.Errorf("head revision has an invalid canonical path")
+			return "", "", fmt.Errorf("current revision has an invalid canonical path")
 		}
 	}
 	return locationID, relative, nil
@@ -318,7 +336,7 @@ func materializedPath(location target.SaveLocation, relative string, count int) 
 	}
 	if kind == target.SaveLocationFile {
 		if count != 1 || nativeRelative != filepath.Base(base) {
-			return "", fmt.Errorf("head revision does not fit its file save location")
+			return "", fmt.Errorf("current revision does not fit its file save location")
 		}
 		return base, nil
 	}
@@ -328,7 +346,7 @@ func materializedPath(location target.SaveLocation, relative string, count int) 
 	targetPath := filepath.Clean(filepath.Join(base, nativeRelative))
 	contained, err := filepath.Rel(base, targetPath)
 	if err != nil || relativeEscapesRoot(contained) {
-		return "", fmt.Errorf("head revision path escapes its save location")
+		return "", fmt.Errorf("current revision path escapes its save location")
 	}
 	return targetPath, nil
 }
@@ -455,12 +473,12 @@ func (l localLayout) pathFor(canonical string) (string, string, error) {
 	}
 	root := l.roots[locationID]
 	if root == "" {
-		return "", "", fmt.Errorf("head revision uses an unknown save location")
+		return "", "", fmt.Errorf("current revision uses an unknown save location")
 	}
 	targetPath := filepath.Clean(filepath.Join(root, filepath.FromSlash(relative)))
 	contained, err := filepath.Rel(root, targetPath)
 	if err != nil || relativeEscapesRoot(contained) {
-		return "", "", fmt.Errorf("head revision path escapes its save location")
+		return "", "", fmt.Errorf("current revision path escapes its save location")
 	}
 	return targetPath, root, nil
 }
@@ -472,29 +490,29 @@ func relativeEscapesRoot(relative string) bool {
 func downloadArtifact(ctx context.Context, source ArtifactSource, artifact omnisave.Artifact, destination string) error {
 	payload, err := source.OpenArtifact(ctx, artifact.SHA256)
 	if err != nil {
-		return fmt.Errorf("download head artifact: %w", err)
+		return fmt.Errorf("download current artifact: %w", err)
 	}
 	file, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		payload.Close()
-		return fmt.Errorf("stage head artifact: %w", err)
+		return fmt.Errorf("stage current artifact: %w", err)
 	}
 	digest := sha256.New()
 	size, copyErr := io.Copy(io.MultiWriter(file, digest), payload)
 	closeFileErr := file.Close()
 	closePayloadErr := payload.Close()
 	if copyErr != nil {
-		return fmt.Errorf("download head artifact: %w", copyErr)
+		return fmt.Errorf("download current artifact: %w", copyErr)
 	}
 	if closeFileErr != nil {
-		return fmt.Errorf("stage head artifact: %w", closeFileErr)
+		return fmt.Errorf("stage current artifact: %w", closeFileErr)
 	}
 	if closePayloadErr != nil {
-		return fmt.Errorf("close head artifact: %w", closePayloadErr)
+		return fmt.Errorf("close current artifact: %w", closePayloadErr)
 	}
 	actualHash := hex.EncodeToString(digest.Sum(nil))
 	if size != artifact.Size || !strings.EqualFold(actualHash, artifact.SHA256) {
-		return fmt.Errorf("downloaded head artifact failed verification")
+		return fmt.Errorf("downloaded current artifact failed verification")
 	}
 	return nil
 }

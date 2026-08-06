@@ -42,14 +42,14 @@ type ContentMatch struct {
 	Revisions []omnisave.Revision
 }
 
-// MatchesHead reports whether this lineage's current head has the local
+// MatchesCurrent reports whether this Omnisave's current revision has the local
 // save's exact content.
-func (m ContentMatch) MatchesHead() bool {
-	if m.Omnisave.HeadRevisionID == nil {
+func (m ContentMatch) MatchesCurrent() bool {
+	if m.Omnisave.CurrentRevisionID == nil {
 		return false
 	}
 	for _, revision := range m.Revisions {
-		if revision.ID == *m.Omnisave.HeadRevisionID {
+		if revision.ID == *m.Omnisave.CurrentRevisionID {
 			return true
 		}
 	}
@@ -190,11 +190,11 @@ func MatchesManifest(manifest []omnisave.RevisionFile, revision omnisave.Revisio
 }
 
 // Push commits the local save's current content as a new revision on top of
-// the expected head — the binding's sync baseline (FDR-005). Deletes cover
+// the expected current revision — the binding's sync baseline (FDR-005). Deletes cover
 // baseline paths the local save no longer has. The returned revision is the
 // binding's next baseline.
-func Push(ctx context.Context, server Server, omnisaveID string, save target.Save, expectedHeadID string, headFiles []omnisave.RevisionFile) (*omnisave.Revision, error) {
-	if omnisaveID == "" || expectedHeadID == "" {
+func Push(ctx context.Context, server Server, omnisaveID string, save target.Save, expectedCurrentRevisionID string, currentFiles []omnisave.RevisionFile) (*omnisave.Revision, error) {
+	if omnisaveID == "" || expectedCurrentRevisionID == "" {
 		return nil, fmt.Errorf("push needs a bound Omnisave and its baseline")
 	}
 	if len(save.Files) == 0 {
@@ -209,15 +209,15 @@ func Push(ctx context.Context, server Server, omnisaveID string, save target.Sav
 		local[file.Path] = true
 	}
 	var deletes []string
-	for _, file := range headFiles {
+	for _, file := range currentFiles {
 		if !local[file.Path] {
 			deletes = append(deletes, file.Path)
 		}
 	}
 	revision, err := commitContent(ctx, server, omnisaveID, save, omnisave.CreateRevision{
-		ExpectedHeadID: &expectedHeadID,
-		Upserts:        upserts,
-		Deletes:        deletes,
+		ExpectedCurrentRevisionID: &expectedCurrentRevisionID,
+		Upserts:                   upserts,
+		Deletes:                   deletes,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("commit local progress: %w", err)

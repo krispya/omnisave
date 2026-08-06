@@ -9,18 +9,18 @@ import (
 var (
 	ErrNotFound        = errors.New("omnisave: not found")
 	ErrInvalid         = errors.New("omnisave: invalid input")
-	ErrConflict        = errors.New("omnisave: head conflict")
+	ErrConflict        = errors.New("omnisave: current revision conflict")
 	ErrArtifactMissing = errors.New("omnisave: artifact missing")
 )
 
-// HeadConflict reports the current head that prevented a linear commit.
-type HeadConflict struct {
-	ExpectedHeadID *string
-	ActualHeadID   *string
+// CurrentRevisionConflict reports the current revision that rejected a stale write.
+type CurrentRevisionConflict struct {
+	ExpectedCurrentRevisionID *string
+	ActualCurrentRevisionID   *string
 }
 
-func (e *HeadConflict) Error() string { return ErrConflict.Error() }
-func (e *HeadConflict) Unwrap() error { return ErrConflict }
+func (e *CurrentRevisionConflict) Error() string { return ErrConflict.Error() }
+func (e *CurrentRevisionConflict) Unwrap() error { return ErrConflict }
 
 // MissingArtifacts reports blobs required by a revision manifest.
 type MissingArtifacts struct {
@@ -38,6 +38,7 @@ type Service interface {
 	Update(ctx context.Context, id string, input UpdateOmnisave) (*Omnisave, error)
 	Delete(ctx context.Context, id string) error
 	Fork(ctx context.Context, omnisaveID string, input ForkOmnisave) (*ForkResult, error)
+	Restore(ctx context.Context, omnisaveID string, input RestoreRevision) (*Omnisave, error)
 
 	CommitRevision(ctx context.Context, omnisaveID string, input CreateRevision) (*Revision, error)
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*Revision, error)

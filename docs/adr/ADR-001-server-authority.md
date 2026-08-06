@@ -32,10 +32,10 @@ revision (the sync baseline). The litmus test: everything a client stores can
 be rebuilt from a fresh scan plus the server; nothing the server stores can
 be rebuilt from clients.
 
-**Writes are arbitrated, and claims are verified.** A revision commit names
-the head it expects; if another device moved the head first, the server
-rejects the stale commit (Head Conflict) rather than merging, and forking
-preserves both sides of a divergence. Resolution weighs identity evidence and
+**Writes are arbitrated, and claims are verified.** A revision commit or restore
+names the Current Revision it expects; if another Device moved that pointer
+first, the server rejects the stale request (Current Revision Conflict) rather
+than merging, and forking preserves both sides of a divergence. Resolution weighs identity evidence and
 refuses to connect evidence already owned by different Games (Identity
 Conflict). An artifact upload claims a content hash the server recomputes
 from the payload before accepting. A catalog match redeems a server-issued
@@ -52,7 +52,7 @@ for destruction that the server executes and nothing else implies — never a
 side effect of client state changing or disappearing.
 
 Authority is applied in proportion to what is irreplaceable: history commits
-are arbitrated with expected heads, while presentation metadata (a save's
+are arbitrated with expected Current Revisions, while presentation metadata (a save's
 display name) is accepted last-write-wins. Guarding a label like a ledger
 would add ceremony without protecting anything that cannot be retyped.
 
@@ -66,7 +66,7 @@ Easier:
   history the user cares about is unaffected.
 - Every feature reads from one authority: the Dash, provenance, deletion
   semantics, and future features can assume the server's view is complete.
-- Concurrency stays simple: expected-head checks and forks, no merge
+- Concurrency stays simple: expected-current checks and forks, no merge
   algorithms.
 - New API surface has a design test: every write must be phrased as a request
   the server can refuse — with the state it judged against named in the

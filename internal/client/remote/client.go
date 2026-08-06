@@ -65,6 +65,19 @@ func (e *ResponseError) Error() string {
 	return fmt.Sprintf("Omnisave server returned %s", http.StatusText(e.StatusCode))
 }
 
+// CurrentRevisionConflict reports a commit or restore the server refused
+// because the Omnisave's Current Revision is no longer the one this client
+// expected — another device committed or a restore moved the pointer first.
+// It carries the actual current revision so a caller can reconcile against
+// where the save really is instead of retrying blind.
+type CurrentRevisionConflict struct {
+	ActualCurrentRevisionID *string
+}
+
+func (e *CurrentRevisionConflict) Error() string {
+	return "Omnisave current revision moved on the server"
+}
+
 // NormalizeServerURL trims a server URL to the form the client talks to and
 // rejects anything that is not one. Pairing needs this before a client holds
 // any credential, so it lives apart from the authenticated client.
@@ -148,7 +161,7 @@ func (c *Client) CreateOmnisave(ctx context.Context, input omnisave.CreateOmnisa
 	return &created, nil
 }
 
-// CommitRevision commits file changes against the Omnisave's expected head.
+// CommitRevision commits file changes against the expected current revision.
 func (c *Client) CommitRevision(ctx context.Context, omnisaveID string, input omnisave.CreateRevision) (*omnisave.Revision, error) {
 	var revision omnisave.Revision
 	path := "/api/v1/omnisaves/" + url.PathEscape(omnisaveID) + "/revisions"
@@ -156,6 +169,36 @@ func (c *Client) CommitRevision(ctx context.Context, omnisaveID string, input om
 		return nil, err
 	}
 	return &revision, nil
+}
+
+// RestoreCurrentRevision moves an Omnisave's global current pointer to an
+// existing revision in its tree (FDR-005). The server rejects a stale
+// expectation with a CurrentRevisionConflict.
+func (c *Client) RestoreCurrentRevision(ctx context.Context, omnisaveID string, input omnisave.RestoreRevision) (*omnisave.Omnisave, error) {
+	body, err := json.Marshal(input)
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut,
+		c.baseURL+"/api/v1/omnisaves/"+url.PathEscape(omnisaveID)+"/current-revision", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("contact Omnisave server: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, decodeErrorResponse(response)
+	}
+	var restored omnisave.Omnisave
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBody)).Decode(&restored); err != nil {
+		return nil, fmt.Errorf("decode Omnisave server response: %w", err)
+	}
+	return &restored, nil
 }
 
 // DeleteOmnisave removes a save and its revision history.
@@ -274,15 +317,22 @@ func postJSON(ctx context.Context, httpClient *http.Client, url, token string, p
 
 // decodeErrorResponse surfaces structured API errors the client acts on —
 // a commit rejected for missing artifacts carries exactly which content to
-// upload — and reports everything else by status.
+// upload, a stale commit carries where the Current Revision actually is —
+// and reports everything else by status.
 func decodeErrorResponse(response *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(response.Body, maxResponseBody))
 	var details struct {
-		Error         string   `json:"error"`
-		MissingSHA256 []string `json:"missing_sha256"`
+		Error                   string   `json:"error"`
+		MissingSHA256           []string `json:"missing_sha256"`
+		ActualCurrentRevisionID *string  `json:"actual_current_revision_id"`
 	}
-	if json.Unmarshal(body, &details) == nil && details.Error == "artifact_missing" {
-		return &omnisave.MissingArtifacts{SHA256: details.MissingSHA256}
+	if json.Unmarshal(body, &details) == nil {
+		switch details.Error {
+		case "artifact_missing":
+			return &omnisave.MissingArtifacts{SHA256: details.MissingSHA256}
+		case "current_revision_conflict":
+			return &CurrentRevisionConflict{ActualCurrentRevisionID: details.ActualCurrentRevisionID}
+		}
 	}
 	return &ResponseError{StatusCode: response.StatusCode}
 }

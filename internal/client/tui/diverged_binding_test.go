@@ -15,11 +15,11 @@ func TestDivergedBindingPromptOffersTwoLosslessChoices(t *testing.T) {
 	view := ansi.Strip(form.View())
 	for _, text := range []string{
 		"Slay the Spire 2",
-		"Save has new progress here and on Save 1",
+		"Save changed here and Save 1 moved on the server",
 		"› Fork here",
 		"continue this device's progress as a new playthrough",
-		"Jump to latest",
-		"keep this progress as a fork and take the latest revision",
+		"Jump to current",
+		"keep this progress as a fork and take the current revision",
 	} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("expected the diverged prompt to contain %q, got:\n%s", text, view)

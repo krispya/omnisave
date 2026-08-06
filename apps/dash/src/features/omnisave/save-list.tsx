@@ -25,6 +25,8 @@ type SaveListProps = {
   onRenameSave: (save: Omnisave, displayName: string) => Promise<void>;
   onRenameRevision: (revision: Revision, displayName: string) => Promise<void>;
   onOpenSave: (save: Omnisave, revisionID?: string) => void;
+  onRequestRestore: (save: Omnisave, revision: Revision) => void;
+  onRequestFork: (save: Omnisave, revision: Revision) => void;
 };
 
 function SaveFileIcon() {
@@ -79,6 +81,8 @@ export function SaveList({
   onRenameSave,
   onRenameRevision,
   onOpenSave,
+  onRequestRestore,
+  onRequestFork,
 }: SaveListProps) {
   return (
     <div className="space-y-3">
@@ -131,7 +135,11 @@ export function SaveList({
                   <div className="h-5">
                     <SaveNameEditor save={save} fallbackName={fallbackName} onSave={onRenameSave} />
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">Updated {formatDate(save.updated_at)}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {save.current_revision_id
+                      ? `Current from ${formatDate(save.current_revision_created_at)}`
+                      : 'No revisions yet'}
+                  </p>
                 </div>
                 <div className="max-w-36 min-w-0 text-right text-[11px] text-[#e5a00d]/80">
                   {sourceName ? (
@@ -158,7 +166,7 @@ export function SaveList({
                 <OptionsMenu
                   label={name}
                   className="pointer-events-auto relative z-20 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
-                  onDownload={save.head_revision_id ? () => onDownloadSave(save, name) : undefined}
+                  onDownload={save.current_revision_id ? () => onDownloadSave(save, name) : undefined}
                   onDelete={() => onRequestDelete(save, name)}
                 />
               </div>
@@ -176,6 +184,8 @@ export function SaveList({
                   onDownloadRevision={(revision) => onDownloadRevision(save, name, revision)}
                   onRenameRevision={onRenameRevision}
                   onOpenSave={onOpenSave}
+                  onRequestRestore={(revision) => onRequestRestore(save, revision)}
+                  onRequestFork={(revision) => onRequestFork(save, revision)}
                 />
               </div>
             ) : null}

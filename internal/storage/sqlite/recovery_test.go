@@ -53,22 +53,28 @@ func TestSavesAreRecoverableFromACopyOfTheStoreAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Three commits, the middle one changing the file, so recovery has to pick
-	// the newest rather than whichever it happens to read first.
+	// Three commits followed by a rewind: recovery must retain the whole graph
+	// and its explicit pointer rather than infer the newest node as current.
 	contents := []string{"save at the millennial fair", "save at the ocean palace", "save at the black omen"}
 	var revisions []omnisave.Revision
-	var head *string
+	var current *string
 	for _, payload := range contents {
 		artifact := storeOmnisaveArtifact(t, ctx, saves, payload)
 		revision, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
-			ExpectedHeadID: head,
-			Upserts:        []omnisave.RevisionFile{{Path: "saves/chrono.srm", Artifact: artifact}},
+			ExpectedCurrentRevisionID: current,
+			Upserts:                   []omnisave.RevisionFile{{Path: "saves/chrono.srm", Artifact: artifact}},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		revisions = append(revisions, *revision)
-		head = &revisions[len(revisions)-1].ID
+		current = &revisions[len(revisions)-1].ID
+	}
+	if _, err := saves.Restore(ctx, save.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &revisions[2].ID,
+		RevisionID:                revisions[0].ID,
+	}); err != nil {
+		t.Fatal(err)
 	}
 
 	// A second lineage, forked from the middle of the first, so the copy has to
@@ -105,11 +111,11 @@ func TestSavesAreRecoverableFromACopyOfTheStoreAlone(t *testing.T) {
 	if len(main.History) != 3 {
 		t.Fatalf("expected three revisions of history, got %d", len(main.History))
 	}
-	if main.HeadID != revisions[2].ID {
-		t.Fatalf("expected the newest revision as head, got %s", main.HeadID)
+	if main.CurrentID != revisions[0].ID {
+		t.Fatalf("expected the rewound revision to remain current, got %s", main.CurrentID)
 	}
-	if len(main.Files) != 1 || main.Files["saves/chrono.srm"] != contents[2] {
-		t.Fatalf("expected the newest save file back, got %v", main.Files)
+	if len(main.Files) != 1 || main.Files["saves/chrono.srm"] != contents[0] {
+		t.Fatalf("expected the current save file back, got %v", main.Files)
 	}
 
 	forked, found := recovered[fork.Omnisave.ID]
@@ -239,11 +245,11 @@ func TestOpeningRebuildsWhatTheStoreIsMissing(t *testing.T) {
 }
 
 // recoveredSave is one save as reconstructed from the store, with no help from
-// any database: the head's files, resolved to their content.
+// any database: the current revision's files, resolved to their content.
 type recoveredSave struct {
 	DisplayName string
 	GameTitle   string
-	HeadID      string
+	CurrentID   string
 	History     []store.Revision
 	Files       map[string]string
 }
@@ -251,7 +257,7 @@ type recoveredSave struct {
 // recoverFromStore reconstructs every save in a store directory using nothing
 // but the directory. This is the recovery a person or a tool performs, written
 // out: read the lineage records, group the manifests under them, follow the
-// parent links to the head, and resolve its files to their content.
+// parent links around shared ancestry, and resolve current files to content.
 func recoverFromStore(t *testing.T, root string) map[string]recoveredSave {
 	t.Helper()
 	saveStore, err := store.Open(root)
@@ -270,8 +276,10 @@ func recoverFromStore(t *testing.T, root string) map[string]recoveredSave {
 	}
 
 	history := make(map[string][]store.Revision)
+	byID := make(map[string]store.Revision)
 	if err := saveStore.EachRevision(func(manifest store.Revision) error {
 		history[manifest.Omnisave.ID] = append(history[manifest.Omnisave.ID], manifest)
+		byID[manifest.ID] = manifest
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -279,28 +287,33 @@ func recoverFromStore(t *testing.T, root string) map[string]recoveredSave {
 
 	recovered := make(map[string]recoveredSave)
 	for id, record := range lineages {
-		manifests := history[id]
+		members := make(map[string]store.Revision)
+		for _, manifest := range history[id] {
+			members[manifest.ID] = manifest
+		}
+		if record.CurrentRevisionID != nil {
+			for revision, exists := byID[*record.CurrentRevisionID]; exists; revision, exists = byID[parentID(revision)] {
+				members[revision.ID] = revision
+				if revision.Parent == nil {
+					break
+				}
+			}
+		}
+		manifests := make([]store.Revision, 0, len(members))
+		for _, manifest := range members {
+			manifests = append(manifests, manifest)
+		}
 		sort.Slice(manifests, func(a, b int) bool {
 			return manifests[a].CreatedAt.Before(manifests[b].CreatedAt)
 		})
 
-		// The head is the revision no other revision in this lineage claims as
-		// its parent. Nothing has to have recorded it.
-		claimed := make(map[string]bool, len(manifests))
-		for _, manifest := range manifests {
-			if manifest.Parent != nil {
-				claimed[*manifest.Parent] = true
-			}
-		}
-		var head store.Revision
-		for _, manifest := range manifests {
-			if !claimed[manifest.ID] {
-				head = manifest
-			}
+		var current store.Revision
+		if record.CurrentRevisionID != nil {
+			current = byID[*record.CurrentRevisionID]
 		}
 
-		files := make(map[string]string, len(head.Files))
-		for _, file := range head.Files {
+		files := make(map[string]string, len(current.Files))
+		for _, file := range current.Files {
 			reader, err := saveStore.OpenObject(file.SHA256)
 			if err != nil {
 				t.Fatalf("recovering %s: %v", file.Path, err)
@@ -323,12 +336,19 @@ func recoverFromStore(t *testing.T, root string) map[string]recoveredSave {
 		recovered[id] = recoveredSave{
 			DisplayName: record.DisplayName,
 			GameTitle:   title,
-			HeadID:      head.ID,
+			CurrentID:   current.ID,
 			History:     manifests,
 			Files:       files,
 		}
 	}
 	return recovered
+}
+
+func parentID(revision store.Revision) string {
+	if revision.Parent == nil {
+		return ""
+	}
+	return *revision.Parent
 }
 
 func copyDirectory(t *testing.T, from, to string) {

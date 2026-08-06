@@ -85,13 +85,13 @@ async function debugManifest(token: string, label: string) {
 export async function createTestRevision(
   token: string,
   omnisaveID: string,
-  expectedHeadID: string | null
+  expectedCurrentRevisionID: string | null
 ) {
   const sequence = Date.now().toString(36);
   const manifest = await debugManifest(token, `revision ${sequence}`);
   return commitRevision(token, omnisaveID, {
-    expectedHeadID,
-    upserts: expectedHeadID ? manifest.slice(0, 1) : manifest,
+    expectedCurrentRevisionID,
+    upserts: expectedCurrentRevisionID ? manifest.slice(0, 1) : manifest,
     metadata: {
       label: `Revision ${sequence}`,
       source: 'dashboard-debug',

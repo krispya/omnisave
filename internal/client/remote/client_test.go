@@ -3,6 +3,7 @@ package remote_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -24,7 +25,7 @@ func TestClientListsOmnisavesForBinding(t *testing.T) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`[{"id":"save-a","game_id":"game-a","display_name":"Save 1","head_revision_id":null,"created_at":"2026-07-17T12:00:00Z"}]`)),
+			Body:       io.NopCloser(strings.NewReader(`[{"id":"save-a","game_id":"game-a","display_name":"Save 1","current_revision_id":null,"created_at":"2026-07-17T12:00:00Z"}]`)),
 		}, nil
 	})}
 
@@ -85,7 +86,7 @@ func TestClientForksAMatchingOlderRevision(t *testing.T) {
 			StatusCode: http.StatusCreated,
 			Header:     make(http.Header),
 			Body: io.NopCloser(strings.NewReader(`{
-				"omnisave":{"id":"save-b","game_id":"game-a","display_name":"Farm (fork)","head_revision_id":"revision-b","created_at":"2026-07-17T14:00:00Z"},
+				"omnisave":{"id":"save-b","game_id":"game-a","display_name":"Farm (fork)","current_revision_id":"revision-b","created_at":"2026-07-17T14:00:00Z"},
 				"revision":{"id":"revision-b","omnisave_id":"save-b","parent_id":null,"created_at":"2026-07-17T14:00:00Z","files":[]}
 			}`)),
 		}, nil
@@ -106,7 +107,106 @@ func TestClientForksAMatchingOlderRevision(t *testing.T) {
 	}
 }
 
-func TestClientStreamsAnArtifactForFastForward(t *testing.T) {
+func TestClientDecodesACurrentRevisionConflictFromARefusedCommit(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/omnisaves/save-a/revisions" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusConflict,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(`{
+				"error":"current_revision_conflict",
+				"status":409,
+				"expected_current_revision_id":"revision-1",
+				"actual_current_revision_id":"revision-9"
+			}`)),
+		}, nil
+	})}
+	client, err := remote.New("https://server.example", "secret", httpClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "revision-1"
+	_, err = client.CommitRevision(context.Background(), "save-a", omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &expected,
+	})
+	var conflict *remote.CurrentRevisionConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected the conflict payload to decode to its typed error, got %v", err)
+	}
+	if conflict.ActualCurrentRevisionID == nil || *conflict.ActualCurrentRevisionID != "revision-9" {
+		t.Fatalf("expected the conflict to carry where the current revision actually is, got %+v", conflict)
+	}
+}
+
+func TestClientLeavesOtherConflictBodiesAsPlainResponseErrors(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusConflict,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(`{
+				"error":"identity_conflict",
+				"status":409,
+				"game_ids":["game-a","game-b"]
+			}`)),
+		}, nil
+	})}
+	client, err := remote.New("https://server.example", "secret", httpClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.CommitRevision(context.Background(), "save-a", omnisave.CreateRevision{})
+	var conflict *remote.CurrentRevisionConflict
+	if errors.As(err, &conflict) {
+		t.Fatalf("expected a different 409 body to stay generic, got %+v", conflict)
+	}
+	var response *remote.ResponseError
+	if !errors.As(err, &response) || response.StatusCode != http.StatusConflict {
+		t.Fatalf("expected a plain conflict response error, got %v", err)
+	}
+}
+
+func TestClientRestoresTheCurrentRevision(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPut || request.URL.Path != "/api/v1/omnisaves/save-a/current-revision" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+		var input omnisave.RestoreRevision
+		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if input.RevisionID != "revision-1" {
+			t.Fatalf("unexpected restore input: %+v", input)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(`{
+				"id":"save-a","game_id":"game-a","display_name":"Save 1",
+				"current_revision_id":"revision-1","created_at":"2026-07-17T12:00:00Z"
+			}`)),
+		}, nil
+	})}
+	client, err := remote.New("https://server.example", "secret", httpClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restored, err := client.RestoreCurrentRevision(context.Background(), "save-a", omnisave.RestoreRevision{
+		RevisionID: "revision-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.CurrentRevisionID == nil || *restored.CurrentRevisionID != "revision-1" {
+		t.Fatalf("expected the restored save to carry the moved pointer, got %+v", restored)
+	}
+}
+
+func TestClientStreamsAnArtifactForApply(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.Method != http.MethodGet || request.URL.Path != "/api/v1/artifacts/abc123" {
 			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
