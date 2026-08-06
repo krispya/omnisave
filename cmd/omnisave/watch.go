@@ -103,10 +103,12 @@ func (a *announcer) diff(snapshot tui.ReportSnapshot, started, at time.Time, emi
 
 // runWatch keeps saves synced continuously (FDR-005): a poll-based watcher
 // notices save writes, waits for a quiet interval so write bursts settle,
-// and runs the same headless pass sync uses. A periodic pass picks up
-// server-side movement. Watch never prompts — a diverged save is reported
-// as such and waits for an interactive track run. In a terminal it shows a
-// live view; piped or under a service manager it logs plainly.
+// and runs the same headless pass sync uses. Server-side movement arrives
+// over the server's event stream — a Dash restore reaches this device in
+// seconds — with a periodic pass as the fallback when the stream is down.
+// Watch never prompts — a diverged save is reported as such and waits for
+// an interactive track run. In a terminal it shows a live view; piped or
+// under a service manager it logs plainly.
 func runWatch(ctx context.Context, scanner *client.Scanner, arguments []string) error {
 	flags := flag.NewFlagSet("watch", flag.ContinueOnError)
 	statePath := flags.String("state", "", "path to local tracking state")
@@ -134,13 +136,15 @@ func runWatch(ctx context.Context, scanner *client.Scanner, arguments []string) 
 	}
 	settings := watchSettings{poll: *poll, pull: *pullEvery, floor: *floor, plain: *plain}
 	loop := watchLoop{
-		scanner: scanner,
-		server:  server,
-		store:   store,
-		poll:    settings.poll,
-		pull:    settings.pull,
-		floor:   settings.floor,
-		events:  newAnnouncer(),
+		scanner:  scanner,
+		server:   server,
+		store:    store,
+		poll:     settings.poll,
+		pull:     settings.pull,
+		floor:    settings.floor,
+		settle:   serverSettle,
+		events:   newAnnouncer(),
+		movement: server.ServerEvents,
 	}
 	url, _ := serverConnection(initial, *serverURL, *token)
 	// watch owns its first pass, so it opens with nothing established yet.
@@ -204,6 +208,11 @@ func keepWatching(
 	return err
 }
 
+// serverSettle is how long the loop lets server events coalesce before the
+// pass they trigger: a restore publishes movement more than once, and one
+// pass should answer the burst.
+const serverSettle = 2 * time.Second
+
 type watchLoop struct {
 	scanner *client.Scanner
 	server  *remote.Client
@@ -211,7 +220,11 @@ type watchLoop struct {
 	poll    time.Duration
 	pull    time.Duration
 	floor   time.Duration
+	settle  time.Duration
 	events  *announcer
+	// movement subscribes to the server's change feed; nil leaves the
+	// periodic pull as the only way server-side movement is noticed.
+	movement func(context.Context) <-chan string
 	// watched seeds the loop with the files a preceding run already
 	// discovered, so a hand-off from track watches immediately instead of
 	// repeating the pass that run just finished.
@@ -268,10 +281,35 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	defer pollTicker.Stop()
 	pullTicker := time.NewTicker(l.pull)
 	defer pullTicker.Stop()
+	var movement <-chan string
+	if l.movement != nil {
+		movement = l.movement(ctx)
+	}
+	// The settle timer coalesces one burst of server events into one pass.
+	// It starts stopped and only ever runs after movement arrives.
+	settleTimer := time.NewTimer(time.Hour)
+	settleTimer.Stop()
+	defer settleTimer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case eventType, open := <-movement:
+			if !open {
+				// The stream only ends with ctx; going quiet leaves the
+				// periodic pull as the fallback it already is.
+				movement = nil
+				continue
+			}
+			if eventType != remote.LibraryChangedEvent {
+				continue
+			}
+			settleTimer.Reset(l.settle)
+		case <-settleTimer.C:
+			watched = pass()
+			sink.Watching(len(watched))
+			signature = statSignature(watched)
+			dirty = false
 		case <-sink.Requests():
 			watched = pass()
 			sink.Watching(len(watched))

@@ -39,8 +39,10 @@ path, syncing-down built the read path; sync makes both routine.
   the known files and their directories, so a file appearing in a save
   also triggers — and commits shortly after the game finishes a burst of
   writes, so a crash or a Deck going to sleep loses at most the burst in
-  progress. It checks for server-side movement when it starts and
-  periodically after. It never prompts.
+  progress. It checks for server-side movement when it starts, when the
+  server's event stream announces movement — a Dash restore reaches a
+  watching Device in seconds — and periodically as the fallback while the
+  stream is down. It never prompts.
 - Diverged saves are reported — "save diverged from …; run
   omnisave track to resolve" — and skipped until an interactive
   track run asks: fork here, and this Device's progress continues as a new
