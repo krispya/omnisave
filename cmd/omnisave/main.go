@@ -650,14 +650,16 @@ func keepTracking(
 	// starts from it so the stream announces only what happens next.
 	events.seen(pass.snapshot)
 	loop := watchLoop{
-		scanner: scanner,
-		server:  server,
-		store:   store,
-		poll:    settings.poll,
-		pull:    settings.pull,
-		floor:   settings.floor,
-		events:  events,
-		watched: watchedFiles(state, scans),
+		scanner:  scanner,
+		server:   server,
+		store:    store,
+		poll:     settings.poll,
+		pull:     settings.pull,
+		floor:    settings.floor,
+		settle:   serverSettle,
+		events:   events,
+		movement: server.ServerEvents,
+		watched:  watchedFiles(state, scans),
 	}
 	url, _ := serverConnection(*state, flagURL, flagToken)
 	return keepWatching(ctx, loop, url, settings, pass)
