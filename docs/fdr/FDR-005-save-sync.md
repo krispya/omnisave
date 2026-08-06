@@ -20,12 +20,12 @@ path, syncing-down built the read path; sync makes both routine.
 ## Behavior
 
 - Sync decides per bound save by comparing three states: the local
-  content, the binding's sync baseline, and the Omnisave's head.
+  content, the binding's sync baseline, and the Omnisave's Current Revision.
   - All three equal — the save is in sync; nothing happens, and the game's
     line reads its standing state: "Save 1 · synced 2m ago".
-  - Local moved, head still at the baseline — the local changes commit as
-    a new revision and the baseline advances with the head.
-  - Head moved, local still at the baseline — the head syncs down and the
+  - Local moved, current still at the baseline — the local changes commit as
+    a new revision and the baseline advances with the Current Revision.
+  - Current moved, local still at the baseline — the Current Revision syncs down and the
     baseline advances. Nothing is lost: the replaced content is exactly
     the baseline revision, which the server keeps.
   - Both moved — the save is diverged. Sync never resolves divergence on
@@ -45,11 +45,11 @@ path, syncing-down built the read path; sync makes both routine.
   omnisave track to resolve" — and skipped until an interactive
   track run asks: fork here, and this Device's progress continues as a new
   lineage, or jump to latest, which first preserves the unsynced local
-  progress as a fork and then applies the head. Neither choice destroys
+  progress as a fork and then applies the Current Revision. Neither choice destroys
   content.
 - A sync pass also completes the binding decisions that need no question:
   a tracked game's first save seeds, and a save matching an Omnisave's
-  head rebinds. Anything that would prompt — a stale match, an ambiguous
+  Current Revision rebinds. Anything that would prompt — a stale match, an ambiguous
   match, a fresh Device's offer ([FDR-004](FDR-004-sync-to-device.md)), a
   divergence — is reported and waits for track.
 - Syncing down uses the staging policy of
@@ -70,8 +70,28 @@ path, syncing-down built the read path; sync makes both routine.
   and Escape cancels. A custom name replaces the identifier in flat and tree
   history views and is used in that revision's download filename.
 - Naming a revision changes only its label. Its identifier, content, place in
-  history, and head status do not change.
-- Failures leave both sides valid: an interrupted upload leaves the head
+  history, and current status do not change.
+- Every Omnisave has one global current revision, which is the snapshot every
+  bound Device synchronizes toward. In the Dash, any revision in that
+  Omnisave's tree can be restored as current. Restoring creates no revision,
+  changes no revision timestamp or label, and discards no history.
+- The next commit after a restore is a child of the restored revision. If that
+  revision already had a child, the history branches inside the same
+  Omnisave. Branches are unnamed paths; users name important revisions instead.
+- Rewinding means restoring an ancestor, fast-forwarding means restoring a
+  descendant, and jumping covers a sibling branch. When several descendants
+  are available the user chooses the exact node or tip; the server never
+  chooses a path.
+- Restoring is global server state. A clean bound Device adopts the restored
+  content on its next sync. A Device with unsynced changes diverges and gets
+  the usual fork-or-jump choice (decision 4): either answer first preserves
+  the unsynced progress as a fork, and an unwanted fork is deleted in the
+  Dash rather than discarded by sync.
+- Forking at a revision creates a separately named and synchronized Omnisave
+  whose current revision is that same immutable node. The fork shares the
+  node's label and ancestor path, creates no copied root revision, and owns
+  only the revisions later committed through it.
+- Failures leave both sides valid: an interrupted upload leaves the Current Revision
   where it was; an interrupted download leaves the local save untouched.
 - `omnisave` with no command is the whole app, and it skips whatever
   this Device already did: no saved connection asks for one, no tracked
@@ -112,7 +132,7 @@ path, syncing-down built the read path; sync makes both routine.
 ### 1. The baseline arbitrates; sync never guesses
 
 **Decision:** Direction is decided purely by comparing local content and
-the head against the binding's baseline — never timestamps, never "newest
+the Current Revision against the binding's baseline — never timestamps, never "newest
 wins".
 **Why:** The baseline is the revision the local content is known to equal,
 so a three-way comparison makes push and pull provably lossless and makes
@@ -152,13 +172,13 @@ revision, which the server keeps — and the pre-placement re-check turns
 "the game started writing mid-download" into a clean abort.
 **Tradeoff:** A game already running during a pull can later overwrite
 the pulled files from memory and push that state; history keeps every
-revision, but the head follows the running game.
+revision, but the Current Revision follows the running game.
 
 ### 4. Divergence prompts, and both answers keep everything
 
 **Decision:** Headless sync and watch report divergence and skip.
 Interactive track asks: fork here, or jump to latest — and jump first
-preserves the unsynced local progress as a fork before applying the head.
+preserves the unsynced local progress as a fork before applying the Current Revision.
 **Why:** A binding decides which lineage future revisions extend, and a
 silent guess writes history onto the wrong playthrough
 ([FDR-003](FDR-003-automatic-save-binding.md), decision 6). Making jump
@@ -170,7 +190,7 @@ divergences accumulate lineages.
 ### 5. Sync completes the automatic half of binding
 
 **Decision:** Every sync pass runs the binding decisions FDR-003 makes
-without asking — first-save seeding and head rebinds — so a game first
+without asking — first-save seeding and Current Revision rebinds — so a game first
 played after tracking is protected at the next sync, not the next track.
 **Why:** Watch makes "played it, so it's protected" true without ritual,
 which was the promise tracking made. Prompting cases still wait for
@@ -249,7 +269,7 @@ them.
 
 **Decision:** Revisions may have an owner-supplied display name. An unnamed
 revision falls back to its short identifier, and renaming is accepted
-last-write-wins without creating a revision or moving the head.
+last-write-wins without creating a revision or moving the Current Revision.
 **Why:** A memorable checkpoint such as "before the final boss" is more useful
 than a hash, but presentation metadata does not deserve the concurrency rules
 that protect irreplaceable save history. This follows ADR-001's proportional
@@ -257,6 +277,33 @@ authority for labels.
 **Tradeoff:** Concurrent renames do not conflict; the last accepted name wins.
 The short identifier remains the only stable identity for integrations and
 diagnostics.
+
+### 11. Current revision is a movable global pointer
+
+**Decision:** An Omnisave has one server-owned current revision. Restoring
+moves that pointer to any node in the Omnisave's tree without creating a
+revision; commits extend whichever node is current.
+**Why:** Revision content stays immutable and recoverable while users can
+rewind, fast-forward, and explore alternate progress without multiplying save
+slots. One global pointer preserves the server authority and the existing
+binding model: every Device follows the same answer unless it forks.
+**Tradeoff:** Restoring on one surface affects every bound Device, and a Device
+with unsynced work becomes diverged rather than silently reactivating its old
+branch.
+
+### 12. Branches are topology; forks are independent saves
+
+**Decision:** A revision has at most one parent and may have several children.
+Those unnamed paths remain inside one Omnisave. A fork is the only way to
+create another named, bound, independently current Omnisave; it shares the
+fork revision and ancestor path rather than copying the snapshot.
+**Why:** Users need names and bindings for independent playthroughs, not for
+every historical alternative. Sharing immutable ancestry makes lineage
+literal, keeps revision names consistent across forks, and avoids an invented
+duplicate at every fork point.
+**Tradeoff:** Revision retention crosses Omnisave deletion boundaries: shared
+ancestors must remain until no surviving Omnisave graph needs them. There are
+no branch names, branch deletion, or merges.
 
 ## Related
 

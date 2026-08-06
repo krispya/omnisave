@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -62,8 +63,8 @@ func newSyncFixture(t *testing.T, content string) bindingFixture {
 	return fixture
 }
 
-// otherDeviceCommit pushes content onto the Omnisave's head as if another
-// Device had played, and returns the new head revision.
+// otherDeviceCommit pushes content onto the Omnisave's current revision as if another
+// Device had played, and returns the new current revision.
 func otherDeviceCommit(t *testing.T, server *remote.Client, omnisaveID, content string) omnisave.Revision {
 	t.Helper()
 	ctx := context.Background()
@@ -79,11 +80,11 @@ func otherDeviceCommit(t *testing.T, server *remote.Client, omnisaveID, content 
 	if err != nil {
 		t.Fatal(err)
 	}
-	var head omnisave.Revision
-	var headID string
+	var current omnisave.Revision
+	var currentID string
 	for _, save := range saves {
-		if save.ID == omnisaveID && save.HeadRevisionID != nil {
-			headID = *save.HeadRevisionID
+		if save.ID == omnisaveID && save.CurrentRevisionID != nil {
+			currentID = *save.CurrentRevisionID
 		}
 	}
 	history, err := server.ListRevisions(ctx, omnisaveID)
@@ -91,14 +92,14 @@ func otherDeviceCommit(t *testing.T, server *remote.Client, omnisaveID, content 
 		t.Fatal(err)
 	}
 	for _, revision := range history {
-		if revision.ID == headID {
-			head = revision
+		if revision.ID == currentID {
+			current = revision
 		}
 	}
-	if head.ID == "" {
-		t.Fatal("no head to commit on top of")
+	if current.ID == "" {
+		t.Fatal("no current revision to commit on top of")
 	}
-	revision, err := binding.Push(ctx, server, omnisaveID, otherSave, head.ID, head.Files)
+	revision, err := binding.Push(ctx, server, omnisaveID, otherSave, current.ID, current.Files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,14 +196,14 @@ func TestSyncLifecyclePushesPullsAndReportsDivergence(t *testing.T) {
 	otherDeviceCommit(t, server, bound.OmnisaveID, "deck-progress")
 	outcome = syncOnce(t, server, &fixture, nil, 0)
 	if outcome.Pulled != 1 || outcome.Failed != 0 {
-		t.Fatalf("expected the head to sync down, got %+v", outcome)
+		t.Fatalf("expected the current revision to sync down, got %+v", outcome)
 	}
 	content, err := os.ReadFile(fixture.localPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(content) != "deck-progress" {
-		t.Fatalf("expected the pull to place the head content, got %q", content)
+		t.Fatalf("expected the pull to place the current revision's content, got %q", content)
 	}
 
 	// Progress on both sides diverges: headless passes report and skip.
@@ -220,7 +221,7 @@ func TestSyncLifecyclePushesPullsAndReportsDivergence(t *testing.T) {
 	}
 
 	// Jump-to-latest preserves the local progress as a fork, then adopts
-	// the head; the binding stays on the original lineage.
+	// the current revision; the binding stays on the original lineage.
 	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
 	prompts.diverged = func(string, string) (tui.DivergedBindingChoice, error) {
 		return tui.DivergedBindingJump, nil
@@ -231,7 +232,7 @@ func TestSyncLifecyclePushesPullsAndReportsDivergence(t *testing.T) {
 	}
 	content, _ = os.ReadFile(fixture.localPath)
 	if string(content) != "deck-divergence" {
-		t.Fatalf("expected the jump to adopt the head, got %q", content)
+		t.Fatalf("expected the jump to adopt the current revision, got %q", content)
 	}
 	saves, err := server.ListOmnisaves(context.Background())
 	if err != nil {
@@ -253,19 +254,171 @@ func TestSyncLifecyclePushesPullsAndReportsDivergence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		head := history[len(history)-1]
-		for _, file := range head.Files {
+		current := history[len(history)-1]
+		for _, file := range current.Files {
 			if file.Artifact.SHA256 == hex.EncodeToString(digest[:]) {
 				preservedFound = true
 			}
 		}
 	}
 	if !preservedFound {
-		t.Fatal("expected the fork's head to carry the diverged local content")
+		t.Fatal("expected the fork's current revision to carry the diverged local content")
 	}
 	rebound, _ := fixture.state.BindingFor(local)
 	if rebound.OmnisaveID != bound.OmnisaveID {
 		t.Fatalf("expected the binding to stay on the original lineage, got %+v", rebound)
+	}
+}
+
+// pushSecondRevision advances the fixture past its seed so the history has
+// an ancestor to rewind to. It returns the seed (ancestor) revision and the
+// binding after the push.
+func pushSecondRevision(t *testing.T, server *remote.Client, fixture *bindingFixture, content string) (omnisave.Revision, tracking.Binding) {
+	t.Helper()
+	if outcome := syncOnce(t, server, fixture, nil, 0); outcome.Seeded != 1 {
+		t.Fatalf("expected the first pass to seed, got %+v", outcome)
+	}
+	if err := os.WriteFile(fixture.localPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if outcome := syncOnce(t, server, fixture, nil, 0); outcome.Pushed != 1 {
+		t.Fatalf("expected the second pass to push, got %+v", outcome)
+	}
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	bound, ok := fixture.state.BindingFor(local)
+	if !ok || bound.LastSyncedRevisionID == nil {
+		t.Fatalf("expected a binding with a baseline after pushing, got %+v", bound)
+	}
+	history, err := server.ListRevisions(context.Background(), bound.OmnisaveID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("expected a seed and one push, got %d revisions", len(history))
+	}
+	for _, revision := range history {
+		if revision.ID != *bound.LastSyncedRevisionID {
+			return revision, bound
+		}
+	}
+	t.Fatal("expected an ancestor revision below the baseline")
+	return omnisave.Revision{}, tracking.Binding{}
+}
+
+func TestSyncPullsARestoredCurrentRevisionBackDown(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	seed, bound := pushSecondRevision(t, server, &fixture, "second-progress")
+
+	// The Dash rewinds current to the seed; this device is now ahead of it.
+	if _, err := server.RestoreCurrentRevision(context.Background(), bound.OmnisaveID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: bound.LastSyncedRevisionID,
+		RevisionID:                seed.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	outcome := syncOnce(t, server, &fixture, nil, 0)
+	if outcome.Pulled != 1 || outcome.Failed != 0 || outcome.Diverged != 0 {
+		t.Fatalf("expected a clean device to adopt the restored revision, got %+v", outcome)
+	}
+	content, err := os.ReadFile(fixture.localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "first-progress" {
+		t.Fatalf("expected the local save to revert to the restored revision, got %q", content)
+	}
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	rewound, _ := fixture.state.BindingFor(local)
+	if rewound.LastSyncedRevisionID == nil || *rewound.LastSyncedRevisionID != seed.ID {
+		t.Fatalf("expected the baseline to move to the restored revision, got %+v", rewound)
+	}
+}
+
+func TestARestoreUnderLocalProgressDivergesAndJumpForksFirst(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	seed, bound := pushSecondRevision(t, server, &fixture, "second-progress")
+	if _, err := server.RestoreCurrentRevision(context.Background(), bound.OmnisaveID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: bound.LastSyncedRevisionID,
+		RevisionID:                seed.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The baseline is now a descendant of current, and the game kept writing.
+	if err := os.WriteFile(fixture.localPath, []byte("local-edit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Headless passes report the divergence and touch nothing.
+	outcome := syncOnce(t, server, &fixture, nil, 0)
+	if outcome.Diverged != 1 || outcome.Pushed != 0 || outcome.Pulled != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected a restored current under local progress to diverge, got %+v", outcome)
+	}
+	content, _ := os.ReadFile(fixture.localPath)
+	if string(content) != "local-edit" {
+		t.Fatalf("expected the headless pass to leave the local save alone, got %q", content)
+	}
+
+	// Jump preserves the local progress as a fork, then adopts the older
+	// restored current.
+	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
+	prompts.diverged = func(string, string) (tui.DivergedBindingChoice, error) {
+		return tui.DivergedBindingJump, nil
+	}
+	outcome = syncOnce(t, server, &fixture, prompts, 0)
+	if outcome.Forked != 1 || outcome.Pulled != 1 || outcome.Failed != 0 {
+		t.Fatalf("expected the jump to preserve then adopt, got %+v", outcome)
+	}
+	content, _ = os.ReadFile(fixture.localPath)
+	if string(content) != "first-progress" {
+		t.Fatalf("expected the jump to place the restored current revision, got %q", content)
+	}
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	rebound, _ := fixture.state.BindingFor(local)
+	if rebound.OmnisaveID != bound.OmnisaveID || rebound.LastSyncedRevisionID == nil ||
+		*rebound.LastSyncedRevisionID != seed.ID {
+		t.Fatalf("expected the binding to stay on the lineage at the restored revision, got %+v", rebound)
+	}
+	saves, err := server.ListOmnisaves(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	preserved := false
+	for _, save := range saves {
+		if save.ID != bound.OmnisaveID && strings.Contains(save.DisplayName, "(diverged)") {
+			preserved = true
+		}
+	}
+	if !preserved {
+		t.Fatal("expected the local edit to survive as a preservation fork")
+	}
+}
+
+func TestACommitAgainstAMovedCurrentRevisionReturnsTheTypedConflict(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	if outcome := syncOnce(t, server, &fixture, nil, 0); outcome.Seeded != 1 {
+		t.Fatalf("expected the first pass to seed, got %+v", outcome)
+	}
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	bound, _ := fixture.state.BindingFor(local)
+	moved := otherDeviceCommit(t, server, bound.OmnisaveID, "deck-progress")
+	if err := os.WriteFile(fixture.localPath, []byte("stale-progress"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A commit still expecting the old baseline is refused with the typed
+	// conflict carrying where current actually is.
+	_, err := binding.Push(context.Background(), server, bound.OmnisaveID,
+		fixture.save, *bound.LastSyncedRevisionID, nil)
+	var conflict *remote.CurrentRevisionConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a typed current revision conflict, got %v", err)
+	}
+	if conflict.ActualCurrentRevisionID == nil || *conflict.ActualCurrentRevisionID != moved.ID {
+		t.Fatalf("expected the conflict to carry the moved revision, got %+v", conflict)
 	}
 }
 
@@ -299,7 +452,7 @@ func TestDivergedSaveCanForkHereAndContinueLocally(t *testing.T) {
 		t.Fatalf("expected the binding to continue on a new lineage, got %+v", forked)
 	}
 
-	// The next pass is quiet: the fork's head is exactly the local content.
+	// The next pass is quiet: the fork's current revision is exactly the local content.
 	if outcome := syncOnce(t, server, &fixture, nil, 0); outcome.Changed() {
 		t.Fatalf("expected the forked lineage to be in sync, got %+v", outcome)
 	}

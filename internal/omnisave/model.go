@@ -5,15 +5,16 @@ import "time"
 
 // Omnisave identifies one independently versioned game save.
 type Omnisave struct {
-	ID             string      `json:"id"`
-	GameID         string      `json:"game_id"`
-	DisplayName    string      `json:"display_name"`
-	HeadRevisionID *string     `json:"head_revision_id"`
-	ForkedFrom     *ForkOrigin `json:"forked_from,omitempty"`
-	CreatedAt      time.Time   `json:"created_at"`
-	// UpdatedAt is when the head revision was committed; CreatedAt if none.
-	UpdatedAt time.Time         `json:"updated_at"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
+	ID                string      `json:"id"`
+	GameID            string      `json:"game_id"`
+	DisplayName       string      `json:"display_name"`
+	CurrentRevisionID *string     `json:"current_revision_id"`
+	ForkedFrom        *ForkOrigin `json:"forked_from,omitempty"`
+	CreatedAt         time.Time   `json:"created_at"`
+	// CurrentRevisionCreatedAt is the original creation time of the selected
+	// snapshot; restoring an older revision deliberately moves it backward.
+	CurrentRevisionCreatedAt time.Time         `json:"current_revision_created_at"`
+	Metadata                 map[string]string `json:"metadata,omitempty"`
 }
 
 // ForkOrigin identifies the snapshot from which another Omnisave began.
@@ -22,9 +23,10 @@ type ForkOrigin struct {
 	RevisionID string `json:"revision_id"`
 }
 
-// Revision is a content-immutable state in an Omnisave's linear history.
-// DisplayName is presentation metadata and may be changed without changing
-// the snapshot or its identity.
+// Revision is a content-immutable node in a game's single-parent history.
+// OmnisaveID records which Omnisave created it; forks may share the node as
+// ancestry. DisplayName is shared presentation metadata and may be changed
+// without changing the snapshot or its identity.
 type Revision struct {
 	ID          string            `json:"id"`
 	OmnisaveID  string            `json:"omnisave_id"`
@@ -65,12 +67,18 @@ type UpdateRevision struct {
 	DisplayName *string `json:"display_name"`
 }
 
-// CreateRevision describes partial changes committed against an expected head.
+// CreateRevision describes partial changes committed against an expected current revision.
 type CreateRevision struct {
-	ExpectedHeadID *string           `json:"expected_head_id"`
-	Upserts        []RevisionFile    `json:"upserts,omitempty"`
-	Deletes        []string          `json:"deletes,omitempty"`
-	Metadata       map[string]string `json:"metadata,omitempty"`
+	ExpectedCurrentRevisionID *string           `json:"expected_current_revision_id"`
+	Upserts                   []RevisionFile    `json:"upserts,omitempty"`
+	Deletes                   []string          `json:"deletes,omitempty"`
+	Metadata                  map[string]string `json:"metadata,omitempty"`
+}
+
+// RestoreRevision moves an Omnisave's current pointer to an existing node.
+type RestoreRevision struct {
+	ExpectedCurrentRevisionID *string `json:"expected_current_revision_id"`
+	RevisionID                string  `json:"revision_id"`
 }
 
 // ForkOmnisave creates a new selectable lineage from an existing snapshot.
@@ -80,7 +88,7 @@ type ForkOmnisave struct {
 	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
-// ForkResult contains the new save and its copied initial snapshot.
+// ForkResult contains the new save and the shared revision where it began.
 type ForkResult struct {
 	Omnisave Omnisave `json:"omnisave"`
 	Revision Revision `json:"revision"`

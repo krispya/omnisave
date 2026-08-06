@@ -17,11 +17,11 @@ import (
 
 // This file keeps the portable store in step with the database.
 //
-// The database is the live authority — it enforces the head checks that make a
+// The database is the live authority — it enforces current-revision checks that make a
 // commit atomic — and the store is the durable record that outlives it. Records
 // are therefore written to the store immediately after the transaction that
 // created them commits, never before: a manifest written first would describe a
-// commit that a head conflict then rejected, and an invented revision is a
+// commit that a current revision conflict then rejected, and an invented revision is a
 // worse failure than a missing one.
 //
 // That ordering leaves one gap, between the commit and the write. Reconcile
@@ -65,11 +65,11 @@ func (r *Repository) buildRevision(ctx context.Context, revisionID string) (stor
 	)
 	err := r.db.QueryRowContext(ctx, `SELECT
 			revisions.id, revisions.parent_id, revisions.created_at, revisions.metadata,
-			omnisaves.id, omnisaves.display_name, omnisaves.game_id,
+			COALESCE(omnisaves.id, revisions.omnisave_id), COALESCE(omnisaves.display_name, ''), revisions.game_id,
 			COALESCE(games.title, ''), games.platform
 		FROM revisions
-		JOIN omnisaves ON omnisaves.id = revisions.omnisave_id
-		LEFT JOIN games ON games.id = omnisaves.game_id
+		LEFT JOIN omnisaves ON omnisaves.id = revisions.omnisave_id
+		LEFT JOIN games ON games.id = revisions.game_id
 		WHERE revisions.id = ?`, revisionID).Scan(
 		&manifest.ID, &parent, &createdAt, &metadata,
 		&manifest.Omnisave.ID, &manifest.Omnisave.DisplayName, &gameID,
@@ -132,10 +132,10 @@ func (r *Repository) buildOmnisave(ctx context.Context, id string) (store.Omnisa
 		createdAt  string
 		metadata   string
 	)
-	err := r.db.QueryRowContext(ctx, `SELECT id, game_id, display_name,
+	err := r.db.QueryRowContext(ctx, `SELECT id, game_id, display_name, current_revision_id,
 			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
 		FROM omnisaves WHERE id = ?`, id).Scan(
-		&record.ID, &record.GameID, &record.DisplayName,
+		&record.ID, &record.GameID, &record.DisplayName, &record.CurrentRevisionID,
 		&forkedSave, &forkedRev, &createdAt, &metadata,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -158,8 +158,14 @@ func (r *Repository) buildOmnisave(ctx context.Context, id string) (store.Omnisa
 			return store.Omnisave{}, err
 		}
 	}
-	rows, err := r.db.QueryContext(ctx, `SELECT id, display_name FROM revisions
-		WHERE omnisave_id = ? AND display_name <> '' ORDER BY created_at, id`, id)
+	rows, err := r.db.QueryContext(ctx, `WITH RECURSIVE members(id) AS (
+		SELECT id FROM revisions WHERE omnisave_id = ?
+		UNION SELECT current_revision_id FROM omnisaves WHERE id = ? AND current_revision_id IS NOT NULL
+		UNION SELECT forked_from_revision_id FROM omnisaves WHERE id = ? AND forked_from_revision_id IS NOT NULL
+		UNION SELECT revisions.parent_id FROM revisions JOIN members ON revisions.id = members.id
+			WHERE revisions.parent_id IS NOT NULL
+	) SELECT id, display_name FROM revisions
+		WHERE id IN (SELECT id FROM members) AND display_name <> '' ORDER BY created_at, id`, id, id, id)
 	if err != nil {
 		return store.Omnisave{}, err
 	}
@@ -186,7 +192,7 @@ func (r *Repository) buildOmnisave(ctx context.Context, id string) (store.Omnisa
 //
 // This runs before the deleting transaction commits, which is the opposite of
 // how a commit is recorded and for the opposite reason. Recording a commit
-// early would invent a revision that a head conflict then refused. Recording a
+// early would invent a revision that a current revision conflict then refused. Recording a
 // deletion late would leave a save that the database has forgotten and the
 // store still offers, and the store is what a restore reads — a deletion that
 // a crash can undo is not a deletion. A tombstone written for a delete that
@@ -207,8 +213,9 @@ func (r *Repository) tombstoneOmnisave(id string, at time.Time) error {
 // dropRevisions removes manifests after the rows behind them are gone. It runs
 // after the commit, because a manifest removed for a delete that then failed
 // would be a snapshot missing from a save that still exists. Failing here
-// leaves manifests behind a tombstone, which a recovery skips and the next
-// reconcile does not resurrect.
+// leaves manifests behind a tombstone: the tombstone keeps the save itself
+// from resurrecting, and the next reconcile does not rewrite what the
+// database no longer holds.
 func (r *Repository) dropRevisions(revisionIDs []string) error {
 	for _, revisionID := range revisionIDs {
 		if err := r.store.RemoveRevision(revisionID); err != nil {
@@ -268,15 +275,18 @@ func (r *Repository) reconcile(ctx context.Context) error {
 		if err := r.recordOmnisave(ctx, save.ID); err != nil {
 			note("save "+save.ID, err)
 		}
-		missing, err := r.unrecordedRevisions(ctx, save.ID)
-		if err != nil {
-			note("revisions of "+save.ID, err)
-			continue
-		}
-		for _, revisionID := range missing {
-			if err := r.recordRevision(ctx, revisionID); err != nil {
-				note("revision "+revisionID, err)
-			}
+	}
+
+	// Every revision row, not every surviving save's revisions: retention
+	// already deleted the rows no surviving save reaches, so a row whose
+	// creator is gone is exactly a shared ancestor a fork still needs.
+	missing, err := r.unrecordedRevisions(ctx)
+	if err != nil {
+		return fmt.Errorf("reconcile revisions: %w", err)
+	}
+	for _, revisionID := range missing {
+		if err := r.recordRevision(ctx, revisionID); err != nil {
+			note("revision "+revisionID, err)
 		}
 	}
 	if failures > 0 {
@@ -285,13 +295,12 @@ func (r *Repository) reconcile(ctx context.Context) error {
 	return nil
 }
 
-// unrecordedRevisions names the revisions of a save that have no manifest yet.
-// Asking the store first costs one stat per revision, against the several
-// queries that building a manifest would take — and on a healthy store the
-// answer is almost always none of them.
-func (r *Repository) unrecordedRevisions(ctx context.Context, omnisaveID string) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT id FROM revisions WHERE omnisave_id = ?`, omnisaveID)
+// unrecordedRevisions names the revisions that have no manifest yet. Asking
+// the store first costs one stat per revision, against the several queries
+// that building a manifest would take — and on a healthy store the answer is
+// almost always none of them.
+func (r *Repository) unrecordedRevisions(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id FROM revisions`)
 	if err != nil {
 		return nil, err
 	}
@@ -309,37 +318,22 @@ func (r *Repository) unrecordedRevisions(ctx context.Context, omnisaveID string)
 	return missing, rows.Err()
 }
 
-// lineagesOfGame maps each of a game's saves to its revisions, for a deletion
-// that has to record the same in the store once the rows are gone.
-func lineagesOfGame(ctx context.Context, tx *sql.Tx, gameID string) (map[string][]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT omnisaves.id, revisions.id
-		FROM omnisaves LEFT JOIN revisions ON revisions.omnisave_id = omnisaves.id
-		WHERE omnisaves.game_id = ?`, gameID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	lineages := make(map[string][]string)
-	for rows.Next() {
-		var omnisaveID string
-		var revisionID sql.NullString
-		if err := rows.Scan(&omnisaveID, &revisionID); err != nil {
-			return nil, err
-		}
-		if _, seen := lineages[omnisaveID]; !seen {
-			lineages[omnisaveID] = nil
-		}
-		if revisionID.Valid {
-			lineages[omnisaveID] = append(lineages[omnisaveID], revisionID.String)
-		}
-	}
-	return lineages, rows.Err()
+// omnisaveIDsOfGame lists a game's saves, for a deletion that has to record
+// the same in the store once the rows are gone.
+func omnisaveIDsOfGame(ctx context.Context, tx *sql.Tx, gameID string) ([]string, error) {
+	return queryIDs(ctx, tx, `SELECT id FROM omnisaves WHERE game_id = ?`, gameID)
 }
 
-// revisionIDsOf lists a lineage's revisions, for a deletion that has to remove
-// their manifests after the rows are gone.
-func revisionIDsOf(ctx context.Context, tx *sql.Tx, omnisaveID string) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM revisions WHERE omnisave_id = ?`, omnisaveID)
+// revisionIDsOfGame lists every node in a game's graph by the game identity
+// each revision carries, for a deletion that has to remove their manifests
+// after the rows are gone. Going by the creator save instead would miss nodes
+// whose creator was already deleted while a fork retained them.
+func revisionIDsOfGame(ctx context.Context, tx *sql.Tx, gameID string) ([]string, error) {
+	return queryIDs(ctx, tx, `SELECT id FROM revisions WHERE game_id = ?`, gameID)
+}
+
+func queryIDs(ctx context.Context, tx *sql.Tx, query string, arguments ...any) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, query, arguments...)
 	if err != nil {
 		return nil, err
 	}

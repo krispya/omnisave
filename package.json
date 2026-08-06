@@ -20,7 +20,7 @@
     "oxlint-tsgolint": "^0.24.0",
     "prettier": "^3.9.5"
   },
-  "packageManager": "pnpm@11.13.0",
+  "packageManager": "pnpm@11.13.1",
   "engines": {
     "pnpm": ">=11.0.0",
     "node": ">=26.0.0"

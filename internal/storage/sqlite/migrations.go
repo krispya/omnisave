@@ -306,6 +306,83 @@ var migrations = []string{
 	// Revision names are mutable presentation metadata; an empty value keeps
 	// the revision's short identifier as its display fallback.
 	`ALTER TABLE revisions ADD COLUMN display_name TEXT NOT NULL DEFAULT '';`,
+
+	// Revisions are game-level immutable nodes. omnisave_id now records the
+	// Omnisave that created a node rather than owning its lifetime: forks point
+	// at the same node, and deleting a source must not cascade through a
+	// surviving fork. current_revision_id is a movable pointer, not "newest".
+	`CREATE TABLE revisions_v2 (
+		id          TEXT PRIMARY KEY,
+		game_id     TEXT NOT NULL,
+		omnisave_id TEXT NOT NULL,
+		display_name TEXT NOT NULL DEFAULT '',
+		parent_id   TEXT,
+		created_at  TEXT NOT NULL,
+		metadata    TEXT NOT NULL
+	);
+
+	INSERT INTO revisions_v2(id, game_id, omnisave_id, display_name, parent_id, created_at, metadata)
+	SELECT revisions.id, omnisaves.game_id, revisions.omnisave_id,
+		revisions.display_name, revisions.parent_id, revisions.created_at, revisions.metadata
+	FROM revisions JOIN omnisaves ON omnisaves.id = revisions.omnisave_id;
+
+	CREATE TABLE revision_files_v2 (
+		revision_id     TEXT NOT NULL REFERENCES revisions_v2(id) ON DELETE CASCADE,
+		path            TEXT NOT NULL,
+		artifact_format TEXT NOT NULL,
+		artifact_sha256 TEXT NOT NULL,
+		artifact_size   INTEGER NOT NULL,
+		PRIMARY KEY (revision_id, path)
+	);
+
+	INSERT INTO revision_files_v2
+	SELECT * FROM revision_files;
+
+	CREATE TABLE omnisaves_v2 (
+		id                          TEXT PRIMARY KEY,
+		game_id                     TEXT NOT NULL,
+		display_name                TEXT NOT NULL,
+		current_revision_id         TEXT,
+		forked_from_omnisave_id     TEXT,
+		forked_from_revision_id     TEXT,
+		created_at                  TEXT NOT NULL,
+		metadata                    TEXT NOT NULL,
+		CHECK ((forked_from_omnisave_id IS NULL) = (forked_from_revision_id IS NULL))
+	);
+
+	INSERT INTO omnisaves_v2
+	SELECT id, game_id, display_name, head_revision_id,
+		forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
+	FROM omnisaves;
+
+	DROP TABLE revision_files;
+	DROP TABLE revisions;
+	DROP TABLE omnisaves;
+	ALTER TABLE revisions_v2 RENAME TO revisions;
+	ALTER TABLE revision_files_v2 RENAME TO revision_files;
+	ALTER TABLE omnisaves_v2 RENAME TO omnisaves;
+
+	CREATE INDEX revisions_by_omnisave ON revisions(omnisave_id, created_at, id);
+	CREATE INDEX revisions_by_game ON revisions(game_id, created_at, id);
+	CREATE INDEX revisions_by_parent ON revisions(parent_id);
+	CREATE INDEX revision_files_by_artifact ON revision_files(artifact_sha256);
+
+	-- Forks from before shared ancestry copied their root revision: a node the
+	-- fork owns with no parent, alongside the recorded fork point. Left alone,
+	-- such a fork's graph shows two roots — the copied chain and the fork
+	-- point's chain. Re-parenting the copied root onto the fork point makes it
+	-- an honest child of the node it duplicated, one connected chain. Forks
+	-- made after the change own no root revision, so they match nothing here.
+	UPDATE revisions SET parent_id = (
+		SELECT forked_from_revision_id FROM omnisaves
+		WHERE omnisaves.id = revisions.omnisave_id
+	)
+	WHERE parent_id IS NULL AND EXISTS (
+		SELECT 1 FROM omnisaves
+		WHERE omnisaves.id = revisions.omnisave_id
+		AND omnisaves.forked_from_revision_id IS NOT NULL
+		AND omnisaves.forked_from_revision_id <> revisions.id
+	);`,
 }
 
 func migrate(db *sql.DB) error {

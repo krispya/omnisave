@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { listRevisions, type Omnisave, type Revision } from '../../lib/omnisave-api.js';
 import { createPromiseCache } from '../cache/promise-cache.js';
 
-// Keyed by save and head, so committing a revision invalidates the history it replaces.
+// Keyed by save and current revision, so commits and restores revalidate history.
 const histories = createPromiseCache<string, Revision[]>();
-// The last history shown for a save, so a moved head revalidates in place rather than
+// The last history shown for a save, so a moved current pointer revalidates in place rather than
 // dropping the log back to a loading state under the reader.
 const shown = new Map<string, Revision[]>();
 const shownKeys = new Map<string, string>();
@@ -24,7 +24,7 @@ type Snapshot = {
 };
 
 function historyKey(save: Omnisave) {
-  return `${save.id}:${save.head_revision_id ?? ''}`;
+  return `${save.id}:${save.current_revision_id ?? ''}`;
 }
 
 function saveID(key: string) {
@@ -38,7 +38,7 @@ function load(token: string, key: string) {
 function record(key: string, revisions: Revision[]) {
   const id = saveID(key);
   const previous = shownKeys.get(id);
-  // One history per save stays cached; the head it replaced is no longer reachable.
+  // One history per save stays cached while another save is open.
   if (previous && previous !== key) histories.delete(previous);
   shownKeys.set(id, key);
   shown.set(id, revisions);
@@ -47,6 +47,21 @@ function record(key: string, revisions: Revision[]) {
 function read(key: string): Snapshot {
   if (!key) return { key, error: '' };
   return { key, revisions: histories.get(key) ?? shown.get(saveID(key)), error: '' };
+}
+
+// Forks share revision nodes, so a rename made through one save must reach every
+// cached history containing the revision — sibling saves' keys don't change on a
+// rename, and their stale copies would otherwise survive the whole session.
+function replaceInCaches(revision: Revision) {
+  for (const [id, key] of shownKeys) {
+    const revisions = histories.get(key) ?? shown.get(id);
+    if (!revisions?.some((candidate) => candidate.id === revision.id)) continue;
+    histories.delete(key);
+    shown.set(
+      id,
+      revisions.map((candidate) => (candidate.id === revision.id ? revision : candidate))
+    );
+  }
 }
 
 /** Warms the cache so expanding a save can paint its history with no loading step. */
@@ -102,6 +117,7 @@ export function useSaveRevisions(token: string, save?: Omnisave): SaveHistory {
   const current = snapshot.key === key ? snapshot : read(key);
   function replaceRevision(revision: Revision) {
     if (!key) return;
+    replaceInCaches(revision);
     const revisions = current.revisions?.map((candidate) =>
       candidate.id === revision.id ? revision : candidate
     );

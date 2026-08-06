@@ -828,8 +828,8 @@ func interactivePrompts() *reconcilePrompts {
 	}
 }
 
-// bindUnboundSaves runs FDR-003's binding pass: conflict-free seeds and head
-// matches are automatic, while a unique older match asks whether to advance
+// bindUnboundSaves runs FDR-003's binding pass: conflict-free seeds and Current
+// Revision matches are automatic, while a unique older match asks whether to advance
 // or fork. Ambiguous and unmatched saves remain unbound.
 func bindUnboundSaves(
 	ctx context.Context,
@@ -992,14 +992,14 @@ func reconcileSaves(
 			report.SaveFailed(candidate.local.GameTitle, err)
 			continue
 		}
-		if len(matches) == 1 && matches[0].MatchesHead() {
+		if len(matches) == 1 && matches[0].MatchesCurrent() {
 			matched := matches[0].Omnisave
 			if err := state.Bind(candidate.local, matched.ID); err != nil {
 				outcome.Failed++
 				report.SaveFailed(candidate.local.GameTitle, err)
 				continue
 			}
-			if err := state.RecordSynced(candidate.local, matched.ID, *matched.HeadRevisionID); err != nil {
+			if err := state.RecordSynced(candidate.local, matched.ID, *matched.CurrentRevisionID); err != nil {
 				outcome.Failed++
 				report.SaveFailed(candidate.local.GameTitle, err)
 				continue
@@ -1010,17 +1010,17 @@ func reconcileSaves(
 		}
 		if len(matches) == 1 {
 			matched := matches[0]
-			head, headFound := revisionByID(histories[matched.Omnisave.ID], matched.Omnisave.HeadRevisionID)
-			if !headFound {
+			current, currentFound := revisionByID(histories[matched.Omnisave.ID], matched.Omnisave.CurrentRevisionID)
+			if !currentFound {
 				outcome.Failed++
-				report.SaveFailed(candidate.local.GameTitle, errors.New("matching Omnisave has no readable head"))
+				report.SaveFailed(candidate.local.GameTitle, errors.New("matching Omnisave has no readable current revision"))
 				continue
 			}
 			matchedRevision := matched.Revisions[len(matched.Revisions)-1]
 			if prompts == nil {
 				// Headless: the stale question waits for an interactive run.
 				outcome.Unbound++
-				report.Behind(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave))
+				report.Stale(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave))
 				continue
 			}
 			choice, err := prompts.stale(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave))
@@ -1028,8 +1028,8 @@ func reconcileSaves(
 				return err
 			}
 			switch choice {
-			case tui.StaleBindingFastForward:
-				if err := binding.FastForward(ctx, server, candidate.save, matchedRevision, head); err != nil {
+			case tui.StaleBindingJump:
+				if err := binding.ApplyCurrent(ctx, server, candidate.save, matchedRevision, current); err != nil {
 					outcome.Failed++
 					report.SaveFailed(candidate.local.GameTitle, err)
 					continue
@@ -1039,12 +1039,12 @@ func reconcileSaves(
 					report.SaveFailed(candidate.local.GameTitle, err)
 					continue
 				}
-				if err := state.RecordSynced(candidate.local, matched.Omnisave.ID, head.ID); err != nil {
+				if err := state.RecordSynced(candidate.local, matched.Omnisave.ID, current.ID); err != nil {
 					outcome.Failed++
 					report.SaveFailed(candidate.local.GameTitle, err)
 					continue
 				}
-				outcome.Advanced++
+				outcome.Jumped++
 				report.SyncedWith(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave), time.Now())
 				continue
 			case tui.StaleBindingFork:
@@ -1171,13 +1171,13 @@ func syncSaveToDevice(
 	}
 	type availableSave struct {
 		save        omnisave.Omnisave
-		head        omnisave.Revision
+		current        omnisave.Revision
 		destination target.SaveDestination
 	}
 	options := make([]tui.SyncToDeviceOption, 0, len(gameSaves))
 	available := make(map[string]availableSave, len(gameSaves))
 	for _, save := range gameSaves {
-		if save.HeadRevisionID == nil {
+		if save.CurrentRevisionID == nil {
 			continue
 		}
 		history, err := loadHistory(save.ID)
@@ -1186,22 +1186,22 @@ func syncSaveToDevice(
 			report.SaveFailed(title, err)
 			return nil
 		}
-		head, exists := revisionByID(history, save.HeadRevisionID)
+		current, exists := revisionByID(history, save.CurrentRevisionID)
 		if !exists {
 			outcome.Failed++
-			report.SaveFailed(title, errors.New("Omnisave has no readable head"))
+			report.SaveFailed(title, errors.New("Omnisave has no readable current revision"))
 			return nil
 		}
 		var compatible []target.SaveDestination
 		for _, destination := range discovered.Destinations {
-			if binding.CanMaterialize(destination, head) == nil {
+			if binding.CanMaterialize(destination, current) == nil {
 				compatible = append(compatible, destination)
 			}
 		}
 		if len(compatible) != 1 {
 			continue
 		}
-		available[save.ID] = availableSave{save: save, head: head, destination: compatible[0]}
+		available[save.ID] = availableSave{save: save, current: current, destination: compatible[0]}
 		options = append(options, tui.SyncToDeviceOption{OmnisaveID: save.ID, Name: omnisaveDisplayName(save)})
 	}
 	if len(options) == 0 {
@@ -1224,7 +1224,7 @@ func syncSaveToDevice(
 	if !exists {
 		return fmt.Errorf("unknown sync-to-device choice %q", choice.OmnisaveID)
 	}
-	materialized, err := binding.Materialize(ctx, server, selected.destination, selected.head)
+	materialized, err := binding.Materialize(ctx, server, selected.destination, selected.current)
 	if err != nil {
 		outcome.Failed++
 		report.SaveFailed(title, err)
@@ -1236,7 +1236,7 @@ func syncSaveToDevice(
 		report.SaveFailed(title, err)
 		return nil
 	}
-	if err := state.RecordSynced(local, selected.save.ID, selected.head.ID); err != nil {
+	if err := state.RecordSynced(local, selected.save.ID, selected.current.ID); err != nil {
 		outcome.Failed++
 		report.SaveFailed(title, err)
 		return nil
@@ -1303,7 +1303,7 @@ func omnisaveDisplayName(save omnisave.Omnisave) string {
 
 // syncBoundSave runs FDR-005's three-way comparison for one bound save:
 // the local content against the binding's baseline against the Omnisave's
-// head. Push and pull are lossless by construction; anything else is
+// Current Revision. Push and pull are lossless by construction; anything else is
 // divergence and never guessed at.
 func syncBoundSave(
 	ctx context.Context,
@@ -1331,10 +1331,10 @@ func syncBoundSave(
 		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
-	head, headOK := revisionByID(history, remoteSave.HeadRevisionID)
-	if !headOK {
+	current, currentOK := revisionByID(history, remoteSave.CurrentRevisionID)
+	if !currentOK {
 		outcome.Failed++
-		report.SaveFailed(local.GameTitle, errors.New("bound Omnisave has no readable head"))
+		report.SaveFailed(local.GameTitle, errors.New("bound Omnisave has no readable current revision"))
 		return nil
 	}
 	name := omnisaveDisplayName(remoteSave)
@@ -1346,10 +1346,10 @@ func syncBoundSave(
 	if !baselineOK {
 		// A binding without a baseline (a manual bind to non-matching
 		// content) is diverged from the start (FDR-005, decision 1).
-		return resolveDivergence(ctx, server, state, local, save, remoteSave, head, nil, outcome, report, prompts)
+		return resolveDivergence(ctx, server, state, local, save, remoteSave, current, nil, outcome, report, prompts)
 	}
 
-	if head.ID == baseline.ID {
+	if current.ID == baseline.ID {
 		if binding.MatchesManifest(manifest, baseline) {
 			report.SyncedWith(local.GameTitle, name, lastSyncedAt(bound))
 			return nil
@@ -1359,8 +1359,18 @@ func syncBoundSave(
 			report.SyncedWith(local.GameTitle, name, lastSyncedAt(bound))
 			return nil
 		}
-		revision, err := binding.Push(ctx, server, remoteSave.ID, save, baseline.ID, head.Files)
+		revision, err := binding.Push(ctx, server, remoteSave.ID, save, baseline.ID, current.Files)
 		if err != nil {
+			var conflict *remote.CurrentRevisionConflict
+			if errors.As(err, &conflict) {
+				// The Current Revision moved between this pass's read and its
+				// commit — another device committed or a restore moved the
+				// pointer. Not a failure and not worth a blind retry: the
+				// next pass reads the moved pointer and reconciles.
+				outcome.Conflicted++
+				report.CurrentMoved(local.GameTitle, name)
+				return nil
+			}
 			outcome.Failed++
 			report.SaveFailed(local.GameTitle, err)
 			return nil
@@ -1375,10 +1385,10 @@ func syncBoundSave(
 		return nil
 	}
 
-	// The head moved past the baseline.
-	if binding.MatchesManifest(manifest, head) {
-		// Local already carries the head's content; only the baseline lags.
-		if err := state.RecordSynced(local, remoteSave.ID, head.ID); err != nil {
+	// The Current Revision moved away from the baseline.
+	if binding.MatchesManifest(manifest, current) {
+		// Local already carries the Current Revision's content; only the baseline lags.
+		if err := state.RecordSynced(local, remoteSave.ID, current.ID); err != nil {
 			outcome.Failed++
 			report.SaveFailed(local.GameTitle, err)
 			return nil
@@ -1390,12 +1400,12 @@ func syncBoundSave(
 	if binding.MatchesManifest(manifest, baseline) {
 		// Pull. Lossless: the replaced content is the baseline revision,
 		// which the server keeps; placement re-verifies local is unchanged.
-		if err := binding.FastForward(ctx, server, save, baseline, head); err != nil {
+		if err := binding.ApplyCurrent(ctx, server, save, baseline, current); err != nil {
 			outcome.Failed++
 			report.SaveFailed(local.GameTitle, err)
 			return nil
 		}
-		if err := state.RecordSynced(local, remoteSave.ID, head.ID); err != nil {
+		if err := state.RecordSynced(local, remoteSave.ID, current.ID); err != nil {
 			outcome.Failed++
 			report.SaveFailed(local.GameTitle, err)
 			return nil
@@ -1404,7 +1414,7 @@ func syncBoundSave(
 		report.SyncedWith(local.GameTitle, name, time.Now())
 		return nil
 	}
-	return resolveDivergence(ctx, server, state, local, save, remoteSave, head, &baseline, outcome, report, prompts)
+	return resolveDivergence(ctx, server, state, local, save, remoteSave, current, &baseline, outcome, report, prompts)
 }
 
 // resolveDivergence handles a save with new progress on both sides.
@@ -1417,7 +1427,7 @@ func resolveDivergence(
 	local tracking.LocalSave,
 	save target.Save,
 	remoteSave omnisave.Omnisave,
-	head omnisave.Revision,
+	current omnisave.Revision,
 	baseline *omnisave.Revision,
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
@@ -1458,11 +1468,11 @@ func resolveDivergence(
 		report.SyncedWith(local.GameTitle, omnisaveDisplayName(*preserved), time.Now())
 		return nil
 	}
-	// Jump: name the preservation fork, then adopt the head.
+	// Jump: name the preservation fork, then adopt the Current Revision.
 	report.Forked(local.GameTitle, omnisaveDisplayName(*preserved))
 	// The preserved revision carries exactly the local content, so the
 	// staged placement can verify against it.
-	if err := binding.FastForward(ctx, server, save, *preservedRevision, head); err != nil {
+	if err := binding.ApplyCurrent(ctx, server, save, *preservedRevision, current); err != nil {
 		outcome.Failed++
 		report.SaveFailed(local.GameTitle, err)
 		return nil
@@ -1472,7 +1482,7 @@ func resolveDivergence(
 		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
-	if err := state.RecordSynced(local, remoteSave.ID, head.ID); err != nil {
+	if err := state.RecordSynced(local, remoteSave.ID, current.ID); err != nil {
 		outcome.Failed++
 		report.SaveFailed(local.GameTitle, err)
 		return nil

@@ -167,12 +167,14 @@ func TestTrackReportExplainsAServerDeletionUnderTheUntrackedGame(t *testing.T) {
 func TestTrackReportSpeaksSyncExceptions(t *testing.T) {
 	report := &TrackReport{}
 	report.Diverged("Chrono Trigger", "New Game+")
-	report.Behind("Stardew Valley", "Farm run")
+	report.Stale("Stardew Valley", "Farm run")
+	report.CurrentMoved("Project Zomboid", "Save 2")
 
 	rendered := strings.Join(report.render(), "\n")
 	for _, sentence := range []string{
 		"Save diverged from New Game+, run omnisave track to resolve",
-		"Save is behind Farm run, run omnisave track to resolve",
+		"Save matches a revision of Farm run that is not current, run omnisave track to resolve",
+		"Save 2 moved on the server; the next sync pass will reconcile",
 	} {
 		if !strings.Contains(rendered, sentence) {
 			t.Fatalf("expected %q in the report, got:\n%s", sentence, rendered)

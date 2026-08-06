@@ -197,8 +197,15 @@ func (r *Repository) DeleteGame(ctx context.Context, id string) error {
 	defer tx.Rollback()
 
 	// Deleting a game deletes every save of it, so the store records the same
-	// deletion for each lineage. Both have to be read before the cascade.
-	lineages, err := lineagesOfGame(ctx, tx, id)
+	// deletion for each lineage, and drops the manifest of every node in the
+	// game's graph — including nodes whose creator save was already deleted
+	// but which a surviving fork had retained until now. Both have to be read
+	// before the cascade.
+	saveIDs, err := omnisaveIDsOfGame(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	revisionIDs, err := revisionIDsOfGame(ctx, tx, id)
 	if err != nil {
 		return err
 	}
@@ -207,9 +214,7 @@ func (r *Repository) DeleteGame(ctx context.Context, id string) error {
 		`SELECT sha256 FROM game_media WHERE game_id = ?
 		UNION
 		SELECT artifact_sha256 FROM revision_files WHERE revision_id IN (
-			SELECT id FROM revisions WHERE omnisave_id IN (
-				SELECT id FROM omnisaves WHERE game_id = ?
-			)
+			SELECT id FROM revisions WHERE game_id = ?
 		)`, id, id,
 	)
 	if err != nil {
@@ -232,6 +237,12 @@ func (r *Repository) DeleteGame(ctx context.Context, id string) error {
 	}
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM omnisaves WHERE game_id = ?`, id); err != nil {
+		return err
+	}
+	// Revisions deliberately do not cascade from their creator Omnisave: a
+	// surviving fork may share them. Deleting the whole game is the one case
+	// where every save and therefore every node in its graph is leaving.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM revisions WHERE game_id = ?`, id); err != nil {
 		return err
 	}
 	result, err := tx.ExecContext(ctx, `DELETE FROM games WHERE id = ?`, id)
@@ -261,7 +272,7 @@ func (r *Repository) DeleteGame(ctx context.Context, id string) error {
 		}
 	}
 	deletedAt := time.Now().UTC()
-	for omnisaveID := range lineages {
+	for _, omnisaveID := range saveIDs {
 		if err := r.tombstoneOmnisave(omnisaveID, deletedAt); err != nil {
 			return err
 		}
@@ -270,9 +281,7 @@ func (r *Repository) DeleteGame(ctx context.Context, id string) error {
 		return err
 	}
 
-	for omnisaveID, revisionIDs := range lineages {
-		r.noteStoreLag("deletion of save "+omnisaveID, r.dropRevisions(revisionIDs))
-	}
+	r.noteStoreLag("deletion of game "+id, r.dropRevisions(revisionIDs))
 	r.noteStoreLag("deletion of game "+id, r.store.RemoveGame(id))
 	for _, hash := range unreferenced {
 		if err := r.removeArtifact(hash); err != nil {

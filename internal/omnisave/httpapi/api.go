@@ -87,6 +87,7 @@ func (api *API) guardedRoutes() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}", api.get)
 	mux.HandleFunc("PATCH /api/v1/omnisaves/{id}", api.update)
 	mux.HandleFunc("DELETE /api/v1/omnisaves/{id}", api.delete)
+	mux.HandleFunc("PUT /api/v1/omnisaves/{id}/current-revision", api.restore)
 	mux.HandleFunc("POST /api/v1/omnisaves/{id}/revisions", api.addRevision)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions", api.listRevisions)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/{revisionID}", api.getRevision)
@@ -191,6 +192,21 @@ func (a *API) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (a *API) restore(w http.ResponseWriter, r *http.Request) {
+	var input omnisave.RestoreRevision
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, err)
+		return
+	}
+	save, err := a.saves.Restore(r.Context(), r.PathValue("id"), input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	a.publishLibraryChanged()
+	writeJSON(w, http.StatusOK, save)
+}
+
 func (a *API) addRevision(w http.ResponseWriter, r *http.Request) {
 	var input omnisave.CreateRevision
 	if err := decodeJSON(w, r, &input); err != nil {
@@ -267,11 +283,11 @@ func (a *API) archive(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if save.HeadRevisionID == nil {
+	if save.CurrentRevisionID == nil {
 		writeError(w, omnisave.ErrNotFound)
 		return
 	}
-	revision, err := a.saves.GetRevision(r.Context(), save.ID, *save.HeadRevisionID)
+	revision, err := a.saves.GetRevision(r.Context(), save.ID, *save.CurrentRevisionID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -675,13 +691,13 @@ func writeError(w http.ResponseWriter, err error) {
 		})
 		return
 	}
-	var conflict *omnisave.HeadConflict
+	var conflict *omnisave.CurrentRevisionConflict
 	if errors.As(err, &conflict) {
 		writeJSON(w, http.StatusConflict, map[string]any{
-			"error":            "head_conflict",
-			"status":           http.StatusConflict,
-			"expected_head_id": conflict.ExpectedHeadID,
-			"actual_head_id":   conflict.ActualHeadID,
+			"error":                        "current_revision_conflict",
+			"status":                       http.StatusConflict,
+			"expected_current_revision_id": conflict.ExpectedCurrentRevisionID,
+			"actual_current_revision_id":   conflict.ActualCurrentRevisionID,
 		})
 		return
 	}

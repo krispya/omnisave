@@ -38,9 +38,7 @@ type Revision struct {
 	ID       string           `json:"id"`
 	Omnisave RevisionOmnisave `json:"omnisave"`
 	Game     RevisionGame     `json:"game"`
-	// Parent is the revision this one followed, or nil at the root of a
-	// lineage. Following these to their end reconstructs history and, because
-	// nothing points at the newest revision, identifies the head.
+	// Parent is the revision this one followed, or nil at the root of a tree.
 	Parent    *string           `json:"parent"`
 	CreatedAt time.Time         `json:"created_at"`
 	Files     []RevisionFile    `json:"files"`
@@ -71,19 +69,19 @@ type RevisionFile struct {
 	Format string `json:"format,omitempty"`
 }
 
-// Omnisave records a lineage's mutable facts — the ones no revision carries
-// because they change without a commit. It is written when a save is created,
-// renamed, or deleted, and never on an ordinary commit.
-//
-// The head revision is deliberately absent: it is derivable from the manifests,
-// and a field that had to be rewritten on every commit would be a field that
-// could be stale in a copy taken mid-write.
+// Omnisave records a lineage's mutable facts — the ones no immutable revision
+// can carry. It is written when a save is created, renamed, restored, or
+// deleted, and after every commit, because the Current Revision pointer it
+// carries moves with each one.
 type Omnisave struct {
 	Kind        string `json:"kind"`
 	Version     int    `json:"version"`
 	ID          string `json:"id"`
 	GameID      string `json:"game_id"`
 	DisplayName string `json:"display_name"`
+	// CurrentRevisionID is the global snapshot Devices synchronize toward.
+	// It is not derivable once restoring can select any node in the tree.
+	CurrentRevisionID *string `json:"current_revision_id,omitempty"`
 	// RevisionNames keeps mutable labels out of immutable snapshot manifests.
 	RevisionNames map[string]string    `json:"revision_names,omitempty"`
 	ForkedFrom    *omnisave.ForkOrigin `json:"forked_from,omitempty"`

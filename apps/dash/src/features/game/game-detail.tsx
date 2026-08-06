@@ -3,12 +3,14 @@ import { updateRevisionDisplayName, type Omnisave, type Revision } from '../../l
 import { GameArtwork, GameMediaImage } from './game-artwork.js';
 import type { GameSummary } from './game-summary.js';
 import { GameDetailsDialog } from './details-dialog.js';
-import { RevisionGraph } from '../omnisave/revision-graph.js';
 import type { RevisionFocus } from '../omnisave/revision-log.js';
 import { SaveList } from '../omnisave/save-list.js';
-import { useGameRevisions } from '../omnisave/use-game-revisions.js';
 import { prefetchSaveRevisions, useSaveRevisions } from '../omnisave/use-save-revisions.js';
 import { TrackedDevices } from './tracked-devices.js';
+import { RevisionActionDialog } from '../omnisave/revision-action-dialog.js';
+import { refreshRevisionAction, type RevisionAction } from '../omnisave/revision-action.js';
+import { revisionMove } from '../omnisave/revision-navigation.js';
+import { defaultSaveName, displaySaveName } from '../omnisave/save-name.js';
 
 function gameReleaseYear(game: GameSummary) {
   const value = game.metadata?.['release_year'];
@@ -35,6 +37,8 @@ type GameDetailProps = {
   onDownloadRevision: (save: Omnisave, name: string, revision: Revision) => void;
   onRequestDelete: (save: Omnisave, name: string) => void;
   onRenameSave: (save: Omnisave, displayName: string) => Promise<void>;
+  onRestoreRevision: (save: Omnisave, revision: Revision) => Promise<void>;
+  onForkRevision: (save: Omnisave, revision: Revision, displayName: string) => Promise<void>;
 };
 
 export function GameDetail({
@@ -47,14 +51,31 @@ export function GameDetail({
   onDownloadRevision,
   onRequestDelete,
   onRenameSave,
+  onRestoreRevision,
+  onForkRevision,
 }: GameDetailProps) {
-  // Flat lists the save slots, one opening its own history; tree graphs them all.
-  const [view, setView] = useState<'flat' | 'tree'>('flat');
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Set only when a fork edge was followed, so the log can reveal where it landed.
   const [focus, setFocus] = useState<RevisionFocus>();
+  const [revisionAction, setRevisionAction] = useState<RevisionAction>();
+  const [revisionActionBusy, setRevisionActionBusy] = useState(false);
+  const [revisionActionError, setRevisionActionError] = useState('');
   const history = useSaveRevisions(token, selectedSave);
-  const gameRevisions = useGameRevisions(token, game.saves, view === 'tree');
+  // A conflicting restore reloads the library under the open dialog, so the action
+  // is re-read from the fresh game every render: a retry then sends the reloaded
+  // current pointer and the dialog's verb describes the move from where it is now.
+  const activeRevisionAction = revisionAction
+    ? refreshRevisionAction(revisionAction, game.saves, history.revisions)
+    : undefined;
+  const actionSaveIndex = activeRevisionAction
+    ? game.saves.findIndex((save) => save.id === activeRevisionAction.save.id)
+    : -1;
+  const actionSaveName = activeRevisionAction
+    ? displaySaveName(
+        activeRevisionAction.save,
+        actionSaveIndex >= 0 ? defaultSaveName(actionSaveIndex) : 'Save'
+      )
+    : '';
   const releaseYear = gameReleaseYear(game);
   const genres = gameGenres(game);
   const facts = [
@@ -66,7 +87,7 @@ export function GameDetail({
   async function renameRevision(revision: Revision, displayName: string) {
     const updated = await updateRevisionDisplayName(
       token,
-      revision.omnisave_id,
+      selectedSave?.id ?? revision.omnisave_id,
       revision.id,
       displayName
     );
@@ -80,10 +101,55 @@ export function GameDetail({
     onSelectSave(save.id === selectedSave?.id ? undefined : save);
   }
 
-  // Following a fork edge, from either view, opens the save it leads to on that revision.
+  // Following a fork edge opens the save it leads to on that revision.
   function openSaveAtRevision(save: Omnisave, revisionID?: string) {
     setFocus({ saveID: save.id, revisionID });
     onSelectSave(save);
+  }
+
+  function requestRestore(save: Omnisave, revision: Revision) {
+    setRevisionActionError('');
+    setRevisionAction({
+      kind: 'restore',
+      save,
+      revision,
+      move: revisionMove(history.revisions, save.current_revision_id, revision.id),
+    });
+  }
+
+  function requestFork(save: Omnisave, revision: Revision) {
+    setRevisionActionError('');
+    setRevisionAction({ kind: 'fork', save, revision });
+  }
+
+  async function confirmRestore() {
+    if (activeRevisionAction?.kind !== 'restore') return;
+    setRevisionActionBusy(true);
+    setRevisionActionError('');
+    try {
+      await onRestoreRevision(activeRevisionAction.save, activeRevisionAction.revision);
+      setRevisionAction(undefined);
+    } catch (error) {
+      setRevisionActionError(
+        error instanceof Error ? error.message : 'Could not restore this revision.'
+      );
+    } finally {
+      setRevisionActionBusy(false);
+    }
+  }
+
+  async function confirmFork(displayName: string) {
+    if (activeRevisionAction?.kind !== 'fork') return;
+    setRevisionActionBusy(true);
+    setRevisionActionError('');
+    try {
+      await onForkRevision(activeRevisionAction.save, activeRevisionAction.revision, displayName);
+      setRevisionAction(undefined);
+    } catch (error) {
+      setRevisionActionError(error instanceof Error ? error.message : 'Could not fork this save.');
+    } finally {
+      setRevisionActionBusy(false);
+    }
   }
 
   return (
@@ -154,23 +220,6 @@ export function GameDetail({
       <section className="mt-6" aria-label={`Saves for ${game.label}`}>
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-white">Saves</h3>
-          {game.saves.length > 0 ? (
-            <div className="flex rounded-md bg-white/5 p-0.5 text-xs">
-              {(['flat', 'tree'] as const).map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  aria-pressed={view === option}
-                  onClick={() => setView(option)}
-                  className={`rounded px-2.5 py-1.5 capitalize transition ${
-                    view === option ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white'
-                  }`}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
-          ) : null}
         </div>
 
         {game.saves.length === 0 ? (
@@ -181,15 +230,6 @@ export function GameDetail({
               from a client.
             </p>
           </div>
-        ) : view === 'tree' ? (
-          <RevisionGraph
-            saves={game.saves}
-            revisionsBySave={gameRevisions.revisions}
-            selectedSave={selectedSave}
-            loading={gameRevisions.loading}
-            error={gameRevisions.error}
-            onOpenSave={openSaveAtRevision}
-          />
         ) : (
           <SaveList
             saves={game.saves}
@@ -207,11 +247,28 @@ export function GameDetail({
             onRenameSave={onRenameSave}
             onRenameRevision={renameRevision}
             onOpenSave={openSaveAtRevision}
+            onRequestRestore={requestRestore}
+            onRequestFork={requestFork}
           />
         )}
       </section>
 
       {detailsOpen ? <GameDetailsDialog game={game} onClose={() => setDetailsOpen(false)} /> : null}
+      {activeRevisionAction ? (
+        <RevisionActionDialog
+          // Remounting on a new target resets the dialog's prefilled name.
+          key={`${activeRevisionAction.kind}:${activeRevisionAction.save.id}:${activeRevisionAction.revision.id}`}
+          action={activeRevisionAction}
+          saveName={actionSaveName}
+          busy={revisionActionBusy}
+          error={revisionActionError}
+          onCancel={() => {
+            if (!revisionActionBusy) setRevisionAction(undefined);
+          }}
+          onRestore={() => void confirmRestore()}
+          onFork={(displayName) => void confirmFork(displayName)}
+        />
+      ) : null}
     </div>
   );
 }

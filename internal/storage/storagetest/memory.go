@@ -10,6 +10,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
@@ -19,6 +20,12 @@ import (
 
 // MemoryRepository stores test data in memory without applying service rules.
 type MemoryRepository struct {
+	// mu guards every map below. Services reach this repository from more
+	// than one goroutine — the access service touches credentials in the
+	// background — so every method takes the lock, and internal helpers
+	// assume it is held.
+	mu sync.Mutex
+
 	saves     map[string]omnisave.Omnisave
 	revisions map[string][]omnisave.Revision
 	blobs     map[string][]byte
@@ -51,43 +58,54 @@ func NewMemoryRepository() *MemoryRepository {
 }
 
 func (r *MemoryRepository) InsertOmnisave(_ context.Context, save omnisave.Omnisave) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.saves[save.ID]; exists {
+		return storage.ErrConflict
+	}
 	r.saves[save.ID] = save
 	return nil
 }
 
 func (r *MemoryRepository) ListOmnisaves(context.Context) ([]omnisave.Omnisave, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	result := make([]omnisave.Omnisave, 0, len(r.saves))
 	for _, save := range r.saves {
-		result = append(result, r.deriveUpdatedAt(save))
+		result = append(result, r.deriveCurrentRevisionCreatedAt(save))
 	}
 	return result, nil
 }
 
 func (r *MemoryRepository) GetOmnisave(_ context.Context, id string) (*omnisave.Omnisave, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	save, ok := r.saves[id]
 	if !ok {
 		return nil, storage.ErrNotFound
 	}
-	save = r.deriveUpdatedAt(save)
+	save = r.deriveCurrentRevisionCreatedAt(save)
 	return &save, nil
 }
 
-// deriveUpdatedAt mirrors the SQL repository: the head revision's creation
-// time, or the save's own when it has no revisions.
-func (r *MemoryRepository) deriveUpdatedAt(save omnisave.Omnisave) omnisave.Omnisave {
-	save.UpdatedAt = save.CreatedAt
-	if save.HeadRevisionID == nil {
+// deriveCurrentRevisionCreatedAt mirrors the SQL repository: the selected
+// revision's original creation time, or the save's own when it has none.
+func (r *MemoryRepository) deriveCurrentRevisionCreatedAt(save omnisave.Omnisave) omnisave.Omnisave {
+	save.CurrentRevisionCreatedAt = save.CreatedAt
+	if save.CurrentRevisionID == nil {
 		return save
 	}
-	for _, revision := range r.revisions[save.ID] {
-		if revision.ID == *save.HeadRevisionID {
-			save.UpdatedAt = revision.CreatedAt
+	for _, revision := range r.allRevisions() {
+		if revision.ID == *save.CurrentRevisionID {
+			save.CurrentRevisionCreatedAt = revision.CreatedAt
 		}
 	}
 	return save
 }
 
 func (r *MemoryRepository) UpdateOmnisaveDisplayName(_ context.Context, id, displayName string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	save, ok := r.saves[id]
 	if !ok {
 		return storage.ErrNotFound
@@ -98,73 +116,142 @@ func (r *MemoryRepository) UpdateOmnisaveDisplayName(_ context.Context, id, disp
 }
 
 func (r *MemoryRepository) DeleteOmnisave(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.deleteOmnisave(id)
+}
+
+func (r *MemoryRepository) deleteOmnisave(id string) error {
 	if _, ok := r.saves[id]; !ok {
 		return storage.ErrNotFound
 	}
-	deletedRevisions := r.revisions[id]
 	delete(r.saves, id)
-	delete(r.revisions, id)
-
-	for _, deleted := range deletedRevisions {
-		for _, deletedFile := range deleted.Files {
-			used := false
-			for _, revisions := range r.revisions {
-				for _, revision := range revisions {
-					for _, file := range revision.Files {
-						if file.Artifact.SHA256 == deletedFile.Artifact.SHA256 {
-							used = true
-							break
-						}
-					}
-					if used {
-						break
-					}
-				}
-				if used {
-					break
-				}
+	all := r.allRevisions()
+	byID := make(map[string]omnisave.Revision, len(all))
+	retained := make(map[string]bool)
+	for _, revision := range all {
+		byID[revision.ID] = revision
+		if _, creatorSurvives := r.saves[revision.OmnisaveID]; creatorSurvives {
+			retained[revision.ID] = true
+		}
+	}
+	for _, save := range r.saves {
+		if save.CurrentRevisionID != nil {
+			retained[*save.CurrentRevisionID] = true
+		}
+		if save.ForkedFrom != nil {
+			retained[save.ForkedFrom.RevisionID] = true
+		}
+	}
+	for revisionID := range retained {
+		for revision := byID[revisionID]; revision.ParentID != nil; revision = byID[*revision.ParentID] {
+			if retained[*revision.ParentID] {
+				break
 			}
-			if !used {
-				for _, media := range r.media {
-					if media.SHA256 == deletedFile.Artifact.SHA256 {
-						used = true
-						break
-					}
-				}
+			retained[*revision.ParentID] = true
+		}
+	}
+	for creator, revisions := range r.revisions {
+		kept := revisions[:0]
+		for _, revision := range revisions {
+			if retained[revision.ID] {
+				kept = append(kept, revision)
 			}
-			if !used {
-				delete(r.blobs, deletedFile.Artifact.SHA256)
-			}
+		}
+		if len(kept) == 0 {
+			delete(r.revisions, creator)
+		} else {
+			r.revisions[creator] = kept
+		}
+	}
+	usedArtifacts := make(map[string]bool)
+	for _, revision := range r.allRevisions() {
+		for _, file := range revision.Files {
+			usedArtifacts[file.Artifact.SHA256] = true
+		}
+	}
+	for _, media := range r.media {
+		usedArtifacts[media.SHA256] = true
+	}
+	for hash := range r.blobs {
+		if !usedArtifacts[hash] {
+			delete(r.blobs, hash)
 		}
 	}
 	return nil
 }
 
-func (r *MemoryRepository) ForkOmnisave(_ context.Context, save omnisave.Omnisave, initial omnisave.Revision) error {
+func (r *MemoryRepository) ForkOmnisave(_ context.Context, save omnisave.Omnisave) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, exists := r.saves[save.ID]; exists {
 		return storage.ErrConflict
 	}
+	if save.ForkedFrom == nil || save.CurrentRevisionID == nil ||
+		*save.CurrentRevisionID != save.ForkedFrom.RevisionID {
+		return storage.ErrNotFound
+	}
+	source, exists := r.saves[save.ForkedFrom.OmnisaveID]
+	if !exists || source.GameID != save.GameID {
+		return storage.ErrNotFound
+	}
+	if _, err := r.findRevision(source.ID, save.ForkedFrom.RevisionID); err != nil {
+		return err
+	}
 	r.saves[save.ID] = save
-	r.revisions[save.ID] = []omnisave.Revision{initial}
 	return nil
 }
 
-func (r *MemoryRepository) CommitRevision(_ context.Context, expectedHeadID *string, revision omnisave.Revision) error {
+func (r *MemoryRepository) RestoreOmnisave(_ context.Context, id, revisionID string, expectedCurrentRevisionID *string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	save, ok := r.saves[id]
+	if !ok {
+		return storage.ErrNotFound
+	}
+	if !equalStringPointers(save.CurrentRevisionID, expectedCurrentRevisionID) {
+		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: copyStringPointer(save.CurrentRevisionID)}
+	}
+	if _, err := r.findRevision(id, revisionID); err != nil {
+		return err
+	}
+	save.CurrentRevisionID = &revisionID
+	r.saves[id] = save
+	return nil
+}
+
+func (r *MemoryRepository) CommitRevision(_ context.Context, expectedCurrentRevisionID *string, revision omnisave.Revision) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	save, ok := r.saves[revision.OmnisaveID]
 	if !ok {
 		return storage.ErrNotFound
 	}
-	if !equalStringPointers(save.HeadRevisionID, expectedHeadID) {
-		return &storage.HeadConflict{ActualHeadID: copyStringPointer(save.HeadRevisionID)}
+	if !equalStringPointers(save.CurrentRevisionID, expectedCurrentRevisionID) {
+		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: copyStringPointer(save.CurrentRevisionID)}
 	}
 	r.revisions[revision.OmnisaveID] = append(r.revisions[revision.OmnisaveID], revision)
-	save.HeadRevisionID = &revision.ID
+	save.CurrentRevisionID = &revision.ID
 	r.saves[revision.OmnisaveID] = save
 	return nil
 }
 
 func (r *MemoryRepository) GetRevision(_ context.Context, saveID, revisionID string) (*omnisave.Revision, error) {
-	for _, revision := range r.revisions[saveID] {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	// The save has to exist before its membership is consulted: shared-ancestry
+	// revisions still name a deleted creator, and a deleted save's URLs must be
+	// dead.
+	if _, ok := r.saves[saveID]; !ok {
+		return nil, storage.ErrNotFound
+	}
+	return r.findRevision(saveID, revisionID)
+}
+
+// findRevision resolves a revision through a save's membership, without
+// checking the save itself; callers that need the save to exist check first.
+func (r *MemoryRepository) findRevision(saveID, revisionID string) (*omnisave.Revision, error) {
+	for _, revision := range r.memberRevisions(saveID) {
 		if revision.ID == revisionID {
 			copy := revision
 			return &copy, nil
@@ -174,28 +261,87 @@ func (r *MemoryRepository) GetRevision(_ context.Context, saveID, revisionID str
 }
 
 func (r *MemoryRepository) ListRevisions(_ context.Context, saveID string) ([]omnisave.Revision, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, ok := r.saves[saveID]; !ok {
 		return nil, storage.ErrNotFound
 	}
-	return slices.Clone(r.revisions[saveID]), nil
+	return slices.Clone(r.memberRevisions(saveID)), nil
 }
 
 func (r *MemoryRepository) UpdateRevisionDisplayName(_ context.Context, saveID, revisionID, displayName string) error {
-	revisions, exists := r.revisions[saveID]
-	if !exists {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.saves[saveID]; !exists {
 		return storage.ErrNotFound
 	}
-	for index := range revisions {
-		if revisions[index].ID == revisionID {
-			revisions[index].DisplayName = displayName
-			r.revisions[saveID] = revisions
-			return nil
+	if _, err := r.findRevision(saveID, revisionID); err != nil {
+		return err
+	}
+	for creator, revisions := range r.revisions {
+		for index := range revisions {
+			if revisions[index].ID == revisionID {
+				revisions[index].DisplayName = displayName
+				r.revisions[creator] = revisions
+				return nil
+			}
 		}
 	}
 	return storage.ErrNotFound
 }
 
+func (r *MemoryRepository) allRevisions() []omnisave.Revision {
+	var all []omnisave.Revision
+	for _, revisions := range r.revisions {
+		all = append(all, revisions...)
+	}
+	return all
+}
+
+func (r *MemoryRepository) memberRevisions(saveID string) []omnisave.Revision {
+	all := r.allRevisions()
+	byID := make(map[string]omnisave.Revision, len(all))
+	members := make(map[string]bool)
+	for _, revision := range all {
+		byID[revision.ID] = revision
+		if revision.OmnisaveID == saveID {
+			members[revision.ID] = true
+		}
+	}
+	if save, exists := r.saves[saveID]; exists {
+		if save.CurrentRevisionID != nil {
+			members[*save.CurrentRevisionID] = true
+		}
+		if save.ForkedFrom != nil {
+			members[save.ForkedFrom.RevisionID] = true
+		}
+	}
+	for id := range members {
+		for current := byID[id]; current.ParentID != nil; current = byID[*current.ParentID] {
+			if members[*current.ParentID] {
+				break
+			}
+			members[*current.ParentID] = true
+		}
+	}
+	result := make([]omnisave.Revision, 0, len(members))
+	for _, revision := range all {
+		if members[revision.ID] {
+			result = append(result, revision)
+		}
+	}
+	slices.SortFunc(result, func(left, right omnisave.Revision) int {
+		if order := left.CreatedAt.Compare(right.CreatedAt); order != 0 {
+			return order
+		}
+		return strings.Compare(left.ID, right.ID)
+	})
+	return result
+}
+
 func (r *MemoryRepository) OpenArtifact(_ context.Context, hash string) (io.ReadCloser, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	data, ok := r.blobs[hash]
 	if !ok {
 		return nil, storage.ErrNotFound
@@ -212,11 +358,15 @@ func (r *MemoryRepository) StoreArtifact(_ context.Context, artifact storage.Art
 	if int64(len(data)) != artifact.Size || hex.EncodeToString(sum[:]) != artifact.SHA256 {
 		return fmt.Errorf("%w: payload does not match descriptor", storage.ErrArtifactMismatch)
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.blobs[artifact.SHA256] = data
 	return nil
 }
 
 func (r *MemoryRepository) StatArtifact(_ context.Context, hash string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	data, ok := r.blobs[hash]
 	if !ok {
 		return 0, storage.ErrNotFound
@@ -240,6 +390,8 @@ func copyStringPointer(source *string) *string {
 }
 
 func (r *MemoryRepository) FindGameByIdentifier(_ context.Context, identifier catalog.GameIdentifier) (*catalog.Game, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, game := range r.games {
 		for _, candidate := range game.Identifiers {
 			if candidate == identifier {
@@ -251,6 +403,8 @@ func (r *MemoryRepository) FindGameByIdentifier(_ context.Context, identifier ca
 }
 
 func (r *MemoryRepository) FindGameByFingerprint(_ context.Context, fingerprint catalog.GameFingerprint) (*catalog.Game, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, game := range r.games {
 		for _, candidate := range game.Fingerprints {
 			if candidate == fingerprint {
@@ -262,10 +416,14 @@ func (r *MemoryRepository) FindGameByFingerprint(_ context.Context, fingerprint 
 }
 
 func (r *MemoryRepository) GetGame(_ context.Context, id string) (*catalog.Game, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.game(id)
 }
 
 func (r *MemoryRepository) ListGames(context.Context) ([]catalog.Game, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	games := make([]catalog.Game, 0, len(r.games))
 	for id := range r.games {
 		game, _ := r.game(id)
@@ -275,6 +433,8 @@ func (r *MemoryRepository) ListGames(context.Context) ([]catalog.Game, error) {
 }
 
 func (r *MemoryRepository) SaveGame(_ context.Context, game catalog.Game, rom *catalog.GameROM) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, existing := range r.games {
 		if existing.ID == game.ID {
 			continue
@@ -298,13 +458,15 @@ func (r *MemoryRepository) SaveGame(_ context.Context, game catalog.Game, rom *c
 	return nil
 }
 
-func (r *MemoryRepository) DeleteGame(ctx context.Context, id string) error {
+func (r *MemoryRepository) DeleteGame(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, ok := r.games[id]; !ok {
 		return storage.ErrNotFound
 	}
 	for saveID, save := range r.saves {
 		if save.GameID == id {
-			r.DeleteOmnisave(ctx, saveID)
+			r.deleteOmnisave(saveID)
 		}
 	}
 	delete(r.games, id)
@@ -323,6 +485,8 @@ func (r *MemoryRepository) DeleteGame(ctx context.Context, id string) error {
 }
 
 func (r *MemoryRepository) UpsertDevice(_ context.Context, device catalog.Device) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if existing, ok := r.devices[device.ID]; ok {
 		device.CreatedAt = existing.CreatedAt
 	}
@@ -331,6 +495,8 @@ func (r *MemoryRepository) UpsertDevice(_ context.Context, device catalog.Device
 }
 
 func (r *MemoryRepository) TrackGame(_ context.Context, gameID string, record catalog.GameTracking) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, ok := r.games[gameID]; !ok {
 		return storage.ErrNotFound
 	}
@@ -354,6 +520,8 @@ func (r *MemoryRepository) TrackGame(_ context.Context, gameID string, record ca
 }
 
 func (r *MemoryRepository) UntrackGame(_ context.Context, gameID, deviceID string, at time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	record, ok := r.tracking[gameID][deviceID]
 	if !ok {
 		return storage.ErrNotFound
@@ -364,6 +532,12 @@ func (r *MemoryRepository) UntrackGame(_ context.Context, gameID, deviceID strin
 }
 
 func (r *MemoryRepository) ListGameProvenance(_ context.Context, gameID string) ([]catalog.GameTracking, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.listGameProvenance(gameID), nil
+}
+
+func (r *MemoryRepository) listGameProvenance(gameID string) []catalog.GameTracking {
 	records := make([]catalog.GameTracking, 0, len(r.tracking[gameID]))
 	for _, record := range r.tracking[gameID] {
 		record.DeviceName = r.devices[record.DeviceID].Name
@@ -378,10 +552,12 @@ func (r *MemoryRepository) ListGameProvenance(_ context.Context, gameID string) 
 		}
 		return strings.Compare(left.DeviceID, right.DeviceID)
 	})
-	return records, nil
+	return records
 }
 
 func (r *MemoryRepository) SaveGameMedia(_ context.Context, media catalog.GameMedia) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for id, existing := range r.media {
 		if existing.GameID == media.GameID && existing.Kind == media.Kind && existing.Position == media.Position {
 			media.ID = existing.ID
@@ -394,6 +570,8 @@ func (r *MemoryRepository) SaveGameMedia(_ context.Context, media catalog.GameMe
 }
 
 func (r *MemoryRepository) ClearGameMedia(_ context.Context, gameID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for id, media := range r.media {
 		if media.GameID == gameID {
 			delete(r.media, id)
@@ -403,6 +581,8 @@ func (r *MemoryRepository) ClearGameMedia(_ context.Context, gameID string) erro
 }
 
 func (r *MemoryRepository) GetGameMedia(_ context.Context, gameID, mediaID string) (*catalog.GameMedia, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	media, ok := r.media[mediaID]
 	if !ok || media.GameID != gameID {
 		return nil, storage.ErrNotFound
@@ -430,7 +610,7 @@ func (r *MemoryRepository) game(id string) (*catalog.Game, error) {
 		}
 		return left.Position - right.Position
 	})
-	game.Provenance, _ = r.ListGameProvenance(context.Background(), id)
+	game.Provenance = r.listGameProvenance(id)
 	return &game, nil
 }
 

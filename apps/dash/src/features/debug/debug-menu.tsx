@@ -61,7 +61,7 @@ export function DebugMenu({
             />
             <DebugItem
               label={action === 'fork' ? 'Forking save…' : 'Fork save'}
-              description="Create another playable save from this head"
+              description="Create another playable save from the current revision"
               disabled={!selectedSave || !canFork || action !== null}
               onClick={() => run(onForkSave)}
             />

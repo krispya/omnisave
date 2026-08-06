@@ -35,7 +35,7 @@ import (
 // Version is the store format this package writes. A reader refuses a store
 // numbered higher than this: an older binary cannot know what a newer format
 // left out, and guessing with save data is not acceptable.
-const Version = 1
+const Version = 2
 
 const (
 	versionFile   = "VERSION"
@@ -126,6 +126,10 @@ func (s *Store) checkVersion() error {
 	}
 	if found > Version {
 		return fmt.Errorf("store: format version %d is newer than supported version %d", found, Version)
+	}
+	if found < Version {
+		marker := fmt.Sprintf("%s %d\n", versionPrefix, Version)
+		return writeFileAtomic(path, []byte(marker), 0o644)
 	}
 	return nil
 }
