@@ -111,6 +111,23 @@ func (c *Client) RegisterDevice(ctx context.Context, id string, input catalog.Re
 	return c.send(ctx, http.MethodPut, "/api/v1/devices/"+url.PathEscape(id), input)
 }
 
+// DeviceStatus is what a device reports about itself between syncs: the
+// games it sees being played right now. An empty list clears the report.
+type DeviceStatus struct {
+	PlayingGameIDs []string `json:"playing_game_ids"`
+}
+
+// ReportDeviceStatus tells the server which games this device is playing.
+// Presence, not provenance: the server holds it briefly and in memory, so
+// reports are re-affirmed while a game runs.
+func (c *Client) ReportDeviceStatus(ctx context.Context, deviceID string, playingGameIDs []string) error {
+	if playingGameIDs == nil {
+		playingGameIDs = []string{}
+	}
+	return c.send(ctx, http.MethodPut, "/api/v1/devices/"+url.PathEscape(deviceID)+"/status",
+		DeviceStatus{PlayingGameIDs: playingGameIDs})
+}
+
 // TrackGame records that this device tracks a game, refreshing its provenance.
 func (c *Client) TrackGame(ctx context.Context, gameID, deviceID string, input catalog.TrackGame) error {
 	return c.send(ctx, http.MethodPut,

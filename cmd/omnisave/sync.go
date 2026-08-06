@@ -51,7 +51,7 @@ func runSync(ctx context.Context, scanner *client.Scanner, arguments []string) e
 		return err
 	}
 	report := &tui.TrackReport{}
-	outcome, _, _, err := syncPass(ctx, scanner, server, running.PlatformDetector(), &state, report, 0)
+	outcome, _, _, _, err := syncPass(ctx, scanner, server, running.PlatformDetector(), &state, report, 0)
 	if err != nil {
 		return err
 	}
@@ -62,9 +62,10 @@ func runSync(ctx context.Context, scanner *client.Scanner, arguments []string) e
 
 // syncPass runs the headless reconcile shared by sync and watch: deletion
 // reconciliation, library sync, then the three-way save pass. It returns
-// the tracked games' local save files so watchers know what to poll, and —
-// when pulls were deferred under a running game — the playing games whose
-// exit is what resolves them.
+// the tracked games' local save files so watchers know what to poll; when
+// pulls were deferred under a running game, the playing games whose exit is
+// what resolves them; and the presence data the loop re-affirms between
+// passes.
 func syncPass(
 	ctx context.Context,
 	scanner *client.Scanner,
@@ -73,20 +74,33 @@ func syncPass(
 	state *tracking.State,
 	report *tui.TrackReport,
 	pushFloor time.Duration,
-) (tui.TrackOutcome, []string, []running.Game, error) {
+) (tui.TrackOutcome, []string, []running.Game, presenceWatch, error) {
 	activity.Report(ctx, "checking library")
 	reconciled := reconcileDeletedGames(ctx, server, state, report)
 	activity.Report(ctx, "scanning")
 	scans, err := scanner.ScanWithProgress(ctx, func(client.ScanProgress) {})
 	if err != nil {
-		return tui.TrackOutcome{}, nil, nil, err
+		return tui.TrackOutcome{}, nil, nil, presenceWatch{}, err
 	}
 	games := trackedRunningGames(state, scans)
 	playing := playingNow(ctx, detector, games)
 	outcome, confirmed := syncTracking(ctx, server, state, scans, nil, report)
+	// Presence maps through Library identities, which the library sync just
+	// resolved, so a freshly tracked game reports on its very first pass.
+	presence := presenceWatch{
+		deviceID: state.Device.ID,
+		games:    games,
+		serverID: make(map[string]string, len(games)),
+	}
+	for _, game := range games {
+		presence.serverID[game.ID] = state.Games[game.ID].ServerGameID
+	}
+	if detector != nil {
+		reportPlaying(ctx, server, presence, playing)
+	}
 	if outcome.Synced {
 		if err := reconcileSaves(ctx, server, state, scans, confirmed, &outcome, report, nil, playing, pushFloor); err != nil {
-			return outcome, nil, nil, err
+			return outcome, nil, nil, presence, err
 		}
 	}
 	outcome.Untracked += reconciled
@@ -98,7 +112,7 @@ func syncPass(
 			}
 		}
 	}
-	return outcome, watchedFiles(state, scans), deferred, nil
+	return outcome, watchedFiles(state, scans), deferred, presence, nil
 }
 
 // watchedFiles lists the local files of tracked games' discovered saves,

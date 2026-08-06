@@ -735,3 +735,72 @@ func decodeResponse(t *testing.T, response *httptest.ResponseRecorder, destinati
 		t.Fatal(err)
 	}
 }
+
+// A device reports the games it sees being played; reads stitch the report
+// into provenance, and an empty report clears it.
+func TestDevicePlayingStatusStory(t *testing.T) {
+	repository := storagetest.NewMemoryRepository()
+	handler := newHandler(t, repository, catalogservice.New(repository, repository, catalogProviderStub{}))
+
+	response := request(t, handler, http.MethodPut, "/api/v1/devices/device-1", "application/json",
+		bytes.NewBufferString(`{"name":"Steam Deck","platform":"linux"}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("register device returned %d: %s", response.Code, response.Body.String())
+	}
+	response = request(t, handler, http.MethodPost, "/api/v1/games/resolve", "application/json",
+		bytes.NewBufferString(`{
+			"fingerprints":[{"platform":"snes","algorithm":"sha1","value":"6b47bb75d16514b6a476aa0c73a683a2a4c18765"}]
+		}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("resolve returned %d: %s", response.Code, response.Body.String())
+	}
+	var resolved struct {
+		Game struct {
+			ID string `json:"id"`
+		} `json:"game"`
+	}
+	decodeResponse(t, response, &resolved)
+	response = request(t, handler, http.MethodPut, "/api/v1/games/"+resolved.Game.ID+"/tracking/device-1",
+		"application/json", bytes.NewBufferString(`{"adapter":"retroarch","installed":true}`))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("track returned %d: %s", response.Code, response.Body.String())
+	}
+
+	statusBody := `{"playing_game_ids":["` + resolved.Game.ID + `"]}`
+	response = request(t, handler, http.MethodPut, "/api/v1/devices/device-1/status", "application/json",
+		bytes.NewBufferString(statusBody))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status report returned %d: %s", response.Code, response.Body.String())
+	}
+
+	var game struct {
+		Provenance []struct {
+			DeviceID          string  `json:"device_id"`
+			Playing           bool    `json:"playing"`
+			PlayingReportedAt *string `json:"playing_reported_at"`
+		} `json:"provenance"`
+	}
+	response = request(t, handler, http.MethodGet, "/api/v1/games/"+resolved.Game.ID, "", nil)
+	decodeResponse(t, response, &game)
+	if len(game.Provenance) != 1 || !game.Provenance[0].Playing || game.Provenance[0].PlayingReportedAt == nil {
+		t.Fatalf("expected the provenance to read as playing, got %+v", game.Provenance)
+	}
+
+	response = request(t, handler, http.MethodPut, "/api/v1/devices/device-1/status", "application/json",
+		bytes.NewBufferString(`{"playing_game_ids":[]}`))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("clearing status returned %d: %s", response.Code, response.Body.String())
+	}
+	// A fresh destination: omitempty means a cleared flag is absent, and
+	// decoding into the earlier struct would keep its old value.
+	var cleared struct {
+		Provenance []struct {
+			Playing bool `json:"playing"`
+		} `json:"provenance"`
+	}
+	response = request(t, handler, http.MethodGet, "/api/v1/games/"+resolved.Game.ID, "", nil)
+	decodeResponse(t, response, &cleared)
+	if len(cleared.Provenance) != 1 || cleared.Provenance[0].Playing {
+		t.Fatalf("expected the cleared report to stop reading as playing, got %+v", cleared.Provenance)
+	}
+}

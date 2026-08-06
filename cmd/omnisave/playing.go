@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"sort"
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
+	"github.com/krisbaumgartner/omnisave/internal/client/remote"
 	"github.com/krisbaumgartner/omnisave/internal/client/running"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 )
@@ -40,4 +42,36 @@ func playingNow(ctx context.Context, detector *running.Detector, games []running
 		return nil
 	}
 	return playing
+}
+
+// presenceWatch is what a pass hands the watch loop so the server's picture
+// of playing games stays fresh between passes: the tracked games to sweep,
+// their Library identities, and the device doing the reporting.
+type presenceWatch struct {
+	deviceID string
+	games    []running.Game
+	serverID map[string]string
+}
+
+// playingServerGameIDs maps a playing sweep to the Library games it reports,
+// sorted so equal pictures compare equal.
+func playingServerGameIDs(serverID map[string]string, playing map[string]bool) []string {
+	ids := make([]string, 0, len(playing))
+	for localID, isPlaying := range playing {
+		if isPlaying && serverID[localID] != "" {
+			ids = append(ids, serverID[localID])
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// reportPlaying tells the server what this device sees being played right
+// now. Best-effort: presence is a courtesy the Dash shows and ages out on
+// its own, so a failed report is not worth failing a pass over.
+func reportPlaying(ctx context.Context, server *remote.Client, presence presenceWatch, playing map[string]bool) {
+	if presence.deviceID == "" {
+		return
+	}
+	_ = server.ReportDeviceStatus(ctx, presence.deviceID, playingServerGameIDs(presence.serverID, playing))
 }

@@ -271,3 +271,41 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return function(request)
 }
+
+func TestClientReportsDeviceStatus(t *testing.T) {
+	var requested struct {
+		method, path, body string
+	}
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		payload, _ := io.ReadAll(request.Body)
+		requested.method = request.Method
+		requested.path = request.URL.Path
+		requested.body = string(payload)
+		return &http.Response{
+			StatusCode: http.StatusNoContent,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("")),
+		}, nil
+	})}
+	client, err := remote.New("http://server", "secret", httpClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.ReportDeviceStatus(context.Background(), "device-1", []string{"game-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if requested.method != http.MethodPut || requested.path != "/api/v1/devices/device-1/status" {
+		t.Fatalf("unexpected request: %+v", requested)
+	}
+	if requested.body != `{"playing_game_ids":["game-1"]}` {
+		t.Fatalf("unexpected body: %s", requested.body)
+	}
+
+	if err := client.ReportDeviceStatus(context.Background(), "device-1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if requested.body != `{"playing_game_ids":[]}` {
+		t.Fatalf("expected an explicit empty clear, got %s", requested.body)
+	}
+}

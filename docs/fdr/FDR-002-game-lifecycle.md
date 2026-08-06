@@ -47,6 +47,14 @@ from registration and tracking alone.
   keep settled content visible until its replacement is ready.
 - Device liveness (last seen) updates on explicit acts — registration,
   tracking, sync — not on every request.
+- A Device also reports which tracked games it sees being played right now.
+  The report is presence, not provenance: the server holds it in memory with
+  a short credibility window, stitches it into game reads as a playing flag
+  on the provenance record, and lets it age out on its own — a crashed or
+  offline Device stops reading as playing without anyone's help. Watch
+  re-affirms about once a minute; presence moves on its own event scope
+  (devices.changed) so a status report never triggers other devices'
+  reconcile passes.
 
 ## Design Decisions
 

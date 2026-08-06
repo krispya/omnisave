@@ -215,6 +215,12 @@ func keepWatching(
 // pass should answer the burst.
 const serverSettle = 2 * time.Second
 
+// presenceReaffirm is how often watch re-affirms which games are being
+// played. It must stay comfortably inside the server's credibility window,
+// so a quiet session keeps reading as playing and a closed one clears
+// within about a minute.
+const presenceReaffirm = time.Minute
+
 type watchLoop struct {
 	scanner *client.Scanner
 	server  *remote.Client
@@ -253,8 +259,10 @@ func (l watchLoop) finish(sink watchSink, started time.Time, snapshot tui.Report
 // run's changes are honored; a failed pass leaves work for the next one.
 func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	// deferred carries the playing games whose exit resolves a held-back
-	// pull; each pass replaces it wholesale.
+	// pull; presence carries what the re-affirm ticker reports between
+	// passes. Each pass replaces both wholesale.
 	var deferred []running.Game
+	var presence presenceWatch
 	pass := func() []string {
 		started := time.Now()
 		sink.PassStarted()
@@ -265,8 +273,9 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			return nil
 		}
 		report := &tui.TrackReport{}
-		outcome, files, passDeferred, err := syncPass(passCtx, l.scanner, l.server, l.detector, &state, report, l.floor)
+		outcome, files, passDeferred, passPresence, err := syncPass(passCtx, l.scanner, l.server, l.detector, &state, report, l.floor)
 		deferred = passDeferred
+		presence = passPresence
 		if err != nil {
 			l.finish(sink, started, report.Snapshot(), "", false, err)
 			return files
@@ -290,6 +299,11 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	defer pollTicker.Stop()
 	pullTicker := time.NewTicker(l.pull)
 	defer pullTicker.Stop()
+	// Presence re-affirms on its own cadence: a game can run for an hour
+	// without writing its save, and the server's picture of "playing" must
+	// not age out just because no pass had a reason to run.
+	presenceTicker := time.NewTicker(presenceReaffirm)
+	defer presenceTicker.Stop()
 	var movement <-chan string
 	if l.movement != nil {
 		movement = l.movement(ctx)
@@ -329,6 +343,11 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			sink.Watching(len(watched))
 			signature = statSignature(watched)
 			dirty = false
+		case <-presenceTicker.C:
+			if l.detector == nil || presence.deviceID == "" {
+				continue
+			}
+			reportPlaying(ctx, l.server, presence, playingNow(ctx, l.detector, presence.games))
 		case <-pollTicker.C:
 			if deferredGameExited(ctx, l.detector, deferred) {
 				watched = pass()

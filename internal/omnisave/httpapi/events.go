@@ -15,7 +15,11 @@ const (
 	// lives, and an owner staring at the Dash should not have to reload to
 	// see the Device in their hands ask, or to watch it expire.
 	accessChangedEvent = "access.changed"
-	eventHeartbeat     = 15 * time.Second
+	// Presence moves on its own scope: a playing report must not read as
+	// library movement, or every watching device would answer another
+	// device's status report with a full reconcile pass.
+	devicesChangedEvent = "devices.changed"
+	eventHeartbeat      = 15 * time.Second
 )
 
 type serverEvent struct {
@@ -126,6 +130,10 @@ func (a *API) publishLibraryChanged() {
 
 func (a *API) publishAccessChanged() {
 	a.events.publish(accessChangedEvent)
+}
+
+func (a *API) publishDevicesChanged() {
+	a.events.publish(devicesChangedEvent)
 }
 
 func (a *API) streamEvents(w http.ResponseWriter, r *http.Request) {
