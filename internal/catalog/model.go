@@ -79,6 +79,11 @@ type GameTracking struct {
 	FirstTrackedAt time.Time  `json:"first_tracked_at"`
 	LastSeenAt     time.Time  `json:"last_seen_at"`
 	UntrackedAt    *time.Time `json:"untracked_at,omitempty"`
+	// Playing is presence, not provenance: the Device recently reported a
+	// live session of this Game. It is stitched in when a Game is served
+	// and never persists.
+	Playing           bool       `json:"playing,omitempty"`
+	PlayingReportedAt *time.Time `json:"playing_reported_at,omitempty"`
 }
 
 // TrackGame reports that a Device tracks a Game.
