@@ -46,6 +46,7 @@ import { buildLibrary } from '../features/library/build-library.js';
 import { FixMatchDialog } from '../features/library/fix-match-dialog.js';
 import { DeleteSaveDialog } from '../features/omnisave/delete-save-dialog.js';
 import { GameLibrary, GameLibraryLoading } from '../features/library/game-library.js';
+import { NowPlaying } from '../features/library/now-playing.js';
 import { navigate, useRoute } from '../lib/route.js';
 import { useServerEvents, type ServerEventStatus } from '../lib/use-server-events.js';
 import { RouteLink } from '../components/route-link.js';
@@ -354,30 +355,23 @@ function LibraryDashboard({
     }
   }
 
-  const librarySummary = catalog
-    ? `${games.length} ${games.length === 1 ? 'game' : 'games'} in your library · ${saves.length} ${
-        saves.length === 1 ? 'save' : 'saves'
-      }.`
-    : `${games.length} ${games.length === 1 ? 'game' : 'games'} with saved progress.`;
   const visibleError = error || snapshot.error;
 
   return (
     <>
-      <section className="flex items-end justify-between gap-5">
-        {selectedGame ? (
+      {/* The Library needs no title: the covers say what this is, and a count
+          of games nobody asked for is a line of chrome above every visit. Only
+          a game opened from it earns a header, and only to lead back out. */}
+      {selectedGame ? (
+        <section className="mb-2">
           <RouteLink
             to={{ name: 'library' }}
             className="text-sm font-medium text-muted transition duration-120 hover:text-text"
           >
             ← All games
           </RouteLink>
-        ) : (
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-text">Games</h1>
-            <p className="mt-1.5 text-sm text-muted">{librarySummary}</p>
-          </div>
-        )}
-      </section>
+        </section>
+      ) : null}
 
       {visibleError ? (
         <div
@@ -403,15 +397,19 @@ function LibraryDashboard({
           onForkRevision={forkSaveAtRevision}
         />
       ) : (
-        <section className="mt-8" aria-label="Game library" aria-busy={libraryPending}>
-          <GameLibrary
-            games={games}
-            token={token}
-            onRequestFixMatch={setFixMatchTarget}
-            onRequestDeleteSaves={requestDeleteGameSaves}
-            onRequestDeleteGame={requestDeleteGame}
-          />
-        </section>
+        <div aria-busy={libraryPending}>
+          <NowPlaying games={games} token={token} />
+
+          <section aria-label="Game library">
+            <GameLibrary
+              games={games}
+              token={token}
+              onRequestFixMatch={setFixMatchTarget}
+              onRequestDeleteSaves={requestDeleteGameSaves}
+              onRequestDeleteGame={requestDeleteGame}
+            />
+          </section>
+        </div>
       )}
 
       {deleteTarget?.type === 'game' ? (

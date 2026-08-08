@@ -1,7 +1,7 @@
 import { OptionsMenu } from '../../components/options-menu.js';
 import { RouteLink } from '../../components/route-link.js';
 import { GameArtwork } from '../game/game-artwork.js';
-import type { GameSummary } from '../game/game-summary.js';
+import { releaseYear, type GameSummary } from '../game/game-summary.js';
 
 export function GameLibrary({
   games,
@@ -91,9 +91,11 @@ function GameCard({
         <h2 className="mt-2.5 truncate text-[13px] font-medium text-text/80 group-hover:text-text">
           {game.label}
         </h2>
-        <p className="mt-1 text-xs text-muted">
-          {saveCount === 0 ? 'No saves yet' : `${saveCount} ${saveCount === 1 ? 'save' : 'saves'}`}
-        </p>
+        {/* The save count is already the badge on the artwork, so this line is
+            free to carry the one fact that tells two games of the same name
+            apart. It keeps its height when no provider supplied a year, so the
+            captions across a row stay on one baseline. */}
+        <p className="mt-1 h-4 truncate text-xs text-muted">{releaseYear(game) ?? ''}</p>
       </RouteLink>
     </article>
   );
