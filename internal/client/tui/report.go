@@ -279,7 +279,7 @@ func ComposeReport(snapshot ReportSnapshot, now time.Time) []string {
 		}
 	}
 	for _, game := range snapshot.Games {
-		lines = append(lines, gameLine(game, standingState(game, now), width))
+		lines = append(lines, gameLine(game, false, standingState(game, now), width))
 		for _, event := range game.Events {
 			lines = append(lines, eventIndent+mutedStyle.Render(event))
 		}
@@ -289,8 +289,10 @@ func ComposeReport(snapshot ReportSnapshot, now time.Time) []string {
 
 // ComposeStanding renders only what is true right now — one line per game,
 // no event lines. It is the live view's table: a pass's events scroll past
-// as their own lines (see Event), so the pinned block never grows.
-func ComposeStanding(snapshot ReportSnapshot, now time.Time) []string {
+// as their own lines (see Event), so the pinned block never grows. The
+// playing set, keyed by display title, is presence stitched in at render
+// time — it moves on its own cadence, never part of a pass's report.
+func ComposeStanding(snapshot ReportSnapshot, playing map[string]bool, now time.Time) []string {
 	width := 0
 	for _, game := range snapshot.Games {
 		if count := utf8.RuneCountInString(game.Title); count > width {
@@ -299,7 +301,7 @@ func ComposeStanding(snapshot ReportSnapshot, now time.Time) []string {
 	}
 	lines := make([]string, 0, len(snapshot.Games))
 	for _, game := range snapshot.Games {
-		lines = append(lines, gameLine(game, condition(game, now), width))
+		lines = append(lines, gameLine(game, playing[game.Title], condition(game, now), width))
 	}
 	return lines
 }
@@ -342,8 +344,14 @@ const eventIndent = "      "
 // gameLine is what is true of a game: its state glyph, its name, and the
 // status it carries. What happened this pass reads underneath, so a game
 // with nothing to report still holds exactly one line.
-func gameLine(game GameStatus, status string, width int) string {
-	line := "  " + game.Glyph + " " + plainTitle(game.Title)
+func gameLine(game GameStatus, playing bool, status string, width int) string {
+	glyph := game.Glyph
+	// A live session claims the state glyph: playing is the row's most
+	// current truth, and the glyph column keeps every line aligned.
+	if playing {
+		glyph = successStyle.Render("▶")
+	}
+	line := "  " + glyph + " " + plainTitle(game.Title)
 	if status == "" {
 		return line
 	}

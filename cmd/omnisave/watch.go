@@ -13,8 +13,8 @@ import (
 	"github.com/mattn/go-isatty"
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
-	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
+	"github.com/krisbaumgartner/omnisave/internal/client/running"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
 )
@@ -24,7 +24,9 @@ import (
 type watchSink interface {
 	Watching(files int)
 	PassStarted()
-	Activity(message string)
+	// Playing replaces the set of games this device currently sees being
+	// played, by display title; an empty set clears every marker.
+	Playing(titles []string)
 	PassFinished(result tui.PassResult)
 	Requests() <-chan tui.WatchRequest
 }
@@ -204,15 +206,24 @@ func keepWatching(
 // events add nothing to it, so steady traffic cannot postpone the pass.
 const serverSettle = 2 * time.Second
 
+// presenceReaffirm is how often watch re-affirms which games are being
+// played. It must stay comfortably inside the server's credibility window,
+// so a quiet session keeps reading as playing and a closed one clears
+// within about a minute.
+const presenceReaffirm = time.Minute
+
 type watchLoop struct {
 	scanner *client.Scanner
 	server  *remote.Client
 	store   *tracking.Store
-	poll    time.Duration
-	pull    time.Duration
-	floor   time.Duration
-	settle  time.Duration
-	events  *announcer
+	// detector answers which tracked games have a live process; nil turns
+	// presence off entirely, which is what loop tests want.
+	detector *running.Detector
+	poll     time.Duration
+	pull     time.Duration
+	floor    time.Duration
+	settle   time.Duration
+	events   *announcer
 	// movement subscribes to the server's change feed; nil leaves the
 	// periodic pull as the only way server-side movement is noticed.
 	movement func(context.Context) <-chan string
@@ -220,6 +231,10 @@ type watchLoop struct {
 	// discovered, so a hand-off from track watches immediately instead of
 	// repeating the pass that run just finished.
 	watched []string
+	// presence seeds the loop with the presence picture that same run
+	// established, so playing games report immediately instead of waiting
+	// out the first pass.
+	presence presenceWatch
 }
 
 // newWatchLoop wires the loop the way every real caller needs it: timings
@@ -231,6 +246,7 @@ func newWatchLoop(scanner *client.Scanner, server *remote.Client, store *trackin
 		scanner:  scanner,
 		server:   server,
 		store:    store,
+		detector: running.PlatformDetector(),
 		poll:     settings.poll,
 		pull:     settings.pull,
 		floor:    settings.floor,
@@ -256,17 +272,47 @@ func (l watchLoop) finish(sink watchSink, started time.Time, snapshot tui.Report
 // run polls until ctx ends. State reloads every pass so a concurrent track
 // run's changes are honored; a failed pass leaves work for the next one.
 func (l watchLoop) run(ctx context.Context, sink watchSink) {
+	// presence carries what the re-affirm ticker sweeps and reports between
+	// passes; a pass that produced a picture replaces it wholesale. A
+	// hand-off from track seeds it, the same way it seeds the watched files.
+	presence := l.presence
+	affirmPresence := func() {
+		if l.detector == nil || presence.deviceID == "" {
+			return
+		}
+		playing, err := playingNow(ctx, l.detector, presence.matchers)
+		if err != nil {
+			// A failed sweep skips the report: the server's picture holds
+			// through its credibility window, while an empty report would
+			// clear a game still being played.
+			return
+		}
+		reportPlaying(ctx, l.server, presence, playing)
+		sink.Playing(playingGames(presence.titles, playing))
+	}
+	// Presence re-affirms on its own cadence: a game can run for an hour
+	// without writing its save, and the server's picture of "playing" must
+	// not age out just because no pass had a reason to run. A pass affirms
+	// too, so each one pushes the next re-affirm a full interval out.
+	presenceTicker := time.NewTicker(presenceReaffirm)
+	defer presenceTicker.Stop()
 	pass := func() []string {
 		started := time.Now()
 		sink.PassStarted()
-		passCtx := activity.WithReporter(ctx, sink.Activity)
 		state, err := l.store.Load()
 		if err != nil {
 			l.finish(sink, started, tui.ReportSnapshot{}, "", false, err)
 			return nil
 		}
 		report := &tui.TrackReport{}
-		outcome, files, err := syncPass(passCtx, l.scanner, l.server, &state, report, l.floor)
+		outcome, files, passPresence, err := syncPass(ctx, l.scanner, l.server, &state, report, l.floor)
+		// A failed scan yields no picture; the presence already standing
+		// keeps re-affirming rather than being zeroed by the failure.
+		if passPresence.deviceID != "" {
+			presence = passPresence
+		}
+		affirmPresence()
+		presenceTicker.Reset(presenceReaffirm)
 		if err != nil {
 			l.finish(sink, started, report.Snapshot(), "", false, err)
 			return files
@@ -282,6 +328,10 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	watched := l.watched
 	if watched == nil {
 		watched = pass()
+	} else {
+		// A hand-off skipped the opening pass, so the run's presence picture
+		// goes live now instead of waiting out the first ticker interval.
+		affirmPresence()
 	}
 	sink.Watching(len(watched))
 	signature := statSignature(watched)
@@ -351,6 +401,8 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 		case <-sink.Requests():
 			// The user asked; theirs is the one trigger that never waits.
 			refresh()
+		case <-presenceTicker.C:
+			affirmPresence()
 		case <-pullTicker.C:
 			if stillWriting() {
 				continue
@@ -382,7 +434,9 @@ func (plainWatchSink) Watching(files int) {
 
 func (plainWatchSink) PassStarted() {}
 
-func (plainWatchSink) Activity(string) {}
+// Playing is silent in plain mode: presence is a live marker, and reprinting
+// it every re-affirmation would be noise in a stream of one-time events.
+func (plainWatchSink) Playing([]string) {}
 
 func (plainWatchSink) PassFinished(result tui.PassResult) {
 	if result.Err != nil {

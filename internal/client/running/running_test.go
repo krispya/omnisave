@@ -1,4 +1,4 @@
-package running_test
+package running
 
 import (
 	"context"
@@ -6,116 +6,179 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-
-	"github.com/krisbaumgartner/omnisave/internal/client/running"
+	"time"
 )
 
-type fixedLister struct {
-	processes []running.Process
-	err       error
+type fakeProvider struct {
+	processes    []Process
+	cmdlines     map[int32][]string
+	openPaths    map[int32][]string
+	err          error
+	cmdlineReads map[int32]int
 }
 
-func (l fixedLister) Processes(context.Context) ([]running.Process, error) {
-	return l.processes, l.err
+func (p *fakeProvider) Processes(context.Context) ([]Process, error) {
+	return p.processes, p.err
+}
+
+func (p *fakeProvider) Cmdline(_ context.Context, pid int32) ([]string, error) {
+	if p.cmdlineReads == nil {
+		p.cmdlineReads = make(map[int32]int)
+	}
+	p.cmdlineReads[pid]++
+	return p.cmdlines[pid], nil
+}
+
+func (p *fakeProvider) OpenPaths(_ context.Context, pid int32) ([]string, error) {
+	return p.openPaths[pid], nil
 }
 
 func native(path string) string {
 	return filepath.FromSlash(path)
 }
 
-func TestAProcessInsideAGamesRootMeansTheGameIsPlaying(t *testing.T) {
-	detector := running.NewDetector(fixedLister{processes: []running.Process{
-		{PID: 7, Executable: native("/games/elden-ring/game.exe")},
-		{PID: 9, Executable: native("/usr/bin/zsh")},
-	}})
-
-	playing, err := detector.Playing(context.Background(), []running.Game{
-		{ID: "elden-ring", Roots: []string{native("/games/elden-ring")}},
-		{ID: "hades", Roots: []string{native("/games/hades")}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !playing["elden-ring"] || playing["hades"] {
-		t.Fatalf("expected only elden-ring playing, got %v", playing)
+func claim(ids ...string) Matcher {
+	return func(context.Context, *Snapshot) (map[string]bool, error) {
+		claimed := make(map[string]bool)
+		for _, id := range ids {
+			claimed[id] = true
+		}
+		return claimed, nil
 	}
 }
 
-func TestATargetRootClaimsAnEmulatedGamesFrontendProcess(t *testing.T) {
-	detector := running.NewDetector(fixedLister{processes: []running.Process{
-		{PID: 3, Executable: native("/apps/retroarch/retroarch")},
-	}})
+func TestEveryMatcherAnswersFromOneSharedSweep(t *testing.T) {
+	provider := &fakeProvider{
+		processes: []Process{{PID: 7, Name: "game", Executable: native("/games/elden-ring/game")}},
+		cmdlines:  map[int32][]string{7: {"game", "--windowed"}},
+	}
+	detector := NewDetector(provider)
 
-	playing, err := detector.Playing(context.Background(), []running.Game{
-		{ID: "chrono-trigger", Roots: []string{
-			native("/roms/chrono-trigger"),
-			native("/apps/retroarch"),
-		}},
-	})
+	asks := 0
+	ask := func(ctx context.Context, snapshot *Snapshot) (map[string]bool, error) {
+		asks++
+		if len(snapshot.Cmdline(ctx, 7)) == 0 {
+			t.Fatal("expected the snapshot to answer the cmdline")
+		}
+		return map[string]bool{}, nil
+	}
+
+	playing, err := detector.Playing(context.Background(), ask, ask, claim("elden-ring"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !playing["chrono-trigger"] {
-		t.Fatalf("expected the frontend process to count, got %v", playing)
+	if asks != 2 || !playing["elden-ring"] {
+		t.Fatalf("expected both matchers consulted and claims merged, got asks=%d playing=%v", asks, playing)
+	}
+	if provider.cmdlineReads[7] != 1 {
+		t.Fatalf("expected one cmdline read shared across matchers, got %d", provider.cmdlineReads[7])
 	}
 }
 
-func TestARootNeverClaimsItsSimilarlyNamedSibling(t *testing.T) {
-	detector := running.NewDetector(fixedLister{processes: []running.Process{
-		{PID: 4, Executable: native("/games/hades-two/game")},
-	}})
+func TestMatcherClaimsMerge(t *testing.T) {
+	detector := NewDetector(&fakeProvider{})
 
-	playing, err := detector.Playing(context.Background(), []running.Game{
-		{ID: "hades", Roots: []string{native("/games/hades")}},
-	})
+	playing, err := detector.Playing(context.Background(), claim("elden-ring"), claim("hades"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if playing["hades"] {
-		t.Fatalf("expected the sibling directory to stay unclaimed, got %v", playing)
+	if !playing["elden-ring"] || !playing["hades"] {
+		t.Fatalf("expected both games playing, got %v", playing)
 	}
 }
 
-func TestEmptyRootsAndEmptyExecutablesNeverMatch(t *testing.T) {
-	detector := running.NewDetector(fixedLister{processes: []running.Process{
-		{PID: 4, Executable: ""},
-		{PID: 5, Executable: native("/games/hades/game")},
-	}})
+func TestAStoppedGameLingersOnlyThroughTheStopGrace(t *testing.T) {
+	now := time.Unix(1000, 0)
+	detector := NewDetector(&fakeProvider{})
+	detector.grace = 6 * time.Second
+	detector.now = func() time.Time { return now }
 
-	playing, err := detector.Playing(context.Background(), []running.Game{
-		{ID: "unrooted", Roots: []string{""}},
-		{ID: "rootless"},
-	})
-	if err != nil {
-		t.Fatal(err)
+	if playing, err := detector.Playing(context.Background(), claim("hades")); err != nil || !playing["hades"] {
+		t.Fatalf("expected hades playing, got %v, %v", playing, err)
 	}
-	if len(playing) != 0 {
-		t.Fatalf("expected nothing to match, got %v", playing)
+
+	now = now.Add(3 * time.Second)
+	if playing, err := detector.Playing(context.Background()); err != nil || !playing["hades"] {
+		t.Fatalf("expected hades held through the grace, got %v, %v", playing, err)
+	}
+
+	now = now.Add(10 * time.Second)
+	if playing, err := detector.Playing(context.Background()); err != nil || playing["hades"] {
+		t.Fatalf("expected hades released after the grace, got %v, %v", playing, err)
 	}
 }
 
-func TestCaseFoldingFollowsThePlatform(t *testing.T) {
-	detector := running.NewDetector(fixedLister{processes: []running.Process{
-		{PID: 4, Executable: native("/Games/Hades/Game")},
-	}})
+func TestAZeroGraceReleasesImmediately(t *testing.T) {
+	detector := NewDetector(&fakeProvider{})
+	detector.grace = 0
 
-	playing, err := detector.Playing(context.Background(), []running.Game{
-		{ID: "hades", Roots: []string{native("/games/hades")}},
-	})
-	if err != nil {
-		t.Fatal(err)
+	if playing, err := detector.Playing(context.Background(), claim("hades")); err != nil || !playing["hades"] {
+		t.Fatalf("expected hades playing, got %v, %v", playing, err)
 	}
-	folded := runtime.GOOS == "darwin" || runtime.GOOS == "windows"
-	if playing["hades"] != folded {
-		t.Fatalf("expected case folding %v on %s, got %v", folded, runtime.GOOS, playing)
+	if playing, err := detector.Playing(context.Background()); err != nil || playing["hades"] {
+		t.Fatalf("expected hades released, got %v, %v", playing, err)
 	}
 }
 
 func TestAFailedSweepSurfacesItsError(t *testing.T) {
 	failure := errors.New("process list unavailable")
-	detector := running.NewDetector(fixedLister{err: failure})
+	detector := NewDetector(&fakeProvider{err: failure})
 
-	if _, err := detector.Playing(context.Background(), nil); !errors.Is(err, failure) {
-		t.Fatalf("expected the lister's error, got %v", err)
+	if _, err := detector.Playing(context.Background()); !errors.Is(err, failure) {
+		t.Fatalf("expected the provider's error, got %v", err)
+	}
+}
+
+func TestAFailedMatcherSurfacesItsError(t *testing.T) {
+	failure := errors.New("adapter broke")
+	detector := NewDetector(&fakeProvider{})
+
+	_, err := detector.Playing(context.Background(), func(context.Context, *Snapshot) (map[string]bool, error) {
+		return nil, failure
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("expected the matcher's error, got %v", err)
+	}
+}
+
+func TestUnderRootCrossesWholeSegmentsOnly(t *testing.T) {
+	if !UnderRoot(native("/games/hades/game"), native("/games/hades")) {
+		t.Fatal("expected a path inside the root to match")
+	}
+	if UnderRoot(native("/games/hades-two/game"), native("/games/hades")) {
+		t.Fatal("expected the similarly-named sibling to stay unclaimed")
+	}
+	if !UnderRoot(native("/games/hades"), native("/games/hades")) {
+		t.Fatal("expected the root itself to match")
+	}
+}
+
+func TestUnderRootClaimsBeneathAFilesystemRoot(t *testing.T) {
+	root := native("/")
+	if !UnderRoot(native("/games/hades/game"), root) {
+		t.Fatal("expected a filesystem root to claim everything beneath it")
+	}
+}
+
+func TestUnderRootIgnoresEmptyPaths(t *testing.T) {
+	if UnderRoot("", native("/games")) || UnderRoot(native("/games/game"), "") {
+		t.Fatal("expected empty paths to never match")
+	}
+}
+
+func TestPathComparisonsFoldCaseWithThePlatform(t *testing.T) {
+	folded := runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+	if UnderRoot(native("/Games/Hades/Game"), native("/games/hades")) != folded {
+		t.Fatalf("expected UnderRoot case folding %v on %s", folded, runtime.GOOS)
+	}
+	if SamePath(native("/Roms/Game.sfc"), native("/roms/game.sfc")) != folded {
+		t.Fatalf("expected SamePath case folding %v on %s", folded, runtime.GOOS)
+	}
+}
+
+func TestResolveRootsSkipsEmptiesAndKeepsOriginals(t *testing.T) {
+	roots := ResolveRoots([]string{"", native("/games/hades")})
+	if len(roots) == 0 || roots[0] != native("/games/hades") {
+		t.Fatalf("expected the original root kept and empties dropped, got %v", roots)
 	}
 }

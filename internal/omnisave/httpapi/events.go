@@ -16,8 +16,9 @@ const (
 	// A pending request is worth watching for: it is visible only while it
 	// lives, and an owner staring at the Dash should not have to reload to
 	// see the Device in their hands ask, or to watch it expire.
-	accessChangedEvent = omnisave.AccessChangedEvent
-	eventHeartbeat     = 15 * time.Second
+	accessChangedEvent  = omnisave.AccessChangedEvent
+	devicesChangedEvent = omnisave.DevicesChangedEvent
+	eventHeartbeat      = 15 * time.Second
 )
 
 type serverEvent struct {
@@ -128,6 +129,10 @@ func (a *API) publishLibraryChanged() {
 
 func (a *API) publishAccessChanged() {
 	a.events.publish(accessChangedEvent)
+}
+
+func (a *API) publishDevicesChanged() {
+	a.events.publish(devicesChangedEvent)
 }
 
 func (a *API) streamEvents(w http.ResponseWriter, r *http.Request) {

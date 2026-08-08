@@ -15,6 +15,11 @@ const safetyRefreshInterval = 5 * 60_000;
  * shell listens for both the Library's changes and access changes, so a
  * pairing request can interrupt whatever the owner is doing without a second
  * stream open behind it.
+ *
+ * `onRefresh` receives the event types that provoked the refresh, so a caller
+ * can answer a cheap event with a cheap fetch. An empty list means "refresh
+ * everything": the safety interval, coming back online, and returning to a
+ * visible tab all carry no event to blame.
  */
 export function useServerEvents({
   token,
@@ -24,7 +29,7 @@ export function useServerEvents({
 }: {
   token: string;
   eventTypes: string[];
-  onRefresh: () => Promise<unknown>;
+  onRefresh: (events: string[]) => Promise<unknown>;
   onStatusChange: (status: ServerEventStatus) => void;
 }) {
   const refresh = useEffectEvent(onRefresh);
@@ -36,30 +41,39 @@ export function useServerEvents({
     const controller = new AbortController();
     let refreshTimer: number | undefined;
     let refreshRunning = false;
-    let refreshQueued = false;
+    // The event types accumulated since the last refresh; an empty set means
+    // "refresh everything" and subsumes any named event that joins it.
+    let queuedEvents: Set<string> | undefined;
     let lastEventID = '';
 
     async function runRefresh() {
       if (refreshRunning || controller.signal.aborted) return;
       refreshRunning = true;
       try {
-        do {
-          refreshQueued = false;
-          await refresh();
-        } while (refreshQueued && !controller.signal.aborted);
+        while (queuedEvents !== undefined && !controller.signal.aborted) {
+          const events = [...queuedEvents];
+          queuedEvents = undefined;
+          await refresh(events);
+        }
       } finally {
         refreshRunning = false;
       }
     }
 
-    function queueRefresh() {
+    function queueRefresh(event?: string) {
       if (controller.signal.aborted) return;
-      refreshQueued = true;
+      if (event === undefined) queuedEvents = new Set();
+      else if (queuedEvents === undefined) queuedEvents = new Set([event]);
+      else if (queuedEvents.size > 0) queuedEvents.add(event);
       if (refreshRunning || refreshTimer !== undefined) return;
       refreshTimer = window.setTimeout(() => {
         refreshTimer = undefined;
         void runRefresh();
       }, burstDelay);
+    }
+
+    function refreshEverything() {
+      queueRefresh();
     }
 
     function refreshWhenVisible() {
@@ -80,7 +94,7 @@ export function useServerEvents({
             },
             onEvent: (event) => {
               if (event.id) lastEventID = event.id;
-              if (wanted.has(event.type)) queueRefresh();
+              if (wanted.has(event.type)) queueRefresh(event.type);
             },
           });
         } catch (error) {
@@ -102,16 +116,16 @@ export function useServerEvents({
       }
     }
 
-    window.addEventListener('online', queueRefresh);
+    window.addEventListener('online', refreshEverything);
     document.addEventListener('visibilitychange', refreshWhenVisible);
-    const safetyRefresh = window.setInterval(queueRefresh, safetyRefreshInterval);
+    const safetyRefresh = window.setInterval(refreshEverything, safetyRefreshInterval);
     void connect();
 
     return () => {
       controller.abort();
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
       window.clearInterval(safetyRefresh);
-      window.removeEventListener('online', queueRefresh);
+      window.removeEventListener('online', refreshEverything);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, [token, watched]);

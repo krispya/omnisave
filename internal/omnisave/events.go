@@ -11,4 +11,10 @@ const (
 	// AccessChangedEvent announces a pending access request appearing,
 	// resolving, or expiring.
 	AccessChangedEvent = "access.changed"
+	// DevicesChangedEvent announces a change in device presence — a device
+	// starting or stopping play of a game. Its own scope on purpose: a
+	// playing report must not read as library movement, or every watching
+	// device would answer another device's status report with a full
+	// reconcile pass.
+	DevicesChangedEvent = "devices.changed"
 )

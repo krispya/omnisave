@@ -120,7 +120,7 @@ func (m pairingModel) View() string {
 		return ""
 	}
 	lines := []string{
-		accentStyle.Render("▲") + " " + titleStyle.Render("Omnisave"),
+		titleStyle.Render("▲ Omnisave"),
 		mutedStyle.Render("- Server:") + "  " + plainTitle(m.serverURL),
 		mutedStyle.Render("- Code:") + "    " + titleStyle.Render(spaced(m.code)),
 		"",

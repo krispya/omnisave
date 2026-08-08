@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
+	"github.com/krisbaumgartner/omnisave/internal/client/running"
 )
 
 // Target is one application installation resolved on this machine.
@@ -138,4 +139,13 @@ type Adapter interface {
 	DiscoverGames(context.Context, Target) ([]InstalledGame, error)
 	DiscoverSaves(context.Context, Target, InstalledGame) ([]Save, error)
 	DiscoverSaveDestinations(context.Context, Target, InstalledGame) ([]SaveDestination, error)
+}
+
+// Activity is implemented by adapters that can tell which of their installed
+// games are being played right now. Detection is the adapter's to define —
+// only the adapter knows what a running game looks like for its store on
+// this device — while the shared snapshot keeps every adapter's answer to
+// one process sweep. The result maps InstalledGame IDs to liveness.
+type Activity interface {
+	RunningGames(ctx context.Context, snapshot *running.Snapshot, discovered Target, games []InstalledGame) (map[string]bool, error)
 }

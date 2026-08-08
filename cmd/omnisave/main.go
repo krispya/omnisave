@@ -651,6 +651,7 @@ func keepTracking(
 	events.seen(pass.snapshot)
 	loop := newWatchLoop(scanner, server, store, settings, events)
 	loop.watched = watchedFiles(state, scans)
+	loop.presence = trackedPresence(scanner, state, scans)
 	url, _ := serverConnection(*state, flagURL, flagToken)
 	return keepWatching(ctx, loop, url, settings, pass)
 }
