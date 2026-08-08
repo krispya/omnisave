@@ -331,9 +331,18 @@ func (s *service) OpenMedia(ctx context.Context, gameID, mediaID string) (*catal
 	return media, payload, nil
 }
 
+// cacheableMediaKinds is what the catalog will fetch and keep. A provider may
+// describe more than this; anything not listed here is refused rather than
+// stored, so an unrecognized kind cannot quietly fill the artifact store.
+//
+// "cover" is the portrait box art and "artwork"/"screenshot" are the landscape
+// images — the two shapes the Dash draws, kept apart because neither can stand
+// in for the other.
+var cacheableMediaKinds = map[string]bool{"cover": true, "artwork": true, "screenshot": true}
+
 func (s *service) cacheMedia(ctx context.Context, gameID string, reference catalog.MediaReference) error {
 	provider := s.providers[reference.Provider]
-	if provider == nil || reference.ProviderID == "" || (reference.Kind != "cover" && reference.Kind != "screenshot") {
+	if provider == nil || reference.ProviderID == "" || !cacheableMediaKinds[reference.Kind] {
 		return catalog.ErrInvalid
 	}
 	format, payload, err := provider.OpenMedia(ctx, reference)

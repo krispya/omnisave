@@ -1,4 +1,6 @@
-import { useEffect, useId, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { Button } from './button.js';
+import { Dialog, DialogActions, DialogError } from './dialog.js';
 
 type DeleteDialogProps = {
   title: string;
@@ -27,56 +29,19 @@ export function DeleteDialog({
   onCancel,
   onConfirm,
 }: DeleteDialogProps) {
-  const titleID = useId();
-
-  useEffect(() => {
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape' && !deleting) onCancel();
-    }
-
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [deleting, onCancel]);
-
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/80 px-5" role="presentation">
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleID}
-        className="w-full max-w-md rounded-lg border border-white/10 bg-[#202020] p-6 shadow-2xl"
-      >
-        <h2 id={titleID} className="text-lg font-medium text-white">
-          {title}
-        </h2>
-        <p className="mt-3 text-sm leading-6 text-neutral-400">{description}</p>
+    <Dialog title={title} description={description} busy={deleting} onDismiss={onCancel}>
+      {error ? <DialogError>{error}</DialogError> : null}
 
-        {error ? (
-          <p role="alert" className="mt-4 rounded-md bg-red-400/10 px-3 py-2 text-sm text-red-200">
-            {error}
-          </p>
-        ) : null}
-
-        <div className="mt-6 flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={deleting}
-            autoFocus
-            className="rounded-md bg-white/5 px-4 py-2 text-sm font-medium text-neutral-300 transition hover:bg-white/10 disabled:opacity-40"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={deleting}
-            className="rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-500 disabled:opacity-40"
-          >
-            {deleting ? busyLabel : confirmLabel}
-          </button>
-        </div>
-      </section>
-    </div>
+      <DialogActions>
+        {/* Focus starts on the way out, so a reflexive Enter cancels rather than deletes. */}
+        <Button variant="plain" onClick={onCancel} disabled={deleting} autoFocus>
+          Cancel
+        </Button>
+        <Button variant="danger" onClick={onConfirm} disabled={deleting}>
+          {deleting ? busyLabel : confirmLabel}
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 }

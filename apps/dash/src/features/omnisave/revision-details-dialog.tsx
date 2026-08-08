@@ -48,7 +48,9 @@ export function RevisionDetailsDialog({
 
   function wrapTab(event: ReactKeyboardEvent<HTMLElement>) {
     if (event.key !== 'Tab') return;
-    const stops = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled)') ?? [])];
+    const stops = [
+      ...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled)') ?? []),
+    ];
     const edge = event.shiftKey ? stops[0] : stops[stops.length - 1];
     if (document.activeElement !== edge) return;
     event.preventDefault();
@@ -57,7 +59,7 @@ export function RevisionDetailsDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/80 px-5"
+      className="fixed inset-0 z-50 grid place-items-center bg-black/70 px-5"
       role="presentation"
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -69,19 +71,22 @@ export function RevisionDetailsDialog({
         aria-modal="true"
         aria-labelledby={titleID}
         onKeyDown={wrapTab}
-        className="max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-lg border border-white/10 bg-[#202020] p-6 shadow-2xl"
+        className="max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-lg border border-outline bg-surface p-6"
       >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h2 id={titleID} className="flex flex-wrap items-center gap-2 text-lg font-medium text-white">
+            <h2
+              id={titleID}
+              className="flex flex-wrap items-center gap-2 text-lg font-medium text-text"
+            >
               <span className="truncate">{revisionName(revision)}</span>
               {isCurrent ? (
-                <span className="rounded bg-[#e5a00d]/15 px-1.5 py-0.5 text-[10px] font-medium text-[#e5a00d]">
+                <span className="rounded bg-text/15 px-1.5 py-0.5 text-[10px] font-medium text-text">
                   current
                 </span>
               ) : null}
               {isForkPoint ? (
-                <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-normal text-neutral-400">
+                <span className="rounded bg-text/8 px-1.5 py-0.5 text-[10px] font-normal text-muted">
                   shared fork point
                 </span>
               ) : null}
@@ -92,18 +97,18 @@ export function RevisionDetailsDialog({
             onClick={onClose}
             data-autofocus
             aria-label="Close details"
-            className="-mt-1 -mr-1 rounded-md p-2 text-neutral-400 transition hover:bg-white/5 hover:text-white"
+            className="-mt-1 -mr-1 rounded-md p-2 text-muted transition hover:bg-text/8 hover:text-text"
           >
             ✕
           </button>
         </div>
         <dl className="mt-5 grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-[8rem_minmax(0,1fr)]">
-          <dt className="text-slate-500">Revision ID</dt>
-          <dd className="min-w-0 font-mono text-xs break-all text-neutral-300">{revision.id}</dd>
-          <dt className="text-slate-500">Created</dt>
-          <dd className="min-w-0 text-neutral-300">{formatDateTime(revision.created_at)}</dd>
-          <dt className="text-slate-500">Parent</dt>
-          <dd className="min-w-0 text-neutral-300">
+          <dt className="text-muted">Revision ID</dt>
+          <dd className="min-w-0 font-mono text-xs break-all text-text">{revision.id}</dd>
+          <dt className="text-muted">Created</dt>
+          <dd className="min-w-0 text-text">{formatDateTime(revision.created_at)}</dd>
+          <dt className="text-muted">Parent</dt>
+          <dd className="min-w-0 text-text">
             {revision.parent_id ? (
               <span className="font-mono text-xs break-all">
                 {parent ? `${revisionName(parent)} · ` : ''}
@@ -113,17 +118,17 @@ export function RevisionDetailsDialog({
               'root'
             )}
           </dd>
-          <dt className="text-slate-500">Files</dt>
-          <dd className="min-w-0 text-neutral-300">
-            <span className="text-xs text-slate-500">
+          <dt className="text-muted">Files</dt>
+          <dd className="min-w-0 text-text">
+            <span className="text-xs text-muted">
               {revision.files.length} {revision.files.length === 1 ? 'file' : 'files'} ·{' '}
               {formatBytes(totalSize)}
             </span>
             <ul className="mt-2 space-y-2">
               {revision.files.map((file) => (
                 <li key={file.path} className="min-w-0">
-                  <p className="font-mono text-xs break-all text-neutral-200">{file.path}</p>
-                  <p className="font-mono text-[10px] break-all text-slate-600">
+                  <p className="font-mono text-xs break-all text-text">{file.path}</p>
+                  <p className="font-mono text-[10px] break-all text-muted">
                     {formatBytes(file.artifact.size)} · {file.artifact.sha256}
                   </p>
                 </li>
