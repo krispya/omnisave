@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button } from '../../components/button.js';
 import { updateRevisionDisplayName, type Omnisave, type Revision } from '../../lib/omnisave-api.js';
 import { GameArtwork, GameMediaImage } from './game-artwork.js';
-import type { GameSummary } from './game-summary.js';
+import { playingOn, type GameSummary } from './game-summary.js';
 import { GameDetailsDialog } from './details-dialog.js';
 import type { RevisionFocus } from '../omnisave/revision-log.js';
 import { SaveList } from '../omnisave/save-list.js';
@@ -268,6 +268,7 @@ export function GameDetail({
           key={`${activeRevisionAction.kind}:${activeRevisionAction.save.id}:${activeRevisionAction.revision.id}`}
           action={activeRevisionAction}
           saveName={actionSaveName}
+          playingDevices={playingOn(game).map((record) => record.device_name)}
           busy={revisionActionBusy}
           error={revisionActionError}
           onCancel={() => {
