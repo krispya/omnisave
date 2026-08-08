@@ -1,7 +1,7 @@
 # FDR-005: Save Sync
 
 **Status:** Experimental
-**Last reviewed:** 2026-08-03
+**Last reviewed:** 2026-08-08
 
 ## Overview
 
@@ -59,6 +59,10 @@ path, syncing-down built the read path; sync makes both routine.
   all-or-nothing. Immediately before placing, the local content is
   re-checked against the baseline; any change — the game just wrote —
   aborts untouched and the next pass reconsiders.
+- Syncing down also waits for the game: a pull whose game is being played
+  is deferred — "syncing down waits for the game to close" — and watch
+  applies it within about a poll interval of the game exiting
+  (decision 13).
 - Commits are gated: nothing commits when the bytes did not change,
   an empty local save never commits over good server content, and each
   save has a spacing floor so continuously flushing saves (emulator SRAM)
@@ -174,7 +178,8 @@ revision, which the server keeps — and the pre-placement re-check turns
 "the game started writing mid-download" into a clean abort.
 **Tradeoff:** A game already running during a pull can later overwrite
 the pulled files from memory and push that state; history keeps every
-revision, but the Current Revision follows the running game.
+revision, but the Current Revision follows the running game. Decision 13
+closes most of that window by holding pulls while the game runs.
 
 ### 4. Divergence prompts, and both answers keep everything
 
@@ -306,6 +311,47 @@ duplicate at every fork point.
 **Tradeoff:** Revision retention crosses Omnisave deletion boundaries: shared
 ancestors must remain until no surviving Omnisave graph needs them. There are
 no branch names, branch deletion, or merges.
+
+### 13. A pull never lands under a running game
+
+**Decision:** Before the automatic pull applies, the pass checks whether
+the bound game is being played, using the same adapter-owned detection
+that powers presence — one process sweep serves both. A playing game
+defers the pull: the save reports "syncing down waits for the game to
+close", and watch — whose presence sweeps tighten to the poll interval
+while a pull waits — applies it within about a poll interval of the game
+exiting, once the detection stop grace confirms the exit is real. The
+games whose pulls wait are recorded per game at the deferral itself, and
+they hand off from a track run to its watch phase alongside the watched
+files. Only a pass that reached the save comparison speaks for the
+standing list: a pass that failed, or whose library sync never reached
+the server, knows nothing about which pulls are still held, and taking
+its silence for an empty list would drop the exit trigger for a pull that
+never applied. The exit-triggered pass honors the quiet-interval rule
+like every other trigger, and fires once per exit: a pass that fails
+leaves the pull to the periodic one, the fallback every other trigger
+already falls back to, rather than retrying every poll for as long as it
+keeps failing. A game seen playing again re-arms the trigger, so a
+relaunch and a second quit get their own pass. Detection is best-effort
+and fails open — an unreadable process list gates nothing — the opposite
+of the presence report, which fails closed to protect the standing
+picture.
+**Why:** A running game holds its save in memory. A pull applied
+mid-session is overwritten from memory at the next save and pushed back,
+silently undoing the restore the user asked for — the exact failure
+decision 3 accepted as a tradeoff. Waiting for the game to close is what
+the user means by "rewind" anyway: the restored content is what loads
+next.
+**Tradeoff:** A rewind issued mid-session is not visible in the game
+until it closes and reopens, and a game whose adapter offers no activity
+detection is never seen as playing — those pulls fall back to decision
+3's pre-placement re-check. The interactive pass checks a sweep taken at
+its start, so a game launched while a prompt sits open can slip past the
+gate; the re-check absorbs that too. The gate is the automatic pull's
+alone: the downloads decision 3 carves out as prompted — joining a
+lineage, and decision 4's fork-or-jump answers — are answers the user
+just gave about this save, so they apply under a running game and leave
+the same in-memory overwrite to the re-check.
 
 ## Related
 

@@ -51,15 +51,14 @@ func runSync(ctx context.Context, scanner *client.Scanner, arguments []string) e
 		return err
 	}
 	report := &tui.TrackReport{}
-	outcome, _, presence, err := syncPass(ctx, scanner, server, &state, report, 0)
+	outcome, _, played, err := syncPass(ctx, scanner, server, running.PlatformDetector(), &state, report, 0)
 	if err != nil {
 		return err
 	}
-	detector := running.PlatformDetector()
 	// A failed sweep skips the report entirely: the server's picture ages
 	// out on its own, and an empty report would clear a running game.
-	if playing, playingErr := playingNow(ctx, detector, presence.matchers); playingErr == nil {
-		reportPlaying(ctx, server, presence, playing)
+	if played.swept {
+		reportPlaying(ctx, server, played.presence, played.playing)
 	}
 	report.Print()
 	tui.TrackSummary(outcome)
@@ -69,33 +68,51 @@ func runSync(ctx context.Context, scanner *client.Scanner, arguments []string) e
 // syncPass runs the headless reconcile shared by sync and watch: deletion
 // reconciliation, library sync, then the three-way save pass. It returns
 // the tracked games' local save files so watchers know what to poll, and
-// the presence picture the watch loop re-affirms between passes.
+// what the pass learned about playing games — the presence picture the
+// watch loop re-affirms between passes, the sweep behind it, and the games
+// whose pulls the pass held back under a running game.
 func syncPass(
 	ctx context.Context,
 	scanner *client.Scanner,
 	server *remote.Client,
+	detector *running.Detector,
 	state *tracking.State,
 	report *tui.TrackReport,
 	pushFloor time.Duration,
-) (tui.TrackOutcome, []string, presenceWatch, error) {
+) (tui.TrackOutcome, []string, passPlaying, error) {
 	activity.Report(ctx, "checking library")
 	reconciled := reconcileDeletedGames(ctx, server, state, report)
 	activity.Report(ctx, "scanning")
 	scans, err := scanner.ScanWithProgress(ctx, func(client.ScanProgress) {})
 	if err != nil {
-		return tui.TrackOutcome{}, nil, presenceWatch{}, err
+		return tui.TrackOutcome{}, nil, passPlaying{}, err
 	}
 	outcome, confirmed := syncTracking(ctx, server, state, scans, nil, report)
 	// Presence maps through Library identities, which the library sync just
 	// resolved, so a freshly tracked game reports on its very first pass.
-	presence := trackedPresence(scanner, state, scans)
-	if outcome.Synced {
-		if err := reconcileSaves(ctx, server, state, scans, confirmed, &outcome, report, nil, pushFloor); err != nil {
-			return outcome, nil, presence, err
+	played := passPlaying{presence: trackedPresence(scanner, state, scans)}
+	// One sweep serves two consumers with opposite failure policies: the
+	// pull gate fails open — an unreadable process list must not defer
+	// pulls forever — while the presence report fails closed, so swept
+	// says whether there is a picture worth reporting at all.
+	var gate *pullGate
+	if detector != nil {
+		if playing, sweepErr := playingNow(ctx, detector, played.presence.matchers); sweepErr == nil {
+			played.playing = playing
+			played.swept = true
+			gate = &pullGate{playing: playing}
 		}
 	}
+	if outcome.Synced {
+		if err := reconcileSaves(ctx, server, state, scans, confirmed, &outcome, report, nil, gate, pushFloor); err != nil {
+			return outcome, nil, played, err
+		}
+	}
+	if gate != nil {
+		played.waiting = gate.waiting
+	}
 	outcome.Untracked += reconciled
-	return outcome, watchedFiles(state, scans), presence, nil
+	return outcome, watchedFiles(state, scans), played, nil
 }
 
 // watchedFiles lists the local files of tracked games' discovered saves,
