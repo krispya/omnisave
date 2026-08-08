@@ -1,3 +1,4 @@
+import { Carousel } from '../../components/carousel.js';
 import type { GameProvenance } from '../../lib/omnisave-api.js';
 import { formatDate, formatRelativeDate } from '../../lib/format.js';
 
@@ -50,7 +51,7 @@ function DeviceCard({ record }: { record: GameProvenance }) {
   return (
     <div
       title={`Tracked since ${formatDate(record.first_tracked_at)} · Last seen ${formatDate(record.last_seen_at)}`}
-      className={`flex min-w-56 items-center gap-3 rounded-lg border bg-surface py-3 pr-5 pl-3.5 ${
+      className={`flex min-w-56 shrink-0 snap-start items-center gap-3 rounded-lg border bg-surface py-3 pr-5 pl-3.5 ${
         playing ? 'border-accent/50' : 'border-outline'
       } ${untracked ? 'opacity-60' : ''}`}
     >
@@ -96,11 +97,14 @@ export function TrackedDevices({ provenance }: { provenance: GameProvenance[] })
           No devices are tracking this game yet.
         </p>
       ) : (
-        <div className="flex flex-wrap gap-3">
+        // One row, paged rather than wrapped: beside the artwork the cards
+        // have little width to share, and wrapping would push the saves down
+        // for every extra device.
+        <Carousel className="gap-3">
           {records.map((record) => (
             <DeviceCard key={record.device_id} record={record} />
           ))}
-        </div>
+        </Carousel>
       )}
     </section>
   );

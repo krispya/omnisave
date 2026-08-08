@@ -1,3 +1,4 @@
+import { Carousel } from '../../components/carousel.js';
 import { RouteLink } from '../../components/route-link.js';
 import { GameMediaImage } from '../game/game-artwork.js';
 import { backdrop, playingOn, type GameSummary } from '../game/game-summary.js';
@@ -23,13 +24,13 @@ export function NowPlaying({ games, token }: { games: GameSummary[]; token: stri
   return (
     <section className="mb-10" aria-label="Playing now">
       <h2 className="mb-4 text-xs font-semibold tracking-wide text-muted uppercase">Playing now</h2>
-      {/* One row, scrolled rather than wrapped: this is a short list of what is
+      {/* One row, paged rather than wrapped: this is a short list of what is
           happening, and wrapping it would let it grow into a second Library. */}
-      <div className="-mx-1 flex snap-x gap-4 overflow-x-auto px-1 pb-2">
+      <Carousel>
         {playing.map(({ game, devices }) => (
           <PlayingCard key={game.id} game={game} devices={devices} token={token} />
         ))}
-      </div>
+      </Carousel>
     </section>
   );
 }

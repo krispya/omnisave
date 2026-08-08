@@ -11,10 +11,22 @@
  */
 
 export type IconName =
-  'menu' | 'chevron-right' | 'library' | 'settings' | 'devices' | 'network' | 'tag';
+  | 'menu'
+  | 'arrow-left'
+  | 'chevron-left'
+  | 'chevron-right'
+  | 'library'
+  | 'settings'
+  | 'devices'
+  | 'network'
+  | 'tag';
 
 const paths: Record<IconName, string> = {
   menu: 'M3.5 6.25h17a1 1 0 0 1 0 2h-17a1 1 0 0 1 0-2Zm0 4.75h17a1 1 0 0 1 0 2h-17a1 1 0 0 1 0-2Zm0 4.75h17a1 1 0 0 1 0 2h-17a1 1 0 0 1 0-2Z',
+  'arrow-left':
+    'M11.03 4.97a1 1 0 0 1 0 1.41L6.91 10.5H20a1 1 0 0 1 0 2H6.91l4.12 4.12a1 1 0 1 1-1.41 1.41l-5.83-5.82a1 1 0 0 1 0-1.42l5.83-5.82a1 1 0 0 1 1.41 0Z',
+  'chevron-left':
+    'M14.7 6.7a1 1 0 0 1 0 1.42L10.82 12l3.88 3.88a1 1 0 1 1-1.42 1.42l-4.58-4.6a1 1 0 0 1 0-1.4l4.58-4.6a1 1 0 0 1 1.42 0Z',
   'chevron-right':
     'M9.3 6.7a1 1 0 0 0 0 1.42L13.18 12 9.3 15.88a1 1 0 1 0 1.42 1.42l4.58-4.6a1 1 0 0 0 0-1.4l-4.58-4.6a1 1 0 0 0-1.42 0Z',
   // Four covers on a shelf. Two bars would have read as a pause button, which

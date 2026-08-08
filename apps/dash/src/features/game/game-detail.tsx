@@ -154,14 +154,29 @@ export function GameDetail({
   }
 
   return (
-    <div className="mt-8">
-      <section className="flex items-end gap-6 border-b border-outline pb-6">
-        <GameArtwork
-          game={game}
-          token={token}
-          className="aspect-[3/4] w-28 shrink-0 ring-1 ring-outline sm:w-36"
-        />
-        <div className="min-w-0 pb-1">
+    <div>
+      {/* The identity block: the poster and, beside it, everything that says
+          what this game is — name, facts, the Details door, the devices
+          tracking it. Nothing here launches anything; the Dash manages saves
+          rather than play, so this is a header, not a landing pad. */}
+      <section className="flex flex-col gap-6 sm:flex-row sm:gap-8">
+        {/* self-start keeps the flex row from stretching this column to the
+            metadata column's height — a stretched height would override the
+            poster's aspect ratio, which only holds while one dimension stays
+            free. */}
+        <div className="w-40 shrink-0 self-start sm:w-44 lg:w-52">
+          <GameArtwork
+            game={game}
+            token={token}
+            className="aspect-[3/4] w-full ring-1 ring-outline"
+          />
+          <div className="mt-4">
+            <Button variant="outline" className="w-full" onClick={() => setDetailsOpen(true)}>
+              Details
+            </Button>
+          </div>
+        </div>
+        <div className="min-w-0 flex-1">
           {game.platform ? (
             <p className="text-xs font-semibold tracking-[0.16em] text-muted uppercase">
               {game.platform}
@@ -170,54 +185,28 @@ export function GameDetail({
           <h2 className="mt-2 text-3xl font-semibold tracking-tight text-text sm:text-4xl">
             {game.label}
           </h2>
-          <p className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-sm text-muted">
-            {facts.map((fact, index) => (
-              <span key={fact} className="flex items-center gap-x-2.5">
-                {index > 0 ? (
-                  <span className="text-text/25" aria-hidden="true">
-                    ·
-                  </span>
-                ) : null}
-                {fact}
-              </span>
-            ))}
-          </p>
-          <div className="mt-4">
-            <Button variant="outline" onClick={() => setDetailsOpen(true)}>
-              Details
-            </Button>
-          </div>
+          {facts.length > 0 ? (
+            <p className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-sm text-muted">
+              {facts.map((fact, index) => (
+                <span key={fact} className="flex items-center gap-x-2.5">
+                  {index > 0 ? (
+                    <span className="text-text/25" aria-hidden="true">
+                      ·
+                    </span>
+                  ) : null}
+                  {fact}
+                </span>
+              ))}
+            </p>
+          ) : null}
+          <TrackedDevices provenance={game.provenance} />
         </div>
       </section>
 
-      {game.media.some((media) => media.kind === 'screenshot') ? (
-        <section className="mt-6" aria-label={`Screenshots for ${game.label}`}>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {game.media
-              .filter((media) => media.kind === 'screenshot')
-              .map((media, index) => (
-                <div
-                  key={media.id}
-                  className="aspect-video overflow-hidden rounded-sm bg-text/5 ring-1 ring-outline"
-                >
-                  <GameMediaImage
-                    token={token}
-                    media={media}
-                    alt={`${game.label} screenshot ${index + 1}`}
-                    className="size-full object-cover"
-                  />
-                </div>
-              ))}
-          </div>
-        </section>
-      ) : null}
-
-      <TrackedDevices provenance={game.provenance} />
-
-      <section className="mt-6" aria-label={`Saves for ${game.label}`}>
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-xs font-semibold tracking-wide text-muted uppercase">Saves</h3>
-        </div>
+      {/* The saves take the full width below: they are what this page is for,
+          and the revision history inside them is the widest thing on it. */}
+      <section className="mt-10" aria-label={`Saves for ${game.label}`}>
+        <h3 className="mb-4 text-xs font-semibold tracking-wide text-muted uppercase">Saves</h3>
 
         {game.saves.length === 0 ? (
           <div className="rounded-lg border border-dashed border-outline px-6 py-14 text-center">
@@ -249,6 +238,28 @@ export function GameDetail({
           />
         )}
       </section>
+
+      {game.media.some((media) => media.kind === 'screenshot') ? (
+        <section className="mt-10" aria-label={`Screenshots for ${game.label}`}>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {game.media
+              .filter((media) => media.kind === 'screenshot')
+              .map((media, index) => (
+                <div
+                  key={media.id}
+                  className="aspect-video overflow-hidden rounded-sm bg-text/5 ring-1 ring-outline"
+                >
+                  <GameMediaImage
+                    token={token}
+                    media={media}
+                    alt={`${game.label} screenshot ${index + 1}`}
+                    className="size-full object-cover"
+                  />
+                </div>
+              ))}
+          </div>
+        </section>
+      ) : null}
 
       {detailsOpen ? <GameDetailsDialog game={game} onClose={() => setDetailsOpen(false)} /> : null}
       {activeRevisionAction ? (

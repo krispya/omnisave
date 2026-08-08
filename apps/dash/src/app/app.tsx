@@ -49,8 +49,7 @@ import { GameLibrary, GameLibraryLoading } from '../features/library/game-librar
 import { NowPlaying } from '../features/library/now-playing.js';
 import { navigate, useRoute } from '../lib/route.js';
 import { useServerEvents, type ServerEventStatus } from '../lib/use-server-events.js';
-import { RouteLink } from '../components/route-link.js';
-import { ConnectionBanner, NavigationBar, NavigationRail } from './navigation-chrome.js';
+import { ConnectionBanner, NavigationBar, NavigationRail, TopBar } from './navigation-chrome.js';
 
 /**
  * The Dash holds a credential of its own, traded for the owner token once and
@@ -359,20 +358,9 @@ function LibraryDashboard({
 
   return (
     <>
-      {/* The Library needs no title: the covers say what this is, and a count
-          of games nobody asked for is a line of chrome above every visit. Only
-          a game opened from it earns a header, and only to lead back out. */}
-      {selectedGame ? (
-        <section className="mb-2">
-          <RouteLink
-            to={{ name: 'library' }}
-            className="text-sm font-medium text-muted transition duration-120 hover:text-text"
-          >
-            ← All games
-          </RouteLink>
-        </section>
-      ) : null}
-
+      {/* The top bar names this section and the rail leads back out, so
+          neither the Library nor an open game draws a header or a back link
+          of its own. */}
       {visibleError ? (
         <div
           role="alert"
@@ -466,6 +454,8 @@ export function App() {
   const [answering, setAnswering] = useState('');
   const [pairingError, setPairingError] = useState('');
   const [dismissed, setDismissed] = useState<string[]>([]);
+  // Open deliberately, from the menu — unlike the interrupt, it can be empty.
+  const [requestsOpen, setRequestsOpen] = useState(false);
   const [resource, setResource] = useState<LibraryResource | null>(() =>
     token ? initialLibraryResource(token) : null
   );
@@ -540,8 +530,8 @@ export function App() {
 
   // One stream for the whole shell. The Library refreshes on its own changes,
   // and a device asking to connect reaches the owner wherever they are —
-  // pending requests expire in minutes, so waiting for a visit to the server
-  // settings would mean missing most of them.
+  // pending requests expire in minutes, so waiting for someone to open the
+  // top bar's "Asking to connect" would mean missing most of them.
   const refreshAll = useCallback(async () => {
     await Promise.all([resource ? reloadLibrary() : Promise.resolve(), refreshPending()]);
   }, [refreshPending, reloadLibrary, resource]);
@@ -672,6 +662,18 @@ export function App() {
         {token ? <NavigationRail route={route} /> : null}
 
         <div className="flex min-w-0 flex-1 flex-col">
+          {/* Every page starts below this bar: it names the section being
+              read and holds the app-wide controls, so no page draws a title
+              of its own. */}
+          {token ? (
+            <TopBar
+              title={route.name === 'settings' ? 'Server' : 'Games Library'}
+              back={route.name === 'game' ? { name: 'library' } : undefined}
+              pendingCount={pending.length}
+              onOpenRequests={() => setRequestsOpen(true)}
+            />
+          ) : null}
+
           <main className="flex-1 px-5 py-8 sm:px-8 lg:px-10">
             {!token ? (
               <ConnectForm
@@ -684,13 +686,7 @@ export function App() {
                 onOwnerToken={enterOwnerToken}
               />
             ) : route.name === 'settings' ? (
-              <ServerSettings
-                token={token}
-                credentialID={credential.id}
-                requests={pending}
-                onAnswered={refreshPending}
-                onDisconnect={disconnect}
-              />
+              <ServerSettings token={token} credentialID={credential.id} onDisconnect={disconnect} />
             ) : resource ? (
               <Suspense fallback={<GameLibraryLoading />}>
                 <LibraryDashboard
@@ -711,14 +707,20 @@ export function App() {
         </div>
       </div>
 
-      {token && route.name !== 'settings' && unanswered.length > 0 ? (
+      {/* One dialog for both ways in: a new request opens it over whatever the
+          owner was doing, and the top bar's control opens it deliberately —
+          showing every live request, dismissed ones included. */}
+      {token && (requestsOpen || unanswered.length > 0) ? (
         <PairingDialog
-          requests={unanswered}
+          requests={requestsOpen ? pending : unanswered}
           busyID={answering}
           error={pairingError}
           onApprove={(request) => void answerPairing(request, true)}
           onDeny={(request) => void answerPairing(request, false)}
-          onDismiss={() => setDismissed(pending.map((request) => request.id))}
+          onDismiss={() => {
+            setRequestsOpen(false);
+            setDismissed(pending.map((request) => request.id));
+          }}
         />
       ) : null}
     </div>

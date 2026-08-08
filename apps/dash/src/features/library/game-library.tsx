@@ -72,10 +72,25 @@ function GameCard({
         </RouteLink>
         {saveCount > 0 ? (
           <span
-            className="absolute -top-1.5 -right-1.5 z-10 grid h-6 min-w-6 place-items-center rounded-full bg-text px-1.5 text-xs font-bold text-bg"
+            className="absolute top-2 right-2 z-10 grid h-6 min-w-6 place-items-center rounded-full bg-text px-1.5 text-xs font-bold text-bg"
             aria-label={`${saveCount} ${saveCount === 1 ? 'save' : 'saves'}`}
           >
             {saveCount}
+          </span>
+        ) : null}
+        {/* Saves whose game the server does not list render from their own
+            metadata, and actions that need a library entry (Fix Match) are
+            missing. The mark sits over the middle of the artwork — this card
+            is a problem to notice, not a game with a footnote — and lets
+            clicks fall through to the card underneath. */}
+        {!game.inLibrary ? (
+          <span
+            className="pointer-events-none absolute inset-0 z-10 grid place-items-center"
+            aria-label="Not in the library"
+          >
+            <span className="grid size-12 place-items-center rounded-full bg-danger text-2xl font-bold text-bg">
+              !
+            </span>
           </span>
         ) : null}
         <OptionsMenu

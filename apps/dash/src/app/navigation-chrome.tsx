@@ -152,6 +152,65 @@ export function NavigationBar({ route }: { route: Route }) {
 }
 
 /**
+ * The row above the content: the section's name at the left, and the app-wide
+ * controls at the right corner the way a media server's chrome is. The
+ * controls are about the app rather than a place in it — today, the devices
+ * asking to connect. The bar is part of the layout, so every page starts
+ * below it rather than underneath it.
+ */
+export function TopBar({
+  title,
+  back,
+  pendingCount,
+  onOpenRequests,
+}: {
+  /** The section's name — the only title any page draws. */
+  title: string;
+  /**
+   * Where the arrow leads when a page sits inside the section. Set, it takes
+   * the title's place: the reader already knows where they are — the page
+   * names its subject — and what the corner owes them is the way out.
+   */
+  back?: Route;
+  /** Devices asking to connect right now, marked with a dot on the control. */
+  pendingCount: number;
+  onOpenRequests: () => void;
+}) {
+  return (
+    <header className="flex items-center justify-between gap-4 pt-3 pr-3 pl-5 sm:pr-6 sm:pl-8 lg:pr-8 lg:pl-10">
+      {back ? (
+        <RouteLink
+          to={back}
+          aria-label={`Back to ${title}`}
+          className="-ml-2.5 rounded-md p-2.5 text-text/65 transition-colors duration-120 hover:bg-text/6 hover:text-text"
+        >
+          <Icon name="arrow-left" className="size-6" />
+        </RouteLink>
+      ) : (
+        <h1 className="text-2xl font-semibold tracking-tight text-text">{title}</h1>
+      )}
+      <button
+        type="button"
+        onClick={onOpenRequests}
+        title="Asking to connect"
+        aria-label={
+          pendingCount > 0 ? `Asking to connect, ${pendingCount} waiting` : 'Asking to connect'
+        }
+        className="relative cursor-pointer rounded-md p-2.5 text-text/65 transition-colors duration-120 hover:bg-text/6 hover:text-text"
+      >
+        <Icon name="devices" className="size-6" />
+        {pendingCount > 0 ? (
+          <span
+            className="absolute top-1.5 right-1.5 size-2 rounded-full bg-accent"
+            aria-hidden="true"
+          />
+        ) : null}
+      </button>
+    </header>
+  );
+}
+
+/**
  * Said only when something is wrong.
  *
  * Being connected is the ordinary case and does not need reporting — a status

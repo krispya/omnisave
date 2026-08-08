@@ -1,5 +1,5 @@
 import { Button } from '../../components/button.js';
-import { Dialog, DialogError } from '../../components/dialog.js';
+import { Dialog, DialogActions, DialogError } from '../../components/dialog.js';
 import type { PairingRequest } from '../../lib/omnisave-api.js';
 
 type PairingDialogProps = {
@@ -12,12 +12,13 @@ type PairingDialogProps = {
 };
 
 /**
- * A device asking to connect, over whatever the owner was doing.
+ * The devices asking to connect.
  *
- * It interrupts because the thing on the other end is a person standing at a
- * device with a code on its screen, and the request expires in minutes. The
- * server settings list the same requests for anyone who goes looking; this is
- * for everyone who does not know to.
+ * It opens by itself when a request arrives, because the thing on the other
+ * end is a person standing at a device with a code on its screen, and the
+ * request expires in minutes. The menu's "Asking to connect" item opens the
+ * same dialog deliberately — which is when it can be empty, and says so
+ * rather than opening onto nothing.
  *
  * The code is what the owner matches against that screen — the name and
  * address in a request are supplied by whoever sent it (FDR-006).
@@ -31,14 +32,29 @@ export function PairingDialog({
   onDismiss,
 }: PairingDialogProps) {
   const busy = busyID !== '';
+  const empty = requests.length === 0;
 
   return (
     <Dialog
-      title={requests.length > 1 ? 'Devices want to connect' : 'A device wants to connect'}
-      description="Approve it only if this code matches the one on the device’s screen."
+      title={
+        empty
+          ? 'Asking to connect'
+          : requests.length > 1
+            ? 'Devices want to connect'
+            : 'A device wants to connect'
+      }
+      description={
+        empty ? undefined : 'Approve it only if this code matches the one on the device’s screen.'
+      }
       busy={busy}
       onDismiss={onDismiss}
     >
+      {empty ? (
+        <p className="mt-4 text-sm leading-6 text-muted">
+          Nothing is waiting. Run <code className="text-text">omnisave connect</code> on a device to
+          start.
+        </p>
+      ) : null}
       <ul className="mt-5 flex flex-col gap-3">
         {requests.map((request) => (
           <li key={request.id} className="rounded-md border border-outline p-4">
@@ -72,14 +88,11 @@ export function PairingDialog({
 
       {error ? <DialogError>{error}</DialogError> : null}
 
-      <button
-        type="button"
-        disabled={busy}
-        onClick={onDismiss}
-        className="mt-4 w-full text-xs text-muted underline underline-offset-4 transition duration-120 hover:text-text disabled:opacity-40"
-      >
-        Not now
-      </button>
+      <DialogActions>
+        <Button variant="plain" disabled={busy} onClick={onDismiss}>
+          {empty ? 'Close' : 'Not now'}
+        </Button>
+      </DialogActions>
     </Dialog>
   );
 }

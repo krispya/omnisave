@@ -81,9 +81,12 @@ network.
   deployment that pins the setting with `OMNISAVE_DISCOVERY` gets a Dash that
   shows the value and says where it came from instead of offering to change it
   ([ADR-008](../adr/ADR-008-owner-settings-beside-environment.md)).
-- The announcement switch, the pending requests, and the issued credentials all
-  live in one server settings area of the Dash — what the owner opens for
-  anything about the server rather than about the Library.
+- The announcement switch and the issued credentials live in one server
+  settings area of the Dash — what the owner opens for anything about the
+  server rather than about the Library. Pending requests are not settings:
+  they sit behind "Asking to connect" in the Dash's top bar, marked with a dot
+  while something waits, and open the same approval dialog a new request opens
+  by itself.
 
 ## Design Decisions
 

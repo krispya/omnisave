@@ -1,17 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  approvePairingRequest,
-  denyPairingRequest,
   listCredentials,
   listSettings,
   revokeCredential,
   updateSetting,
   type Credential,
   type OwnerSetting,
-  type PairingRequest,
 } from '../../lib/omnisave-api.js';
 import { CredentialList } from './credential-list.js';
-import { PendingRequests } from './pending-requests.js';
 import { ProviderDialog } from './provider-dialog.js';
 import { ProviderSettings } from './provider-settings.js';
 import { DeleteDialog } from '../../components/delete-dialog.js';
@@ -22,28 +18,17 @@ type ServerSettingsProps = {
   token: string;
   /** The credential this browser holds, so the list can point at itself. */
   credentialID: string;
-  /** Pending requests, watched by the shell so they can interrupt anywhere. */
-  requests: PairingRequest[];
-  onAnswered: () => Promise<unknown>;
   /** Forgets this browser's credential without revoking it on the server. */
   onDisconnect: () => void;
 };
 
 /**
- * Everything about the server rather than about the Library: who is asking to
- * connect, what already holds a credential, and whether the server announces
- * itself on the local network.
- *
- * Pending requests arrive and expire while someone is looking at this page, so
- * it follows the server's event stream rather than waiting for a reload.
+ * Everything about the server rather than about the Library: what holds a
+ * credential, and whether the server announces itself on the local network.
+ * Devices asking to connect are not here — they live behind the menu's
+ * "Asking to connect", which reaches the owner wherever they are.
  */
-export function ServerSettings({
-  token,
-  credentialID,
-  requests,
-  onAnswered,
-  onDisconnect,
-}: ServerSettingsProps) {
+export function ServerSettings({ token, credentialID, onDisconnect }: ServerSettingsProps) {
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [settings, setSettings] = useState<OwnerSetting[]>([]);
   const [busyID, setBusyID] = useState('');
@@ -69,13 +54,13 @@ export function ServerSettings({
 
   // Every owner action here has the same shape: mark the row busy, do the one
   // thing, then re-read. The re-read is deliberate rather than left to the
-  // event stream — an approval has to look like it landed even if the stream
+  // event stream — a revocation has to look like it landed even if the stream
   // is down.
   async function act(id: string, action: () => Promise<unknown>) {
     setBusyID(id);
     try {
       await action();
-      await Promise.all([refresh(), onAnswered()]);
+      await refresh();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : 'That did not work.');
     } finally {
@@ -110,13 +95,6 @@ export function ServerSettings({
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-text">Server</h1>
-        <p className="mt-1.5 text-sm text-muted">
-          Connecting devices, the credentials they hold, and how this server is found.
-        </p>
-      </div>
-
       {error ? (
         <p
           role="alert"
@@ -125,17 +103,6 @@ export function ServerSettings({
           {error}
         </p>
       ) : null}
-
-      <PendingRequests
-        requests={requests}
-        busyID={busyID}
-        onApprove={(pairingRequest) =>
-          void act(pairingRequest.id, () => approvePairingRequest(token, pairingRequest.id))
-        }
-        onDeny={(pairingRequest) =>
-          void act(pairingRequest.id, () => denyPairingRequest(token, pairingRequest.id))
-        }
-      />
 
       <CredentialList
         credentials={credentials}

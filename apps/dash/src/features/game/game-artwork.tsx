@@ -50,9 +50,14 @@ export function GameArtwork({
       aria-hidden="true"
     >
       <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-white/5" />
-      <span className="absolute inset-0 grid place-items-center text-4xl font-black tracking-tighter text-text/70 sm:text-5xl">
-        {initials(game.label)}
-      </span>
+      {/* The monogram stands in for cover art a library game does not have
+          yet. A game the server does not list gets no such identity mark —
+          its card presents a problem, not a game missing a picture. */}
+      {game.inLibrary ? (
+        <span className="absolute inset-0 grid place-items-center text-4xl font-black tracking-tighter text-text/70 sm:text-5xl">
+          {initials(game.label)}
+        </span>
+      ) : null}
       {game.platform ? (
         <span className="absolute right-3 bottom-3 left-3 truncate text-[10px] font-semibold tracking-[0.16em] text-text/50 uppercase">
           {game.platform}
