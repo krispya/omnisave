@@ -20,6 +20,7 @@ import {
   denyPairingRequest,
   listOmnisaves,
   listPairingRequests,
+  listPresence,
   forkOmnisave,
   restoreRevision,
   serverAccess,
@@ -47,6 +48,7 @@ import { DeleteGameDialog, DeleteGameSavesDialog } from '../features/game/delete
 import { preloadGameArtwork } from '../features/game/game-artwork.js';
 import { GameDetail } from '../features/game/game-detail.js';
 import type { GameSummary } from '../features/game/game-summary.js';
+import { applyPresence } from '../features/game/playing-devices.js';
 import { buildLibrary } from '../features/library/build-library.js';
 import { FixMatchDialog } from '../features/library/fix-match-dialog.js';
 import { DeleteSaveDialog } from '../features/omnisave/delete-save-dialog.js';
@@ -660,10 +662,32 @@ export function App() {
     await Promise.all([resource ? reloadLibrary() : Promise.resolve(), refreshPending()]);
   }, [refreshPending, reloadLibrary, resource]);
 
+  // devices.changed is presence: only playing flags moved, so fetch the light
+  // playing picture and stitch it into the loaded library instead of
+  // re-downloading everything. Anything the light path cannot serve — no
+  // library yet, or a failed fetch — falls back to the full reload.
+  const refreshPresence = useCallback(async () => {
+    if (!token || !latestSnapshot.current?.catalog) {
+      await refreshAll();
+      return;
+    }
+    try {
+      const { devices } = await listPresence(token);
+      const current = latestSnapshot.current;
+      if (!current?.catalog) return;
+      replaceLibrary({ ...current, catalog: applyPresence(current.catalog, devices) });
+    } catch {
+      await reloadLibrary();
+    }
+  }, [token, refreshAll, reloadLibrary, replaceLibrary]);
+
   useServerEvents({
     token,
-    eventTypes: ['library.changed', 'access.changed'],
-    onRefresh: refreshAll,
+    eventTypes: ['library.changed', 'access.changed', 'devices.changed'],
+    onRefresh: (events) =>
+      events.length > 0 && events.every((event) => event === 'devices.changed')
+        ? refreshPresence()
+        : refreshAll(),
     onStatusChange: setEventStatus,
   });
 

@@ -25,3 +25,4 @@ what the system does.
 | [ADR-010](ADR-010-taking-ownership.md)                  | Take ownership on first contact, and carry it with a PIN       | 2026-07-26 |
 | [ADR-011](ADR-011-owner-provider-credentials.md)        | Let the owner hold provider credentials                        | 2026-07-26 |
 | [ADR-012](ADR-012-portable-save-store.md)               | Keep saves in a portable store                                 | 2026-07-27 |
+| [ADR-013](ADR-013-server-announced-presence-expiry.md)  | The server is the only clock for presence                      | 2026-08-08 |

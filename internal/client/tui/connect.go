@@ -95,7 +95,7 @@ func ConnectSuccess(url, deviceName string) {
 
 func connectSuccessLines(url, deviceName string) []string {
 	return []string{
-		accentStyle.Render("▲") + " " + titleStyle.Render("Omnisave"),
+		titleStyle.Render("▲ Omnisave"),
 		mutedStyle.Render("- Server:") + "  " + plainTitle(url),
 		mutedStyle.Render("- Device:") + "  " + plainTitle(deviceName),
 		"",

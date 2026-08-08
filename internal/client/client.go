@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/krisbaumgartner/omnisave/internal/client/running"
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 )
@@ -133,4 +134,38 @@ func progress(report func(ScanProgress), event ScanProgress) {
 	if report != nil {
 		report(event)
 	}
+}
+
+// PlayingMatchers builds one detection matcher per scanned target whose
+// adapter can tell which of its games are being played (target.Activity).
+// Detection is the adapter's to define, so a target whose adapter offers
+// none simply contributes no matcher. Only tracked games are asked about:
+// presence is a courtesy shown for the library, not surveillance of
+// everything installed.
+func (s *Scanner) PlayingMatchers(scans []TargetScan, tracked func(gameID string) bool) []running.Matcher {
+	adapters := make(map[string]target.Adapter, len(s.adapters))
+	for _, adapter := range s.adapters {
+		adapters[adapter.Name()] = adapter
+	}
+	var matchers []running.Matcher
+	for _, scan := range scans {
+		activity, ok := adapters[scan.Target.Adapter].(target.Activity)
+		if !ok {
+			continue
+		}
+		games := make([]target.InstalledGame, 0, len(scan.Games))
+		for _, discovered := range scan.Games {
+			if tracked(discovered.Game.ID) {
+				games = append(games, discovered.Game)
+			}
+		}
+		if len(games) == 0 {
+			continue
+		}
+		discoveredTarget := scan.Target
+		matchers = append(matchers, func(ctx context.Context, snapshot *running.Snapshot) (map[string]bool, error) {
+			return activity.RunningGames(ctx, snapshot, discoveredTarget, games)
+		})
+	}
+	return matchers
 }

@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
@@ -18,6 +19,27 @@ func (r *Repository) UpsertDevice(ctx context.Context, device catalog.Device) er
 		device.CreatedAt.Format(time.RFC3339Nano), device.LastSeenAt.Format(time.RFC3339Nano),
 	)
 	return err
+}
+
+func (r *Repository) GetDevice(ctx context.Context, id string) (*catalog.Device, error) {
+	var device catalog.Device
+	var createdAt, lastSeenAt string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT id, name, platform, created_at, last_seen_at FROM devices WHERE id = ?`, id,
+	).Scan(&device.ID, &device.Name, &device.Platform, &createdAt, &lastSeenAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, storage.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if device.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {
+		return nil, err
+	}
+	if device.LastSeenAt, err = time.Parse(time.RFC3339Nano, lastSeenAt); err != nil {
+		return nil, err
+	}
+	return &device, nil
 }
 
 // TrackGame upserts one provenance record. A repeated track refreshes the

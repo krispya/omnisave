@@ -132,7 +132,7 @@ func (m connectionModel) View() string {
 
 func (m connectionModel) lines() []string {
 	lines := []string{
-		accentStyle.Render("▲") + " " + titleStyle.Render("Omnisave"),
+		titleStyle.Render("▲ Omnisave"),
 		mutedStyle.Render("- Server:") + "  " + plainTitle(m.serverURL),
 		"",
 	}
