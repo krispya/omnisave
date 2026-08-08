@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Button } from '../../components/button.js';
 import { updateRevisionDisplayName, type Omnisave, type Revision } from '../../lib/omnisave-api.js';
 import { GameArtwork, GameMediaImage } from './game-artwork.js';
 import type { GameSummary } from './game-summary.js';
@@ -95,7 +96,7 @@ export function GameDetail({
   }
 
   // The open save is the selected one, so opening a save closes whichever was open and
-  // becomes what the Debug menu and the revision fetch are pointed at.
+  // becomes what the revision fetch is pointed at.
   function toggleSave(save: Omnisave) {
     setFocus(undefined);
     onSelectSave(save.id === selectedSave?.id ? undefined : save);
@@ -154,26 +155,26 @@ export function GameDetail({
 
   return (
     <div className="mt-8">
-      <section className="flex items-end gap-6 border-b border-white/5 pb-6">
+      <section className="flex items-end gap-6 border-b border-outline pb-6">
         <GameArtwork
           game={game}
           token={token}
-          className="aspect-[3/4] w-28 shrink-0 shadow-lg sm:w-36"
+          className="aspect-[3/4] w-28 shrink-0 ring-1 ring-outline sm:w-36"
         />
         <div className="min-w-0 pb-1">
           {game.platform ? (
-            <p className="text-xs font-semibold tracking-[0.16em] text-[#e5a00d] uppercase">
+            <p className="text-xs font-semibold tracking-[0.16em] text-muted uppercase">
               {game.platform}
             </p>
           ) : null}
-          <h2 className="mt-2 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+          <h2 className="mt-2 text-3xl font-semibold tracking-tight text-text sm:text-4xl">
             {game.label}
           </h2>
-          <p className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-sm text-slate-400">
+          <p className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-sm text-muted">
             {facts.map((fact, index) => (
               <span key={fact} className="flex items-center gap-x-2.5">
                 {index > 0 ? (
-                  <span className="text-slate-600" aria-hidden="true">
+                  <span className="text-text/25" aria-hidden="true">
                     ·
                   </span>
                 ) : null}
@@ -182,13 +183,9 @@ export function GameDetail({
             ))}
           </p>
           <div className="mt-4">
-            <button
-              type="button"
-              onClick={() => setDetailsOpen(true)}
-              className="rounded-md bg-white/5 px-3.5 py-2 text-xs font-medium text-neutral-300 transition hover:bg-white/10 hover:text-white"
-            >
+            <Button variant="outline" onClick={() => setDetailsOpen(true)}>
               Details
-            </button>
+            </Button>
           </div>
         </div>
       </section>
@@ -201,7 +198,7 @@ export function GameDetail({
               .map((media, index) => (
                 <div
                   key={media.id}
-                  className="aspect-video overflow-hidden rounded-md bg-white/5 ring-1 ring-white/10"
+                  className="aspect-video overflow-hidden rounded-sm bg-text/5 ring-1 ring-outline"
                 >
                   <GameMediaImage
                     token={token}
@@ -219,15 +216,15 @@ export function GameDetail({
 
       <section className="mt-6" aria-label={`Saves for ${game.label}`}>
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-white">Saves</h3>
+          <h3 className="text-xs font-semibold tracking-wide text-muted uppercase">Saves</h3>
         </div>
 
         {game.saves.length === 0 ? (
-          <div className="rounded-md border border-dashed border-white/10 bg-white/[0.02] px-6 py-14 text-center">
-            <p className="text-sm font-medium text-white">This game has no saves</p>
-            <p className="mx-auto mt-2 max-w-xs text-xs leading-5 text-slate-500">
-              It stays in your library either way. Add one with Debug → New save, or bind a local save
-              from a client.
+          <div className="rounded-lg border border-dashed border-outline px-6 py-14 text-center">
+            <p className="text-sm font-medium text-text">This game has no saves</p>
+            <p className="mx-auto mt-2 max-w-xs text-xs leading-5 text-muted">
+              It stays in your library either way. Bind a local save from a client to start tracking
+              one.
             </p>
           </div>
         ) : (

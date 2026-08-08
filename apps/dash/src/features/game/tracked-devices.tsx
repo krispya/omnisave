@@ -50,32 +50,28 @@ function DeviceCard({ record }: { record: GameProvenance }) {
   return (
     <div
       title={`Tracked since ${formatDate(record.first_tracked_at)} · Last seen ${formatDate(record.last_seen_at)}`}
-      className={`flex min-w-56 items-center gap-3 rounded-md border bg-[#1a1a1a] py-3 pr-5 pl-3.5 ${
-        playing ? 'border-emerald-400/60' : 'border-white/5'
+      className={`flex min-w-56 items-center gap-3 rounded-lg border bg-surface py-3 pr-5 pl-3.5 ${
+        playing ? 'border-accent/50' : 'border-outline'
       } ${untracked ? 'opacity-60' : ''}`}
     >
       <div
-        className={`grid size-9 shrink-0 place-items-center rounded bg-white/5 ${
-          untracked ? 'text-slate-500' : playing ? 'text-emerald-400' : 'text-[#e5a00d]'
+        className={`grid size-9 shrink-0 place-items-center rounded-sm bg-text/8 ${
+          untracked ? 'text-muted' : playing ? 'text-accent' : 'text-text/70'
         }`}
       >
         {playing ? <PlayIcon /> : <DeviceIcon />}
       </div>
       <div className="min-w-0">
-        <p className="flex items-center gap-2 text-sm font-medium text-white">
+        <p className="flex items-center gap-2 text-sm font-medium text-text">
           <span className="truncate">{record.device_name}</span>
           <span
             className={`size-1.5 shrink-0 rounded-full ${
-              untracked
-                ? 'bg-slate-600'
-                : record.installed
-                  ? 'bg-emerald-400'
-                  : 'bg-slate-500'
+              untracked ? 'bg-text/25' : record.installed ? 'bg-accent' : 'bg-text/40'
             }`}
             aria-hidden="true"
           />
         </p>
-        <p className="mt-0.5 truncate text-xs text-slate-500">
+        <p className="mt-0.5 truncate text-xs text-muted">
           {record.adapter ? `${record.adapter} · ` : ''}
           {status}
           {untracked ? '' : ` · seen ${formatRelativeDate(record.last_seen_at)}`}
@@ -94,9 +90,9 @@ export function TrackedDevices({ provenance }: { provenance: GameProvenance[] })
 
   return (
     <section className="mt-6" aria-label="Devices tracking this game">
-      <h3 className="mb-4 text-sm font-semibold text-white">Tracked on</h3>
+      <h3 className="mb-4 text-xs font-semibold tracking-wide text-muted uppercase">Tracked on</h3>
       {records.length === 0 ? (
-        <p className="rounded-md border border-dashed border-white/10 bg-white/[0.02] px-4 py-3 text-xs text-slate-500">
+        <p className="rounded-lg border border-dashed border-outline px-4 py-3 text-xs text-muted">
           No devices are tracking this game yet.
         </p>
       ) : (

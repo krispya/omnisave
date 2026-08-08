@@ -5,6 +5,8 @@ import {
   type CatalogGame,
   type GameMatchCandidate,
 } from '../../lib/omnisave-api.js';
+import { Button } from '../../components/button.js';
+import { fieldClass } from '../../components/field.js';
 import type { GameSummary } from '../game/game-summary.js';
 
 type FixMatchDialogProps = {
@@ -67,57 +69,59 @@ export function FixMatchDialog({ game, token, onCancel, onMatched }: FixMatchDia
         role="dialog"
         aria-modal="true"
         aria-labelledby="fix-match-title"
-        className="flex max-h-[min(48rem,90vh)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-white/10 bg-[#181818] shadow-2xl"
+        className="flex max-h-[min(48rem,90vh)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-outline bg-surface"
       >
-        <header className="border-b border-white/5 px-5 py-4">
+        <header className="border-b border-outline px-5 py-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 id="fix-match-title" className="font-medium text-white">
+              <h2 id="fix-match-title" className="text-lg font-semibold text-text">
                 Fix Match
               </h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Choose the correct match for {game.label}.
-              </p>
+              <p className="mt-1 text-sm text-muted">Choose the correct match for {game.label}.</p>
             </div>
             <button
               type="button"
               onClick={onCancel}
               disabled={Boolean(matchingID)}
-              className="rounded px-2 py-1 text-sm text-slate-400 hover:bg-white/5 hover:text-white disabled:opacity-40"
+              className="rounded-md px-2.5 py-1.5 text-sm text-muted transition duration-120 hover:bg-text/8 hover:text-text disabled:opacity-40"
             >
               Close
             </button>
           </div>
           <form onSubmit={submit} className="mt-4 flex gap-2">
-            <label className="min-w-0 flex-1 text-xs font-medium text-slate-400">
+            <label className="min-w-0 flex-1 text-xs text-muted">
               Game title
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                className="mt-1.5 block w-full rounded-md border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-[#e5a00d]"
+                className={`${fieldClass} mt-1.5 block w-full`}
                 placeholder="Final Fantasy"
               />
             </label>
-            <button
+            <Button
               type="submit"
+              variant="filled"
+              className="mt-5 self-start"
               disabled={loading || !query.trim() || Boolean(matchingID)}
-              className="mt-5 h-9 rounded-md bg-[#e5a00d] px-4 text-sm font-semibold text-black hover:bg-[#f2b51d] disabled:cursor-not-allowed disabled:opacity-40"
             >
               Search
-            </button>
+            </Button>
           </form>
         </header>
 
         <div className="overflow-y-auto p-3">
           {error ? (
-            <p role="alert" className="m-2 rounded-md bg-red-400/10 px-3 py-2 text-sm text-red-200">
+            <p
+              role="alert"
+              className="m-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger"
+            >
               {error}
             </p>
           ) : null}
           {loading ? (
-            <p className="px-3 py-10 text-center text-sm text-slate-500">Searching…</p>
+            <p className="px-3 py-10 text-center text-sm text-muted">Searching…</p>
           ) : candidates.length === 0 ? (
-            <p className="px-3 py-10 text-center text-sm text-slate-500">No matching games found.</p>
+            <p className="px-3 py-10 text-center text-sm text-muted">No matching games found.</p>
           ) : (
             <ul className="space-y-1">
               {candidates.map((candidate) => {
@@ -127,18 +131,16 @@ export function FixMatchDialog({ game, token, onCancel, onMatched }: FixMatchDia
                       type="button"
                       onClick={() => void select(candidate)}
                       disabled={Boolean(matchingID)}
-                      className="w-full rounded-lg px-3 py-3 text-left transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded-md px-3 py-3 text-left transition duration-120 hover:bg-text/8 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <span className="block min-w-0">
-                        <span className="block text-sm font-medium text-white">
-                          {candidate.title}
-                        </span>
+                        <span className="block text-sm font-medium text-text">{candidate.title}</span>
                         {candidate.edition ? (
-                          <span className="mt-0.5 block truncate text-xs text-slate-400">
+                          <span className="mt-0.5 block truncate text-xs text-muted">
                             {candidate.edition}
                           </span>
                         ) : null}
-                        <span className="mt-1 block text-xs text-slate-600">
+                        <span className="mt-1 block text-xs text-muted">
                           {[candidate.platform, candidate.region, candidate.language, candidate.year]
                             .filter(Boolean)
                             .join(' · ')}

@@ -15,6 +15,8 @@ import { PendingRequests } from './pending-requests.js';
 import { ProviderDialog } from './provider-dialog.js';
 import { ProviderSettings } from './provider-settings.js';
 import { DeleteDialog } from '../../components/delete-dialog.js';
+import { ActionRow, SwitchRow } from '../../components/setting-row.js';
+import { GroupNote, SettingsGroup } from '../../components/settings-group.js';
 
 type ServerSettingsProps = {
   token: string;
@@ -23,6 +25,8 @@ type ServerSettingsProps = {
   /** Pending requests, watched by the shell so they can interrupt anywhere. */
   requests: PairingRequest[];
   onAnswered: () => Promise<unknown>;
+  /** Forgets this browser's credential without revoking it on the server. */
+  onDisconnect: () => void;
 };
 
 /**
@@ -33,7 +37,13 @@ type ServerSettingsProps = {
  * Pending requests arrive and expire while someone is looking at this page, so
  * it follows the server's event stream rather than waiting for a reload.
  */
-export function ServerSettings({ token, credentialID, requests, onAnswered }: ServerSettingsProps) {
+export function ServerSettings({
+  token,
+  credentialID,
+  requests,
+  onAnswered,
+  onDisconnect,
+}: ServerSettingsProps) {
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [settings, setSettings] = useState<OwnerSetting[]>([]);
   const [busyID, setBusyID] = useState('');
@@ -96,17 +106,22 @@ export function ServerSettings({ token, credentialID, requests, onAnswered }: Se
     }
   }
 
+  const networkSettings = settings.filter((setting) => setting.group === 'network');
+
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6">
+    <div className="mx-auto flex max-w-3xl flex-col gap-8">
       <div>
-        <h1 className="text-lg font-semibold text-white">Server settings</h1>
-        <p className="mt-1 text-sm text-slate-400">
+        <h1 className="text-2xl font-semibold tracking-tight text-text">Server</h1>
+        <p className="mt-1.5 text-sm text-muted">
           Connecting devices, the credentials they hold, and how this server is found.
         </p>
       </div>
 
       {error ? (
-        <p className="rounded-md border border-red-400/30 bg-red-400/5 px-4 py-3 text-sm text-red-300">
+        <p
+          role="alert"
+          className="rounded-md border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger"
+        >
           {error}
         </p>
       ) : null}
@@ -131,54 +146,39 @@ export function ServerSettings({ token, credentialID, requests, onAnswered }: Se
         }
       />
 
-      <section className="rounded-lg border border-white/5 bg-[#1a1a1a] p-6">
-        <h2 className="font-semibold text-white">Network</h2>
-        <p className="mt-2 text-sm leading-6 text-slate-400">
-          Announcing lets a device on this network find the server without being told its address. It
-          never grants access: a device that finds this server still pairs and is still approved here.
-        </p>
-
-        <ul className="mt-5 flex flex-col gap-2">
-          {settings
-            .filter((setting) => setting.group === 'network')
-            .map((setting) => (
-              <li
+      {networkSettings.length === 0 ? null : (
+        <div>
+          <SettingsGroup title="Network">
+            {networkSettings.map((setting) => (
+              <SwitchRow
                 key={setting.key}
-                className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-white/10 bg-[#111111] px-4 py-3"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm text-white">{setting.summary}</span>
-                  {setting.editable ? null : (
-                    <span className="block text-xs text-neutral-500">
-                      Set by the deployment ({setting.env_var}); change it there.
-                    </span>
-                  )}
-                </span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={setting.value}
-                  aria-label={setting.summary}
-                  disabled={!setting.editable || busyID === setting.key}
-                  onClick={() =>
-                    void act(setting.key, () =>
-                      updateSetting(token, setting.key, String(!setting.value))
-                    )
-                  }
-                  className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                    setting.value ? 'bg-[#e5a00d]' : 'bg-neutral-700'
-                  }`}
-                >
-                  <span
-                    className={`absolute top-0.5 size-5 rounded-full bg-white transition-all ${
-                      setting.value ? 'left-[1.375rem]' : 'left-0.5'
-                    }`}
-                  />
-                </button>
-              </li>
+                icon="network"
+                title={setting.summary}
+                subtitle={
+                  setting.editable
+                    ? setting.value
+                      ? 'On'
+                      : 'Off'
+                    : `Set by the deployment (${setting.env_var}); change it there.`
+                }
+                label={setting.summary}
+                checked={setting.value}
+                disabled={!setting.editable || busyID === setting.key}
+                onChange={() =>
+                  void act(setting.key, () =>
+                    updateSetting(token, setting.key, String(!setting.value))
+                  )
+                }
+              />
             ))}
-        </ul>
-      </section>
+          </SettingsGroup>
+          <GroupNote>
+            Announcing lets a device on this network find the server without being told its address.
+            It never grants access: a device that finds this server still pairs and is still approved
+            here.
+          </GroupNote>
+        </div>
+      )}
 
       <ProviderSettings
         clientID={clientID}
@@ -193,6 +193,21 @@ export function ServerSettings({ token, credentialID, requests, onAnswered }: Se
           setDisconnecting(true);
         }}
       />
+
+      <div>
+        <SettingsGroup title="This browser">
+          <ActionRow
+            icon="devices"
+            title="Disconnect"
+            subtitle="Sign out here and keep the credential"
+            onClick={onDisconnect}
+          />
+        </SettingsGroup>
+        <GroupNote>
+          Disconnecting forgets this browser&rsquo;s credential locally; the server still accepts it,
+          so signing in again does not need approving again. Revoke it above to withdraw it for good.
+        </GroupNote>
+      </div>
 
       {connecting ? (
         <ProviderDialog
