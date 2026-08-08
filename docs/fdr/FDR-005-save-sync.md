@@ -93,6 +93,11 @@ path, syncing-down built the read path; sync makes both routine.
   the usual fork-or-jump choice (decision 4): either answer first preserves
   the unsynced progress as a fork, and an unwanted fork is deleted in the
   Dash rather than discarded by sync.
+- When a Device reports the game as being played, the Dash's restore dialog
+  says so — "Being played on Steam Deck" — and its confirm reads "Rewind
+  anyway". Either way the restore only lands on that Device after the game
+  closes (decision 13); the dialog makes the wait visible instead of
+  surprising.
 - Forking at a revision creates a separately named and synchronized Omnisave
   whose current revision is that same immutable node. The fork shares the
   node's label and ancestor path, creates no copied root revision, and owns
