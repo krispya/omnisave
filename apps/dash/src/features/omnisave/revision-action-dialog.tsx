@@ -16,6 +16,12 @@ type RevisionActionDialogProps = {
   action: RevisionAction;
   /** The save's name resolved with the list's positional fallback, never empty. */
   saveName: string;
+  /**
+   * Names of the devices playing this game right now. A restore under a
+   * live session waits for the game to close before it lands on that
+   * device, so the dialog says so and the confirm reads "Rewind anyway".
+   */
+  playingDevices: string[];
   busy: boolean;
   error: string;
   onCancel: () => void;
@@ -30,6 +36,7 @@ function revisionName(revision: Revision) {
 export function RevisionActionDialog({
   action,
   saveName,
+  playingDevices,
   busy,
   error,
   onCancel,
@@ -72,6 +79,8 @@ export function RevisionActionDialog({
 
   const restoring = action.kind === 'restore';
   const label = restoring ? revisionMoveLabel(action.move) : 'Fork';
+  // Forks only add a lineage; restores are what a live session can undo.
+  const live = restoring && playingDevices.length > 0;
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -125,6 +134,13 @@ export function RevisionActionDialog({
           </div>
         ) : null}
 
+        {live ? (
+          <p role="alert" className="mt-4 rounded-md bg-accent/10 px-3 py-2 text-sm text-accent">
+            Being played on {playingDevices.join(', ')}. The {label.toLowerCase()} lands there after
+            the game closes.
+          </p>
+        ) : null}
+
         {error ? (
           <p role="alert" className="mt-4 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">
             {error}
@@ -146,7 +162,7 @@ export function RevisionActionDialog({
             disabled={busy || (!restoring && !displayName.trim())}
             className="rounded-md bg-text px-4 py-2 text-sm font-semibold text-black transition hover:bg-[#f2b72c] disabled:opacity-40"
           >
-            {busy ? `${label}ing…` : label}
+            {busy ? `${label}ing…` : live ? `${label} anyway` : label}
           </button>
         </div>
       </form>
