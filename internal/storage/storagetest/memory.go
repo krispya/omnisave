@@ -494,6 +494,16 @@ func (r *MemoryRepository) UpsertDevice(_ context.Context, device catalog.Device
 	return nil
 }
 
+func (r *MemoryRepository) GetDevice(_ context.Context, id string) (*catalog.Device, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	device, ok := r.devices[id]
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	return &device, nil
+}
+
 func (r *MemoryRepository) TrackGame(_ context.Context, gameID string, record catalog.GameTracking) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

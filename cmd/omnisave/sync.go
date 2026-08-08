@@ -12,6 +12,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client"
 	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
+	"github.com/krisbaumgartner/omnisave/internal/client/running"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
 )
@@ -50,9 +51,15 @@ func runSync(ctx context.Context, scanner *client.Scanner, arguments []string) e
 		return err
 	}
 	report := &tui.TrackReport{}
-	outcome, _, err := syncPass(ctx, scanner, server, &state, report, 0)
+	outcome, _, presence, err := syncPass(ctx, scanner, server, &state, report, 0)
 	if err != nil {
 		return err
+	}
+	detector := running.PlatformDetector()
+	// A failed sweep skips the report entirely: the server's picture ages
+	// out on its own, and an empty report would clear a running game.
+	if playing, playingErr := playingNow(ctx, detector, presence.matchers); playingErr == nil {
+		reportPlaying(ctx, server, presence, playing)
 	}
 	report.Print()
 	tui.TrackSummary(outcome)
@@ -61,7 +68,8 @@ func runSync(ctx context.Context, scanner *client.Scanner, arguments []string) e
 
 // syncPass runs the headless reconcile shared by sync and watch: deletion
 // reconciliation, library sync, then the three-way save pass. It returns
-// the tracked games' local save files so watchers know what to poll.
+// the tracked games' local save files so watchers know what to poll, and
+// the presence picture the watch loop re-affirms between passes.
 func syncPass(
 	ctx context.Context,
 	scanner *client.Scanner,
@@ -69,22 +77,25 @@ func syncPass(
 	state *tracking.State,
 	report *tui.TrackReport,
 	pushFloor time.Duration,
-) (tui.TrackOutcome, []string, error) {
+) (tui.TrackOutcome, []string, presenceWatch, error) {
 	activity.Report(ctx, "checking library")
 	reconciled := reconcileDeletedGames(ctx, server, state, report)
 	activity.Report(ctx, "scanning")
 	scans, err := scanner.ScanWithProgress(ctx, func(client.ScanProgress) {})
 	if err != nil {
-		return tui.TrackOutcome{}, nil, err
+		return tui.TrackOutcome{}, nil, presenceWatch{}, err
 	}
 	outcome, confirmed := syncTracking(ctx, server, state, scans, nil, report)
+	// Presence maps through Library identities, which the library sync just
+	// resolved, so a freshly tracked game reports on its very first pass.
+	presence := trackedPresence(scanner, state, scans)
 	if outcome.Synced {
 		if err := reconcileSaves(ctx, server, state, scans, confirmed, &outcome, report, nil, pushFloor); err != nil {
-			return outcome, nil, err
+			return outcome, nil, presence, err
 		}
 	}
 	outcome.Untracked += reconciled
-	return outcome, watchedFiles(state, scans), nil
+	return outcome, watchedFiles(state, scans), presence, nil
 }
 
 // watchedFiles lists the local files of tracked games' discovered saves,

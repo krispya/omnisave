@@ -97,6 +97,8 @@ export type GameProvenance = {
   first_tracked_at: string;
   last_seen_at: string;
   untracked_at?: string;
+  playing?: boolean;
+  playing_reported_at?: string;
 };
 
 export type GameIdentifier = {
@@ -284,6 +286,17 @@ export function listOmnisaves(token: string, signal?: AbortSignal) {
 
 export function listGames(token: string, signal?: AbortSignal) {
   return request<CatalogGame[]>('/api/v1/games', token, { signal });
+}
+
+/** One device's live playing report, as served by the presence listing. */
+export type DevicePresence = {
+  device_id: string;
+  playing_game_ids: string[];
+  reported_at: string;
+};
+
+export function listPresence(token: string, signal?: AbortSignal) {
+  return request<{ devices: DevicePresence[] }>('/api/v1/presence', token, { signal });
 }
 
 export function loadGameMedia(token: string, mediaURL: string, signal?: AbortSignal) {

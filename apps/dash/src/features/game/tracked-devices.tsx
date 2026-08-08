@@ -19,6 +19,14 @@ function DeviceIcon() {
   );
 }
 
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-5" fill="currentColor" aria-label="Playing now">
+      <path d="M8 5.14v13.72c0 .8.87 1.3 1.56.88l11.05-6.86a1.03 1.03 0 0 0 0-1.76L9.56 4.26A1.03 1.03 0 0 0 8 5.14Z" />
+    </svg>
+  );
+}
+
 // Active devices first (installed before not installed), untracked last;
 // most recently seen wins within a group.
 function provenanceRank(record: GameProvenance) {
@@ -27,33 +35,42 @@ function provenanceRank(record: GameProvenance) {
 }
 
 function DeviceCard({ record }: { record: GameProvenance }) {
+  // The server is the only clock: it announces devices.changed when a report
+  // ages out, so a served playing flag is credible as long as we hold it.
   const untracked = Boolean(record.untracked_at);
+  const playing = !untracked && record.playing === true;
   const status = record.untracked_at
     ? `Untracked ${formatDate(record.untracked_at)}`
-    : record.installed
-      ? 'Installed'
-      : 'Not installed';
+    : playing
+      ? 'Playing now'
+      : record.installed
+        ? 'Installed'
+        : 'Not installed';
 
   return (
     <div
       title={`Tracked since ${formatDate(record.first_tracked_at)} · Last seen ${formatDate(record.last_seen_at)}`}
-      className={`flex min-w-56 items-center gap-3 rounded-md border border-white/5 bg-[#1a1a1a] py-3 pr-5 pl-3.5 ${
-        untracked ? 'opacity-60' : ''
-      }`}
+      className={`flex min-w-56 items-center gap-3 rounded-md border bg-[#1a1a1a] py-3 pr-5 pl-3.5 ${
+        playing ? 'border-emerald-400/60' : 'border-white/5'
+      } ${untracked ? 'opacity-60' : ''}`}
     >
       <div
         className={`grid size-9 shrink-0 place-items-center rounded bg-white/5 ${
-          untracked ? 'text-slate-500' : 'text-[#e5a00d]'
+          untracked ? 'text-slate-500' : playing ? 'text-emerald-400' : 'text-[#e5a00d]'
         }`}
       >
-        <DeviceIcon />
+        {playing ? <PlayIcon /> : <DeviceIcon />}
       </div>
       <div className="min-w-0">
         <p className="flex items-center gap-2 text-sm font-medium text-white">
           <span className="truncate">{record.device_name}</span>
           <span
             className={`size-1.5 shrink-0 rounded-full ${
-              untracked ? 'bg-slate-600' : record.installed ? 'bg-emerald-400' : 'bg-slate-500'
+              untracked
+                ? 'bg-slate-600'
+                : record.installed
+                  ? 'bg-emerald-400'
+                  : 'bg-slate-500'
             }`}
             aria-hidden="true"
           />

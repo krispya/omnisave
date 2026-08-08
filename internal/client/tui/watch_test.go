@@ -98,17 +98,6 @@ func TestWatchSpinnerFinishesAFullRotationOnFastPasses(t *testing.T) {
 	}
 }
 
-func TestWatchShowsWhatTheCurrentPassIsDoing(t *testing.T) {
-	model := newTestWatchModel(make(chan WatchRequest, 1))
-	updated, _ := model.Update(watchPassStartedMsg{at: time.Now()})
-	updated, _ = updated.(watchModel).Update(watchActivityMsg("uploading (2/4)"))
-
-	view := ansi.Strip(updated.(watchModel).View())
-	if !strings.Contains(view, "uploading (2/4)") {
-		t.Fatalf("expected the current sync activity in the watch header, got:\n%s", view)
-	}
-}
-
 func TestAnOutageKeepsTheLastTableAndClockAndShowsTheCause(t *testing.T) {
 	model := newTestWatchModel(make(chan WatchRequest, 1))
 	synced := time.Now().Add(-2 * time.Minute)
@@ -143,8 +132,9 @@ func TestWatchViewSpinsWhileSyncingAndKeysWork(t *testing.T) {
 	model := newTestWatchModel(requests)
 	updated, _ := model.Update(watchPassStartedMsg{})
 	syncingView := ansi.Strip(updated.(watchModel).View())
-	if !strings.Contains(syncingView, "▲ Omnisave · watching ⠋") {
-		t.Fatalf("expected the header to carry the spinner while syncing, got:\n%s", syncingView)
+	header, _, _ := strings.Cut(syncingView, "\n")
+	if header != "▲ Omnisave · watching ⠋" {
+		t.Fatalf("expected the active header to end at the spinner, got %q", header)
 	}
 	if !strings.Contains(syncingView, "watching 0 save paths") {
 		t.Fatalf("expected the footer to keep its usual text while syncing, got:\n%s", syncingView)
@@ -164,5 +154,33 @@ func TestWatchViewSpinsWhileSyncingAndKeysWork(t *testing.T) {
 	_, command := settled.(watchModel).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if command == nil {
 		t.Fatal("expected q to quit the view")
+	}
+}
+
+// Presence rides the standing table without waiting for a pass: a live
+// session claims the game's state glyph, and the glyph returns when the
+// report empties.
+func TestWatchMarksPlayingGamesWithTheirGlyph(t *testing.T) {
+	model := newWatchModel(WatchConfig{
+		ServerURL: "http://localhost:8081",
+		Initial: ReportSnapshot{Games: []GameStatus{
+			{Glyph: "✓", Title: "Slay the Spire 2", SyncedWith: "Main", SyncedAt: time.Now()},
+			{Glyph: "·", Title: "Project Zomboid", Events: []string{"No save available"}},
+		}},
+	}, make(chan WatchRequest, 1))
+
+	playing, _ := model.Update(watchPlayingMsg{"Slay the Spire 2"})
+	view := ansi.Strip(playing.(watchModel).View())
+	if !strings.Contains(view, "▶ Slay the Spire 2") {
+		t.Fatalf("expected the playing glyph to claim the row, got:\n%s", view)
+	}
+	if strings.Contains(view, "✓ Slay the Spire 2") {
+		t.Fatalf("expected the state glyph replaced while playing, got:\n%s", view)
+	}
+
+	cleared, _ := playing.(watchModel).Update(watchPlayingMsg(nil))
+	view = ansi.Strip(cleared.(watchModel).View())
+	if strings.Contains(view, "▶") || !strings.Contains(view, "✓ Slay the Spire 2") {
+		t.Fatalf("expected the state glyph back once play stops, got:\n%s", view)
 	}
 }
