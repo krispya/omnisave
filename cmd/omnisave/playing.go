@@ -47,6 +47,51 @@ func trackedPresence(scanner *client.Scanner, state *tracking.State, scans []cli
 	return presence
 }
 
+// passPlaying is what one pass learned about playing games: the presence
+// picture it assembled, the process sweep it ran — shared by the pull gate
+// and the presence report, so a pass costs one sweep — and the games whose
+// pulls the gate held back for their exit. swept distinguishes an empty
+// picture from a sweep that failed, which must not be reported as one.
+type passPlaying struct {
+	presence presenceWatch
+	playing  map[string]bool
+	swept    bool
+	waiting  []string
+}
+
+// pullGate holds automatic pulls back while their game is being played
+// (FDR-005, decision 13) and remembers which games are waiting, so the
+// watch loop knows whose exit resolves them. A nil gate — no detector, or
+// a sweep that failed — holds nothing: detection fails open, because a
+// platform whose process list is unreadable must not defer pulls forever.
+type pullGate struct {
+	playing map[string]bool
+	waiting []string
+}
+
+// holdPull reports whether the game's pull must wait for it to close,
+// recording the game as waiting when it must.
+func (g *pullGate) holdPull(gameID string) bool {
+	if g == nil || !g.playing[gameID] {
+		return false
+	}
+	if !slices.Contains(g.waiting, gameID) {
+		g.waiting = append(g.waiting, gameID)
+	}
+	return true
+}
+
+// deferredGameExited reports whether a game holding back a pull has closed
+// since the pass that deferred it — the moment that pull can safely land.
+func deferredGameExited(deferred []string, playing map[string]bool) bool {
+	for _, gameID := range deferred {
+		if !playing[gameID] {
+			return true
+		}
+	}
+	return false
+}
+
 // playingNow reports which tracked games are being played, from one process
 // sweep. A failed sweep is an error, not an empty picture: callers skip
 // their report entirely, because reporting nobody playing would clear valid
