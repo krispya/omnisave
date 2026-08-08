@@ -28,12 +28,24 @@ import (
 )
 
 func newRealServer(t *testing.T) *remote.Client {
-	return newObservedServer(t, nil)
+	return newInterceptedServer(t, nil)
 }
 
 // newObservedServer is newRealServer with a hook that sees every request, so
 // a test can count the reports a watch loop sends.
 func newObservedServer(t *testing.T, observe func(*http.Request)) *remote.Client {
+	t.Helper()
+	return newInterceptedServer(t, func(_ http.ResponseWriter, request *http.Request) bool {
+		observe(request)
+		return false
+	})
+}
+
+// newInterceptedServer is the real server behind a hook that may answer a
+// request itself, so a test can break one endpoint mid-run and repair it
+// again. A hook returning true has answered; false passes the request
+// through to the real handler.
+func newInterceptedServer(t *testing.T, intercept func(http.ResponseWriter, *http.Request) bool) *remote.Client {
 	t.Helper()
 	directory := t.TempDir()
 	repository, err := sqlitestorage.Open(
@@ -46,10 +58,12 @@ func newObservedServer(t *testing.T, observe func(*http.Request)) *remote.Client
 		Saves:   omnisaveservice.New(repository),
 		Catalog: catalogservice.New(repository, repository),
 	})
-	if observe != nil {
+	if intercept != nil {
 		wrapped := handler
 		handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-			observe(request)
+			if intercept(response, request) {
+				return
+			}
 			wrapped.ServeHTTP(response, request)
 		})
 	}
@@ -122,13 +136,20 @@ func otherDeviceCommit(t *testing.T, server *remote.Client, omnisaveID, content 
 
 func syncOnce(t *testing.T, server *remote.Client, fixture *bindingFixture, prompts *reconcilePrompts, floor time.Duration) tui.TrackOutcome {
 	t.Helper()
+	return syncOnceGated(t, server, fixture, prompts, nil, floor)
+}
+
+// syncOnceGated is syncOnce with a pull gate, for passes that must see a
+// game as being played.
+func syncOnceGated(t *testing.T, server *remote.Client, fixture *bindingFixture, prompts *reconcilePrompts, gate *pullGate, floor time.Duration) tui.TrackOutcome {
+	t.Helper()
 	ctx := context.Background()
 	outcome, confirmed := syncTracking(ctx, server, &fixture.state, fixture.scans, nil, &tui.TrackReport{})
 	if !outcome.Synced {
 		t.Fatal("expected the library sync to reach the server")
 	}
 	if err := reconcileSaves(ctx, server, &fixture.state, fixture.scans, confirmed,
-		&outcome, &tui.TrackReport{}, prompts, floor); err != nil {
+		&outcome, &tui.TrackReport{}, prompts, gate, floor); err != nil {
 		t.Fatal(err)
 	}
 	return outcome
@@ -342,6 +363,51 @@ func TestSyncPullsARestoredCurrentRevisionBackDown(t *testing.T) {
 	}
 	if string(content) != "first-progress" {
 		t.Fatalf("expected the local save to revert to the restored revision, got %q", content)
+	}
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	rewound, _ := fixture.state.BindingFor(local)
+	if rewound.LastSyncedRevisionID == nil || *rewound.LastSyncedRevisionID != seed.ID {
+		t.Fatalf("expected the baseline to move to the restored revision, got %+v", rewound)
+	}
+}
+
+func TestAPullWaitsWhileTheGameIsPlayedAndAppliesOnceItCloses(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	seed, bound := pushSecondRevision(t, server, &fixture, "second-progress")
+	if _, err := server.RestoreCurrentRevision(context.Background(), bound.OmnisaveID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: bound.LastSyncedRevisionID,
+		RevisionID:                seed.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The pass runs while the game is being played: the pull waits, the
+	// local save is untouched, and the gate records whose exit resolves it.
+	gate := &pullGate{playing: map[string]bool{"local-game-1": true}}
+	outcome := syncOnceGated(t, server, &fixture, nil, gate, 0)
+	if outcome.Deferred != 1 || outcome.Pulled != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected the pull deferred under the playing game, got %+v", outcome)
+	}
+	content, err := os.ReadFile(fixture.localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "second-progress" {
+		t.Fatalf("expected the deferred pull to leave the local save alone, got %q", content)
+	}
+	if len(gate.waiting) != 1 || gate.waiting[0] != "local-game-1" {
+		t.Fatalf("expected the gate to record the waiting game, got %v", gate.waiting)
+	}
+
+	// The game closed: the same comparison now pulls and moves the baseline.
+	outcome = syncOnceGated(t, server, &fixture, nil, &pullGate{}, 0)
+	if outcome.Pulled != 1 || outcome.Deferred != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected the pull once the game closed, got %+v", outcome)
+	}
+	content, _ = os.ReadFile(fixture.localPath)
+	if string(content) != "first-progress" {
+		t.Fatalf("expected the restored revision placed after the game closed, got %q", content)
 	}
 	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
 	rewound, _ := fixture.state.BindingFor(local)
