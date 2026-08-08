@@ -547,11 +547,22 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 
 	var outcome tui.TrackOutcome
 	var bindingErr error
+	// What the pass learns about playing games outlives it: the watch phase
+	// inherits the presence picture, the detector whose process cache the
+	// pass just warmed, and the pulls the pass held back.
+	detector := running.PlatformDetector()
+	var presence presenceWatch
 	var deferredPulls []string
 	waitErr := tui.Wait(ctx, "", func(taskCtx context.Context, session *tui.WaitSession) {
 		taskCtx = activity.WithReporter(taskCtx, session.SetLabel)
 		var confirmed map[string]bool
 		outcome, confirmed = syncTracking(taskCtx, server, &state, scans, removed, report)
+		// Presence maps through Library identities, which the library sync
+		// just resolved, so it is assembled here and inherited by the watch
+		// phase rather than rebuilt there. A sync that failed to reach the
+		// server still leaves a picture worth watching with: the loop can
+		// report it once the server comes back.
+		presence = trackedPresence(scanner, &state, scans)
 		if !outcome.Synced {
 			return
 		}
@@ -587,7 +598,7 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 		// running game to run omnisave must not undo that game's session.
 		// The sweep fails open, like the headless pass's (decision 13).
 		var gate *pullGate
-		if playing, sweepErr := playingNow(taskCtx, running.PlatformDetector(), trackedPresence(scanner, &state, scans).matchers); sweepErr == nil {
+		if playing, sweepErr := playingNow(taskCtx, detector, presence.matchers); sweepErr == nil {
 			gate = &pullGate{playing: playing}
 		}
 		bindingErr = reconcileSaves(taskCtx, server, &state, scans, confirmed, &outcome, report, prompts, gate, 0)
@@ -623,7 +634,8 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 		// The report is scrollback now; the live block gets its own space.
 		fmt.Println()
 	}
-	return keepTracking(ctx, scanner, server, store, &state, scans, deferredPulls, pass, *serverURL, *token)
+	return keepTracking(ctx, scanner, server, store, &state, scans,
+		watchSeed{detector: detector, presence: presence, deferred: deferredPulls}, pass, *serverURL, *token)
 }
 
 // standingSelection is what a run that does not ask keeps: the tracked
@@ -653,7 +665,7 @@ func keepTracking(
 	store *tracking.Store,
 	state *tracking.State,
 	scans []client.TargetScan,
-	deferred []string,
+	seed watchSeed,
 	pass handoff,
 	flagURL, flagToken string,
 ) error {
@@ -662,13 +674,13 @@ func keepTracking(
 	// The run's own pass is the view's opening state, not news: the loop
 	// starts from it so the stream announces only what happens next.
 	events.seen(pass.snapshot)
-	loop := newWatchLoop(scanner, server, store, settings, events)
+	loop := newWatchLoop(scanner, server, store, seed.detector, settings, events)
 	loop.watched = watchedFiles(state, scans)
-	loop.presence = trackedPresence(scanner, state, scans)
+	loop.presence = seed.presence
 	// Pulls the run held under a running game hand off like the watched
 	// files do: the loop watches for their exit from its first sweep, so
 	// skipping the opening pass does not skip decision 13's promise.
-	loop.deferred = deferred
+	loop.deferred = seed.deferred
 	url, _ := serverConnection(*state, flagURL, flagToken)
 	return keepWatching(ctx, loop, url, settings, pass)
 }

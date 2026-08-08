@@ -539,6 +539,227 @@ func TestAHandedOffDeferredPullAppliesOnceTheGameCloses(t *testing.T) {
 	}
 }
 
+// brokenLibrarySync answers device registration with a server error while it
+// is broken. The pass that meets it fails its library sync without failing
+// itself, so it never reaches the save comparison — and knows nothing about
+// which pulls are still held.
+type brokenLibrarySync struct {
+	mu     sync.Mutex
+	broken bool
+}
+
+func (b *brokenLibrarySync) set(broken bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.broken = broken
+}
+
+func (b *brokenLibrarySync) intercept(response http.ResponseWriter, request *http.Request) bool {
+	b.mu.Lock()
+	broken := b.broken
+	b.mu.Unlock()
+	// Registration only: the status endpoint lives under the same prefix,
+	// and breaking presence reporting would break the sweeps under test.
+	if !broken || request.Method != http.MethodPut ||
+		!strings.HasPrefix(request.URL.Path, "/api/v1/devices/") ||
+		strings.HasSuffix(request.URL.Path, "/status") {
+		return false
+	}
+	http.Error(response, "device registration unavailable", http.StatusServiceUnavailable)
+	return true
+}
+
+func TestAPassThatNeverReconciledKeepsTheHeldPullsExitTrigger(t *testing.T) {
+	broken := &brokenLibrarySync{}
+	server := newInterceptedServer(t, broken.intercept)
+	fixture := newSyncFixture(t, "first-progress")
+	seed, bound := pushSecondRevision(t, server, &fixture, "second-progress")
+	if _, err := server.RestoreCurrentRevision(context.Background(), bound.OmnisaveID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: bound.LastSyncedRevisionID,
+		RevisionID:                seed.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(fixture.state); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &toggledPlaying{fixtureAdapter: fixtureAdapter{fixture: &fixture}, playing: true}
+	scanner := client.NewScanner(nil, adapter)
+	movement := make(chan string)
+	loop := watchLoop{
+		scanner:  scanner,
+		server:   server,
+		store:    store,
+		detector: running.NewDetector(&stubProcesses{}),
+		poll:     20 * time.Millisecond,
+		pull:     time.Hour,
+		floor:    0,
+		settle:   time.Millisecond,
+		events:   newAnnouncer(),
+		movement: func(context.Context) <-chan string {
+			return movement
+		},
+		watched:  []string{fixture.localPath},
+		presence: trackedPresence(scanner, &fixture.state, fixture.scans),
+		deferred: []string{"local-game-1"},
+	}
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-sink.playing:
+			}
+		}
+	}()
+
+	// A pass runs while the game is still being played and cannot reach the
+	// server to sync the library, so it never reaches the save comparison.
+	// It has nothing to say about the held pull — and must not be taken to
+	// say the pull is no longer held.
+	broken.set(true)
+	movement <- remote.LibraryChangedEvent
+	select {
+	case <-sink.finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the pass with the broken library sync")
+	}
+
+	// The server comes back and the game closes. The exit trigger the failed
+	// pass left standing is what lands the pull; nothing else can, with the
+	// pull ticker an hour out and no local writes to poll for.
+	broken.set(false)
+	adapter.set(false)
+	deadline := time.After(20 * time.Second)
+	for {
+		select {
+		case result := <-sink.finished:
+			if result.Err != nil {
+				t.Fatalf("expected the exit-triggered pass to succeed, got %v", result.Err)
+			}
+			content, err := os.ReadFile(fixture.localPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(content) == "first-progress" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for the retained exit trigger to land the held pull")
+		}
+	}
+}
+
+// brokenScans is a toggledPlaying whose scanning can be broken, so a test
+// can fail every pass while still steering whether the game reads as played.
+type brokenScans struct {
+	*toggledPlaying
+	mu     sync.Mutex
+	broken bool
+}
+
+func (a *brokenScans) breakScans() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.broken = true
+}
+
+func (a *brokenScans) DiscoverTargets(ctx context.Context) ([]target.Target, error) {
+	a.mu.Lock()
+	broken := a.broken
+	a.mu.Unlock()
+	if broken {
+		return nil, errors.New("target unreadable")
+	}
+	return a.toggledPlaying.DiscoverTargets(ctx)
+}
+
+func TestAFailingExitTriggeredPassRunsOnceAndRearmsOnRelaunch(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(fixture.state); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &brokenScans{
+		toggledPlaying: &toggledPlaying{fixtureAdapter: fixtureAdapter{fixture: &fixture}, playing: true},
+	}
+	scanner := client.NewScanner(nil, adapter)
+	presence := trackedPresence(scanner, &fixture.state, fixture.scans)
+	adapter.breakScans()
+	loop := watchLoop{
+		scanner:  scanner,
+		server:   server,
+		store:    store,
+		detector: running.NewDetector(&stubProcesses{}),
+		poll:     20 * time.Millisecond,
+		pull:     time.Hour,
+		floor:    0,
+		settle:   time.Millisecond,
+		events:   newAnnouncer(),
+		watched:  []string{fixture.localPath},
+		presence: presence,
+		deferred: []string{"local-game-1"},
+	}
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-sink.playing:
+			}
+		}
+	}()
+
+	// The game closes and its exit triggers the pass that would land the
+	// held pull. Scanning is broken, so the pass fails.
+	adapter.set(false)
+	select {
+	case result := <-sink.finished:
+		if result.Err == nil {
+			t.Fatal("expected the broken scan to fail the exit-triggered pass")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("timed out waiting for the exit to trigger a pass")
+	}
+
+	// The exit is still standing and the sweeps still see it, but the pull
+	// waits for the pull ticker now: retrying a failing pass every poll is
+	// what every other trigger already refuses to do.
+	select {
+	case result := <-sink.finished:
+		t.Fatalf("expected the exit to trigger one pass, got a retry: %+v", result)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	// The game is relaunched and quits again. That is a new exit, not the
+	// one already answered, so it gets its own pass.
+	adapter.set(true)
+	select {
+	case <-sink.finished:
+		t.Fatal("expected no pass while the relaunched game plays")
+	case <-time.After(200 * time.Millisecond):
+	}
+	adapter.set(false)
+	select {
+	case result := <-sink.finished:
+		if result.Err == nil {
+			t.Fatal("expected the broken scan to fail the second pass too")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("timed out waiting for the relaunched game's exit to re-arm the trigger")
+	}
+}
+
 func TestSteadyServerEventsCoalesceIntoAPassInsteadOfStarvingIt(t *testing.T) {
 	server := newRealServer(t)
 	fixture := newSyncFixture(t, "first-progress")

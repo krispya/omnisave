@@ -137,7 +137,7 @@ func runWatch(ctx context.Context, scanner *client.Scanner, arguments []string) 
 		return err
 	}
 	settings := watchSettings{poll: *poll, pull: *pullEvery, floor: *floor, plain: *plain}
-	loop := newWatchLoop(scanner, server, store, settings, newAnnouncer())
+	loop := newWatchLoop(scanner, server, store, running.PlatformDetector(), settings, newAnnouncer())
 	url, _ := serverConnection(initial, *serverURL, *token)
 	// watch owns its first pass, so it opens with nothing established yet.
 	return keepWatching(ctx, loop, url, settings, handoff{})
@@ -150,6 +150,17 @@ func runWatch(ctx context.Context, scanner *client.Scanner, arguments []string) 
 type handoff struct {
 	snapshot tui.ReportSnapshot
 	at       time.Time
+}
+
+// watchSeed is what a finished run gives the watch loop about playing
+// games, so the loop opens where the run left off instead of re-deriving
+// it: the presence picture the run assembled, the detector whose process
+// cache the run's sweep already warmed, and the pulls the run held back
+// under a running game. A detached watch has none of it and starts cold.
+type watchSeed struct {
+	detector *running.Detector
+	presence presenceWatch
+	deferred []string
 }
 
 // watchSettings are the loop's timings. Watch takes them from flags; the
@@ -244,13 +255,15 @@ type watchLoop struct {
 // newWatchLoop wires the loop the way every real caller needs it: timings
 // from settings, movement from the server's event stream. Keeping the
 // wiring in one place is what keeps the two callers from drifting; tests
-// build the struct directly to inject their own movement feed.
-func newWatchLoop(scanner *client.Scanner, server *remote.Client, store *tracking.Store, settings watchSettings, events *announcer) watchLoop {
+// build the struct directly to inject their own movement feed. The detector
+// comes from the caller so a run that already swept hands its warm one over
+// rather than making the loop re-read every process's executable path.
+func newWatchLoop(scanner *client.Scanner, server *remote.Client, store *tracking.Store, detector *running.Detector, settings watchSettings, events *announcer) watchLoop {
 	return watchLoop{
 		scanner:  scanner,
 		server:   server,
 		store:    store,
-		detector: running.PlatformDetector(),
+		detector: detector,
 		poll:     settings.poll,
 		pull:     settings.pull,
 		floor:    settings.floor,
@@ -282,11 +295,20 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	presence := l.presence
 	// deferred carries the games whose pulls a pass held back under a
 	// running game; their exit is what resolves those pulls, so it is the
-	// sweeps between passes that watch for it. Only a successful pass
-	// replaces the list — a failed one must not erase the exit trigger.
+	// sweeps between passes that watch for it. Only a pass that reconciled
+	// replaces the list — one that did not must not erase the exit trigger.
 	deferred := l.deferred
+	// exitFired remembers that a standing deferral's exit already had its
+	// pass. Every other trigger fires once and leaves a failure to the pull
+	// ticker; the exit trigger does the same, or a pass that keeps failing
+	// would run at the poll interval for as long as it kept failing. A game
+	// seen playing again re-arms it, so a relaunch and a second quit land.
+	exitFired := false
 	affirmPresence := func() (map[string]bool, bool) {
-		if l.detector == nil {
+		// A sweep earns its cost when there is a device to report to or a
+		// held pull waiting on an exit. With neither there is nothing to
+		// learn, so an unreported loop does not read the process table.
+		if l.detector == nil || (presence.deviceID == "" && len(deferred) == 0) {
 			return nil, false
 		}
 		playing, err := playingNow(ctx, l.detector, presence.matchers)
@@ -342,8 +364,17 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 		} else {
 			affirmPresence()
 		}
-		if err == nil {
+		// Only a pass that reached the save comparison speaks for the
+		// standing list. A library sync that never reached the server skips
+		// that pass entirely (FDR-005, decision 13), so it knows nothing
+		// about which pulls are still held — and adopting its empty answer
+		// would drop the exit trigger for a pull that never applied. A pass
+		// that did reconcile is authoritative: whatever it still holds is
+		// held under a game its own sweep saw playing, so the exit trigger
+		// re-arms with it.
+		if err == nil && outcome.Synced {
 			deferred = played.waiting
+			exitFired = false
 		}
 		presenceTicker.Reset(nextAffirm())
 		if err != nil {
@@ -436,17 +467,33 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			refresh()
 		case <-presenceTicker.C:
 			playing, swept := affirmPresence()
-			if swept && deferredGameExited(deferred, playing) {
-				// The game holding back a pull has closed — but the exit
-				// often lands amid the game's final save flush, and a pass
-				// mid-burst is how a torn save reaches the server. The
-				// quiet-interval rule holds here like everywhere: a burst
-				// still landing leaves the pass to the poll path, which
-				// runs it once the writes settle.
-				if !stillWriting() {
-					refresh()
-				}
+			if !swept {
+				continue
 			}
+			if !deferredGameExited(deferred, playing) {
+				// Every held pull's game is playing (or nothing is held):
+				// the next exit gets a trigger of its own.
+				exitFired = false
+				continue
+			}
+			if exitFired {
+				// This exit already had its pass. It did not land the pull,
+				// or the list would be empty — so the pull waits for the
+				// pull ticker, the fallback every other trigger falls back
+				// to, instead of retrying a failing pass every poll.
+				continue
+			}
+			// The game holding back a pull has closed — but the exit often
+			// lands amid the game's final save flush, and a pass mid-burst
+			// is how a torn save reaches the server. The quiet-interval
+			// rule holds here like everywhere: a burst still landing leaves
+			// the pass to the poll path, which runs it once the writes
+			// settle, and leaves this trigger armed until one does.
+			if stillWriting() {
+				continue
+			}
+			exitFired = true
+			refresh()
 		case <-pullTicker.C:
 			if stillWriting() {
 				continue

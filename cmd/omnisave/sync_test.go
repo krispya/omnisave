@@ -28,12 +28,24 @@ import (
 )
 
 func newRealServer(t *testing.T) *remote.Client {
-	return newObservedServer(t, nil)
+	return newInterceptedServer(t, nil)
 }
 
 // newObservedServer is newRealServer with a hook that sees every request, so
 // a test can count the reports a watch loop sends.
 func newObservedServer(t *testing.T, observe func(*http.Request)) *remote.Client {
+	t.Helper()
+	return newInterceptedServer(t, func(_ http.ResponseWriter, request *http.Request) bool {
+		observe(request)
+		return false
+	})
+}
+
+// newInterceptedServer is the real server behind a hook that may answer a
+// request itself, so a test can break one endpoint mid-run and repair it
+// again. A hook returning true has answered; false passes the request
+// through to the real handler.
+func newInterceptedServer(t *testing.T, intercept func(http.ResponseWriter, *http.Request) bool) *remote.Client {
 	t.Helper()
 	directory := t.TempDir()
 	repository, err := sqlitestorage.Open(
@@ -46,10 +58,12 @@ func newObservedServer(t *testing.T, observe func(*http.Request)) *remote.Client
 		Saves:   omnisaveservice.New(repository),
 		Catalog: catalogservice.New(repository, repository),
 	})
-	if observe != nil {
+	if intercept != nil {
 		wrapped := handler
 		handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-			observe(request)
+			if intercept(response, request) {
+				return
+			}
 			wrapped.ServeHTTP(response, request)
 		})
 	}
