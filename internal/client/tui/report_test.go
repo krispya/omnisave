@@ -60,7 +60,7 @@ func TestTheStandingTableDropsEventLinesAndKeepsTheCondition(t *testing.T) {
 	report.Linked("Project Zomboid", "")
 	report.Diverged("Project Zomboid", "Save 2")
 
-	rendered := strings.Join(ComposeStanding(report.Snapshot(), time.Now()), "\n")
+	rendered := strings.Join(ComposeStanding(report.Snapshot(), nil, time.Now()), "\n")
 
 	expected := strings.Join([]string{
 		"  ✓ Slay the Spire 2  Save 1 · synced 2m ago",

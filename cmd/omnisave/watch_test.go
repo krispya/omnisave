@@ -2,13 +2,19 @@ package main
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
+	"github.com/krisbaumgartner/omnisave/internal/client/running"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
@@ -152,18 +158,23 @@ func (a fixtureAdapter) DiscoverSaveDestinations(context.Context, target.Target,
 	return nil, nil
 }
 
-// passSink records finished passes so a test can wait for one.
+// passSink records finished passes and playing markers so a test can wait
+// for them.
 type passSink struct {
 	finished chan tui.PassResult
+	playing  chan []string
 }
 
 func newPassSink() *passSink {
-	return &passSink{finished: make(chan tui.PassResult, 16)}
+	return &passSink{
+		finished: make(chan tui.PassResult, 16),
+		playing:  make(chan []string, 16),
+	}
 }
 
 func (s *passSink) Watching(int)                       {}
 func (s *passSink) PassStarted()                       {}
-func (s *passSink) Activity(string)                    {}
+func (s *passSink) Playing(titles []string)            { s.playing <- titles }
 func (s *passSink) PassFinished(result tui.PassResult) { s.finished <- result }
 func (s *passSink) Requests() <-chan tui.WatchRequest  { return nil }
 
@@ -222,6 +233,205 @@ func TestAServerEventTriggersAPassThatAppliesADashRewind(t *testing.T) {
 	}
 	if string(content) != "first-progress" {
 		t.Fatalf("expected the pass to pull the restored revision, got %q", content)
+	}
+}
+
+// stubProcesses is a process source a test can break, the unreadable process
+// table a detection sweep must not turn into an empty playing report.
+type stubProcesses struct {
+	mu  sync.Mutex
+	err error
+}
+
+func (p *stubProcesses) fail(err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.err = err
+}
+
+func (p *stubProcesses) Processes(context.Context) ([]running.Process, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return nil, p.err
+}
+
+func (p *stubProcesses) Cmdline(context.Context, int32) ([]string, error)   { return nil, nil }
+func (p *stubProcesses) OpenPaths(context.Context, int32) ([]string, error) { return nil, nil }
+
+// failingScans wraps fixtureAdapter so a test can break scanning mid-run,
+// the way an unreadable target fails a pass.
+type failingScans struct {
+	fixtureAdapter
+	mu     sync.Mutex
+	broken bool
+}
+
+func (a *failingScans) fail() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.broken = true
+}
+
+func (a *failingScans) DiscoverTargets(ctx context.Context) ([]target.Target, error) {
+	a.mu.Lock()
+	broken := a.broken
+	a.mu.Unlock()
+	if broken {
+		return nil, errors.New("target unreadable")
+	}
+	return a.fixtureAdapter.DiscoverTargets(ctx)
+}
+
+// playingFixtureAdapter is a fixtureAdapter whose games always read as
+// playing, giving presence sweeps a matcher to consult.
+type playingFixtureAdapter struct {
+	fixtureAdapter
+}
+
+func (a playingFixtureAdapter) RunningGames(_ context.Context, _ *running.Snapshot, _ target.Target, games []target.InstalledGame) (map[string]bool, error) {
+	playing := make(map[string]bool, len(games))
+	for _, game := range games {
+		playing[game.ID] = true
+	}
+	return playing, nil
+}
+
+func TestAFailedScanKeepsTheStandingPresenceReaffirming(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(fixture.state); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &failingScans{fixtureAdapter: fixtureAdapter{fixture: &fixture}}
+	movement := make(chan string)
+	loop := watchLoop{
+		scanner:  client.NewScanner(nil, adapter),
+		server:   server,
+		store:    store,
+		detector: running.NewDetector(&stubProcesses{}),
+		poll:     time.Hour,
+		pull:     time.Hour,
+		floor:    0,
+		settle:   time.Millisecond,
+		events:   newAnnouncer(),
+		movement: func(context.Context) <-chan string {
+			return movement
+		},
+	}
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+
+	// The opening pass establishes presence and affirms it.
+	select {
+	case result := <-sink.finished:
+		if result.Err != nil {
+			t.Fatalf("expected the opening pass to succeed, got %v", result.Err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the opening pass")
+	}
+	select {
+	case <-sink.playing:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the opening pass to affirm presence")
+	}
+
+	// The next pass fails to scan; the standing presence must survive it.
+	adapter.fail()
+	movement <- remote.LibraryChangedEvent
+	select {
+	case result := <-sink.finished:
+		if result.Err == nil {
+			t.Fatal("expected the broken scan to fail the pass")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the failing pass")
+	}
+	// A pass affirms before it finishes, so the marker is already here — its
+	// absence would mean the failure zeroed the presence picture.
+	select {
+	case <-sink.playing:
+	default:
+		t.Fatal("expected the failed pass to keep re-affirming the standing presence")
+	}
+}
+
+func TestADetectorErrorSkipsTheReportInsteadOfClearingIt(t *testing.T) {
+	var statusReports atomic.Int32
+	server := newObservedServer(t, func(request *http.Request) {
+		if request.Method == http.MethodPut && strings.HasSuffix(request.URL.Path, "/status") {
+			statusReports.Add(1)
+		}
+	})
+	fixture := newSyncFixture(t, "first-progress")
+	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(fixture.state); err != nil {
+		t.Fatal(err)
+	}
+	processes := &stubProcesses{}
+	movement := make(chan string)
+	loop := watchLoop{
+		scanner:  client.NewScanner(nil, playingFixtureAdapter{fixtureAdapter{fixture: &fixture}}),
+		server:   server,
+		store:    store,
+		detector: running.NewDetector(processes),
+		poll:     time.Hour,
+		pull:     time.Hour,
+		floor:    0,
+		settle:   time.Millisecond,
+		events:   newAnnouncer(),
+		movement: func(context.Context) <-chan string {
+			return movement
+		},
+	}
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+
+	// The opening pass sees the game playing and reports it.
+	select {
+	case result := <-sink.finished:
+		if result.Err != nil {
+			t.Fatalf("expected the opening pass to succeed, got %v", result.Err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the opening pass")
+	}
+	select {
+	case titles := <-sink.playing:
+		if len(titles) != 1 || titles[0] != "Chrono Trigger" {
+			t.Fatalf("expected the playing marker for Chrono Trigger, got %v", titles)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the opening playing marker")
+	}
+	if reports := statusReports.Load(); reports != 1 {
+		t.Fatalf("expected one playing report from the opening pass, got %d", reports)
+	}
+
+	// The process table becomes unreadable; the next affirm must skip its
+	// report — an empty one would clear a game still being played.
+	processes.fail(errors.New("process table unreadable"))
+	movement <- remote.LibraryChangedEvent
+	select {
+	case result := <-sink.finished:
+		if result.Err != nil {
+			t.Fatalf("expected the pass itself to succeed, got %v", result.Err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the second pass")
+	}
+	if reports := statusReports.Load(); reports != 1 {
+		t.Fatalf("expected the failed sweep to send no report, got %d", reports)
+	}
+	select {
+	case titles := <-sink.playing:
+		t.Fatalf("expected the failed sweep to leave the marker alone, got %v", titles)
+	default:
 	}
 }
 

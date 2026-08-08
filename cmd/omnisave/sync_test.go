@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -27,6 +28,12 @@ import (
 )
 
 func newRealServer(t *testing.T) *remote.Client {
+	return newObservedServer(t, nil)
+}
+
+// newObservedServer is newRealServer with a hook that sees every request, so
+// a test can count the reports a watch loop sends.
+func newObservedServer(t *testing.T, observe func(*http.Request)) *remote.Client {
 	t.Helper()
 	directory := t.TempDir()
 	repository, err := sqlitestorage.Open(
@@ -35,10 +42,17 @@ func newRealServer(t *testing.T) *remote.Client {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { repository.Close() })
-	handler := httpapi.New(accessservice.New(repository, "secret"), httpapi.Config{
+	var handler http.Handler = httpapi.New(accessservice.New(repository, "secret"), httpapi.Config{
 		Saves:   omnisaveservice.New(repository),
 		Catalog: catalogservice.New(repository, repository),
 	})
+	if observe != nil {
+		wrapped := handler
+		handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			observe(request)
+			wrapped.ServeHTTP(response, request)
+		})
+	}
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	remoteClient, err := remote.New(server.URL, "secret", server.Client())

@@ -26,6 +26,7 @@ var (
 
 type Adapter struct {
 	locators []locator.Locator
+	resolved resolver
 }
 
 // New creates a Steam adapter from installation locators.

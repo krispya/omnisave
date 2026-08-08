@@ -32,6 +32,7 @@ type API struct {
 	access   access.Service
 	settings settings.Service
 	events   *eventBroker
+	presence *devicePresence
 }
 
 // Config assembles the API. Catalog is optional — a server without a catalog
@@ -63,6 +64,10 @@ func New(credentials access.Service, config Config) http.Handler {
 		settings: config.Settings,
 		events:   newEventBroker(),
 	}
+	// Expiry is a state change like any other: when a playing report ages
+	// out, watchers hear devices.changed instead of running clocks of their
+	// own against the server's.
+	api.presence = newDevicePresence(api.publishDevicesChanged)
 
 	root := http.NewServeMux()
 	root.Handle("/api/v1/", Authenticate(credentials, api.guardedRoutes()))
@@ -107,6 +112,8 @@ func (api *API) guardedRoutes() *http.ServeMux {
 		mux.HandleFunc("DELETE /api/v1/games/{id}", api.deleteGame)
 		mux.HandleFunc("GET /api/v1/games/{id}/media/{mediaID}", api.getGameMedia)
 		mux.HandleFunc("PUT /api/v1/devices/{id}", api.registerDevice)
+		mux.HandleFunc("PUT /api/v1/devices/{id}/status", api.reportDeviceStatus)
+		mux.HandleFunc("GET /api/v1/presence", api.listPresence)
 		mux.HandleFunc("PUT /api/v1/games/{id}/tracking/{deviceID}", api.trackGame)
 		mux.HandleFunc("DELETE /api/v1/games/{id}/tracking/{deviceID}", api.untrackGame)
 	}
@@ -468,7 +475,7 @@ func (a *API) resolveGame(w http.ResponseWriter, r *http.Request) {
 	}
 	a.publishLibraryChanged()
 	writeJSON(w, http.StatusOK, catalogResolutionResponse{
-		Game:   gameResponse(&resolution.Game),
+		Game:   a.gameResponse(&resolution.Game),
 		Status: resolution.Status,
 	})
 }
@@ -481,7 +488,7 @@ func (a *API) listGames(w http.ResponseWriter, r *http.Request) {
 	}
 	response := make([]catalogGameResponse, len(games))
 	for index := range games {
-		response[index] = gameResponse(&games[index])
+		response[index] = a.gameResponse(&games[index])
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -520,7 +527,7 @@ func (a *API) matchGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.publishLibraryChanged()
-	writeJSON(w, http.StatusOK, gameResponse(game))
+	writeJSON(w, http.StatusOK, a.gameResponse(game))
 }
 
 func (a *API) getGame(w http.ResponseWriter, r *http.Request) {
@@ -529,7 +536,7 @@ func (a *API) getGame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, gameResponse(game))
+	writeJSON(w, http.StatusOK, a.gameResponse(game))
 }
 
 func (a *API) deleteGame(w http.ResponseWriter, r *http.Request) {
@@ -554,6 +561,53 @@ func (a *API) registerDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	a.publishLibraryChanged()
 	writeJSON(w, http.StatusOK, device)
+}
+
+// reportDeviceStatus receives which games a device is playing right now; an
+// empty list clears it. Presence, not provenance: the report lives in memory
+// with a short credibility window, so a device that vanishes mid-session
+// stops reading as "playing" on its own.
+func (a *API) reportDeviceStatus(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		PlayingGameIDs []string `json:"playing_game_ids"`
+	}
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, err)
+		return
+	}
+	// Only a registered device gets a presence entry; anything else is a 404,
+	// like every other /devices/{id} route.
+	if _, err := a.catalog.GetDevice(r.Context(), r.PathValue("id")); err != nil {
+		writeError(w, err)
+		return
+	}
+	if a.presence.report(r.PathValue("id"), input.PlayingGameIDs) {
+		a.publishDevicesChanged()
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type devicePresenceResponse struct {
+	DeviceID       string    `json:"device_id"`
+	PlayingGameIDs []string  `json:"playing_game_ids"`
+	ReportedAt     time.Time `json:"reported_at"`
+}
+
+// listPresence serves the whole live playing picture in one answer, so a
+// presence change costs readers a light fetch instead of a library reload.
+func (a *API) listPresence(w http.ResponseWriter, r *http.Request) {
+	live := a.presence.live()
+	devices := make([]devicePresenceResponse, len(live))
+	for index, status := range live {
+		devices[index] = devicePresenceResponse{
+			DeviceID:       status.deviceID,
+			PlayingGameIDs: status.playing,
+			ReportedAt:     status.at,
+		}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Devices []devicePresenceResponse `json:"devices"`
+	}{Devices: devices})
 }
 
 func (a *API) trackGame(w http.ResponseWriter, r *http.Request) {
@@ -627,7 +681,7 @@ type catalogMediaResponse struct {
 	Attribution string `json:"attribution,omitempty"`
 }
 
-func gameResponse(game *catalog.Game) catalogGameResponse {
+func (a *API) gameResponse(game *catalog.Game) catalogGameResponse {
 	media := make([]catalogMediaResponse, len(game.Media))
 	for index, item := range game.Media {
 		media[index] = catalogMediaResponse{
@@ -640,9 +694,16 @@ func gameResponse(game *catalog.Game) catalogGameResponse {
 			Attribution: item.Attribution,
 		}
 	}
-	provenance := game.Provenance
-	if provenance == nil {
-		provenance = make([]catalog.GameTracking, 0)
+	// Presence is stitched in at serve time: playing is a live report with
+	// a short credibility window, not a fact the catalog stores.
+	provenance := make([]catalog.GameTracking, len(game.Provenance))
+	copy(provenance, game.Provenance)
+	for index := range provenance {
+		if at, playing := a.presence.playing(provenance[index].DeviceID, game.ID); playing {
+			provenance[index].Playing = true
+			reportedAt := at
+			provenance[index].PlayingReportedAt = &reportedAt
+		}
 	}
 	return catalogGameResponse{
 		ID:              game.ID,

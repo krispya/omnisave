@@ -23,6 +23,7 @@ const adapterName = "retroarch"
 type Adapter struct {
 	locators  []locator.Locator
 	platforms []platform.Profile
+	resolved  resolver
 }
 
 // New creates a RetroArch adapter from installation locators.

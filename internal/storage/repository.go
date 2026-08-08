@@ -53,6 +53,7 @@ type CatalogRepository interface {
 	SaveGame(ctx context.Context, game catalog.Game, rom *catalog.GameROM) error
 	DeleteGame(ctx context.Context, id string) error
 	UpsertDevice(ctx context.Context, device catalog.Device) error
+	GetDevice(ctx context.Context, id string) (*catalog.Device, error)
 	TrackGame(ctx context.Context, gameID string, record catalog.GameTracking) error
 	UntrackGame(ctx context.Context, gameID, deviceID string, at time.Time) error
 	ListGameProvenance(ctx context.Context, gameID string) ([]catalog.GameTracking, error)

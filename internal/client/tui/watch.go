@@ -100,9 +100,10 @@ func (d *WatchDisplay) PassStarted() {
 	d.program.Send(watchPassStartedMsg{at: time.Now()})
 }
 
-// Activity updates the short description beside the watch spinner.
-func (d *WatchDisplay) Activity(message string) {
-	d.program.Send(watchActivityMsg(message))
+// Playing replaces which games this device sees being played, by display
+// title. The marker rides the standing table, so it survives pass swaps.
+func (d *WatchDisplay) Playing(titles []string) {
+	d.program.Send(watchPlayingMsg(titles))
 }
 
 // PassFinished settles the view with a pass's final table and prints its
@@ -116,7 +117,7 @@ func (d *WatchDisplay) PassFinished(result PassResult) {
 type (
 	watchWatchingMsg     struct{ files int }
 	watchPassStartedMsg  struct{ at time.Time }
-	watchActivityMsg     string
+	watchPlayingMsg      []string
 	watchPassFinishedMsg struct{ result PassResult }
 	watchSpinDoneMsg     struct{ generation int }
 	watchClockMsg        time.Time
@@ -136,8 +137,8 @@ type watchModel struct {
 	spinner        spinner.Model
 	files          int
 	snapshot       ReportSnapshot
+	playing        map[string]bool
 	failure        string
-	activityLabel  string
 	syncing        bool
 	syncStarted    time.Time
 	spinGeneration int
@@ -172,13 +173,16 @@ func (m watchModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, watchClock()
 	case watchWatchingMsg:
 		m.files = message.files
+	case watchPlayingMsg:
+		playing := make(map[string]bool, len(message))
+		for _, title := range message {
+			playing[title] = true
+		}
+		m.playing = playing
 	case watchPassStartedMsg:
 		m.syncing = true
-		m.activityLabel = "syncing"
 		m.syncStarted = message.at
 		m.spinGeneration++
-	case watchActivityMsg:
-		m.activityLabel = string(message)
 	case watchPassFinishedMsg:
 		result := message.result
 		m.failure = passFailure(result)
@@ -198,7 +202,6 @@ func (m watchModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Results land immediately; the spinner finishes its rotation.
 		if remaining := spinnerMinimum - result.At.Sub(m.syncStarted); remaining > 0 {
-			m.activityLabel = "finishing"
 			generation := m.spinGeneration
 			commands = append(commands, tea.Tick(remaining, func(time.Time) tea.Msg {
 				return watchSpinDoneMsg{generation: generation}
@@ -219,11 +222,12 @@ func (m watchModel) View() string {
 	var view strings.Builder
 	header := titleStyle.Render("▲ Omnisave") + mutedStyle.Render(" · watching")
 	if m.syncing {
-		// Activity lives here, appended, so no other line ever reflows.
-		header += " " + m.spinner.View() + " " + mutedStyle.Render(m.activityLabel)
+		header += " " + m.spinner.View()
 	}
 	view.WriteString(header + "\n\n")
-	lines := ComposeStanding(m.snapshot, m.now)
+	// The playing marker is stitched in at render time: presence moves on
+	// its own cadence, and must not wait for a pass to swap the table.
+	lines := ComposeStanding(m.snapshot, m.playing, m.now)
 	if len(lines) == 0 {
 		view.WriteString(mutedStyle.Render("  No tracked saves discovered yet") + "\n")
 	}

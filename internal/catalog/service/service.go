@@ -288,6 +288,11 @@ func (s *service) RegisterDevice(ctx context.Context, id string, input catalog.R
 	return &device, nil
 }
 
+func (s *service) GetDevice(ctx context.Context, id string) (*catalog.Device, error) {
+	device, err := s.repository.GetDevice(ctx, id)
+	return device, translateStorageError(err)
+}
+
 func (s *service) TrackGame(ctx context.Context, gameID, deviceID string, input catalog.TrackGame) error {
 	gameID = strings.TrimSpace(gameID)
 	deviceID = strings.TrimSpace(deviceID)
