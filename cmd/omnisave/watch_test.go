@@ -435,6 +435,110 @@ func TestADetectorErrorSkipsTheReportInsteadOfClearingIt(t *testing.T) {
 	}
 }
 
+// toggledPlaying is a fixtureAdapter whose games read as playing only while
+// the switch is on, so a test can close a game mid-run.
+type toggledPlaying struct {
+	fixtureAdapter
+	mu      sync.Mutex
+	playing bool
+}
+
+func (a *toggledPlaying) set(playing bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.playing = playing
+}
+
+func (a *toggledPlaying) RunningGames(_ context.Context, _ *running.Snapshot, _ target.Target, games []target.InstalledGame) (map[string]bool, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	matched := make(map[string]bool, len(games))
+	for _, game := range games {
+		matched[game.ID] = a.playing
+	}
+	return matched, nil
+}
+
+func TestAHandedOffDeferredPullAppliesOnceTheGameCloses(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	seed, bound := pushSecondRevision(t, server, &fixture, "second-progress")
+	// The Dash rewound current to the seed while the game was being played:
+	// the track run held the pull and handed the waiting game to the loop.
+	if _, err := server.RestoreCurrentRevision(context.Background(), bound.OmnisaveID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: bound.LastSyncedRevisionID,
+		RevisionID:                seed.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(fixture.state); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &toggledPlaying{fixtureAdapter: fixtureAdapter{fixture: &fixture}, playing: true}
+	scanner := client.NewScanner(nil, adapter)
+	loop := watchLoop{
+		scanner:  scanner,
+		server:   server,
+		store:    store,
+		detector: running.NewDetector(&stubProcesses{}),
+		poll:     20 * time.Millisecond,
+		pull:     time.Hour,
+		floor:    0,
+		settle:   time.Millisecond,
+		events:   newAnnouncer(),
+		// The hand-off seeds everything the run established, skipping the
+		// opening pass: the files to watch, the presence picture, and the
+		// game whose exit resolves the held pull.
+		watched:  []string{fixture.localPath},
+		presence: trackedPresence(scanner, &fixture.state, fixture.scans),
+		deferred: []string{"local-game-1"},
+	}
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+	// Sweeps run every poll interval here and each pushes a playing marker;
+	// drain them so the sink never backs the loop up.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-sink.playing:
+			}
+		}
+	}()
+
+	// While the game keeps playing, the sweeps keep waiting: no file
+	// changes, no server events, and the pull ticker is an hour out, so a
+	// pass now could only come from the exit watch firing early.
+	select {
+	case result := <-sink.finished:
+		t.Fatalf("expected no pass while the game plays, got %+v", result)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// The game closes. Once the stop grace expires, the next sweep notices
+	// and the pass it triggers is what lands the held pull.
+	adapter.set(false)
+	select {
+	case result := <-sink.finished:
+		if result.Err != nil {
+			t.Fatalf("expected the exit-triggered pass to succeed, got %v", result.Err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the game's exit to trigger a pass")
+	}
+	content, err := os.ReadFile(fixture.localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "first-progress" {
+		t.Fatalf("expected the deferred pull to apply once the game closed, got %q", content)
+	}
+}
+
 func TestSteadyServerEventsCoalesceIntoAPassInsteadOfStarvingIt(t *testing.T) {
 	server := newRealServer(t)
 	fixture := newSyncFixture(t, "first-progress")

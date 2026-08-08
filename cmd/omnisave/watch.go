@@ -235,6 +235,10 @@ type watchLoop struct {
 	// established, so playing games report immediately instead of waiting
 	// out the first pass.
 	presence presenceWatch
+	// deferred seeds the loop with the games whose pulls that run held
+	// back under a running game, so their exit is watched from the first
+	// sweep even though the opening pass is skipped.
+	deferred []string
 }
 
 // newWatchLoop wires the loop the way every real caller needs it: timings
@@ -276,25 +280,42 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	// passes; a pass that produced a picture replaces it wholesale. A
 	// hand-off from track seeds it, the same way it seeds the watched files.
 	presence := l.presence
-	affirmPresence := func() {
-		if l.detector == nil || presence.deviceID == "" {
-			return
+	// deferred carries the games whose pulls a pass held back under a
+	// running game; their exit is what resolves those pulls, so it is the
+	// sweeps between passes that watch for it. Only a successful pass
+	// replaces the list — a failed one must not erase the exit trigger.
+	deferred := l.deferred
+	affirmPresence := func() (map[string]bool, bool) {
+		if l.detector == nil {
+			return nil, false
 		}
 		playing, err := playingNow(ctx, l.detector, presence.matchers)
 		if err != nil {
 			// A failed sweep skips the report: the server's picture holds
 			// through its credibility window, while an empty report would
-			// clear a game still being played.
-			return
+			// clear a game still being played. It answers nothing about
+			// exits either — a held pull keeps waiting.
+			return nil, false
 		}
-		reportPlaying(ctx, l.server, presence, playing)
-		sink.Playing(playingGames(presence.titles, playing))
+		if presence.deviceID != "" {
+			reportPlaying(ctx, l.server, presence, playing)
+			sink.Playing(playingGames(presence.titles, playing))
+		}
+		return playing, true
 	}
 	// Presence re-affirms on its own cadence: a game can run for an hour
 	// without writing its save, and the server's picture of "playing" must
 	// not age out just because no pass had a reason to run. A pass affirms
 	// too, so each one pushes the next re-affirm a full interval out.
-	presenceTicker := time.NewTicker(presenceReaffirm)
+	// While a pull waits on a game's exit the cadence tightens to the poll
+	// interval, so the pull lands within a poll of the game closing.
+	nextAffirm := func() time.Duration {
+		if len(deferred) > 0 && l.poll < presenceReaffirm {
+			return l.poll
+		}
+		return presenceReaffirm
+	}
+	presenceTicker := time.NewTicker(nextAffirm())
 	defer presenceTicker.Stop()
 	pass := func() []string {
 		started := time.Now()
@@ -305,14 +326,26 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			return nil
 		}
 		report := &tui.TrackReport{}
-		outcome, files, passPresence, err := syncPass(ctx, l.scanner, l.server, &state, report, l.floor)
+		outcome, files, played, err := syncPass(ctx, l.scanner, l.server, l.detector, &state, report, l.floor)
 		// A failed scan yields no picture; the presence already standing
 		// keeps re-affirming rather than being zeroed by the failure.
-		if passPresence.deviceID != "" {
-			presence = passPresence
+		if played.presence.deviceID != "" {
+			presence = played.presence
 		}
-		affirmPresence()
-		presenceTicker.Reset(presenceReaffirm)
+		if played.swept {
+			// The pass's own sweep is the affirmation; sweeping again
+			// would double the cost of every pass for the same answer.
+			if presence.deviceID != "" {
+				reportPlaying(ctx, l.server, presence, played.playing)
+				sink.Playing(playingGames(presence.titles, played.playing))
+			}
+		} else {
+			affirmPresence()
+		}
+		if err == nil {
+			deferred = played.waiting
+		}
+		presenceTicker.Reset(nextAffirm())
 		if err != nil {
 			l.finish(sink, started, report.Snapshot(), "", false, err)
 			return files
@@ -402,7 +435,18 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			// The user asked; theirs is the one trigger that never waits.
 			refresh()
 		case <-presenceTicker.C:
-			affirmPresence()
+			playing, swept := affirmPresence()
+			if swept && deferredGameExited(deferred, playing) {
+				// The game holding back a pull has closed — but the exit
+				// often lands amid the game's final save flush, and a pass
+				// mid-burst is how a torn save reaches the server. The
+				// quiet-interval rule holds here like everywhere: a burst
+				// still landing leaves the pass to the poll path, which
+				// runs it once the writes settle.
+				if !stillWriting() {
+					refresh()
+				}
+			}
 		case <-pullTicker.C:
 			if stillWriting() {
 				continue
