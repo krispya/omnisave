@@ -70,7 +70,7 @@ export function RevisionNameEditor({ revision, fallbackName, onSave }: RevisionN
       <button
         type="button"
         onClick={startEditing}
-        className="pointer-events-auto relative z-10 max-w-48 truncate rounded font-mono text-xs text-slate-300 outline-none hover:text-[#e5a00d] focus-visible:ring-2 focus-visible:ring-[#e5a00d]"
+        className="pointer-events-auto relative z-10 max-w-48 truncate rounded font-mono text-xs text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-text"
         title={`Name revision ${fallbackName}`}
       >
         {displayName}
@@ -95,14 +95,14 @@ export function RevisionNameEditor({ revision, fallbackName, onSave }: RevisionN
         maxLength={100}
         aria-label={`Name for revision ${fallbackName}`}
         aria-invalid={Boolean(error)}
-        className={`h-6 w-48 max-w-full rounded border-0 px-1.5 font-mono text-xs text-white outline-none disabled:opacity-60 ${
-          error ? 'bg-red-950' : 'bg-[#111111]'
+        className={`h-6 w-48 max-w-full rounded border-0 px-1.5 font-mono text-xs text-text outline-none disabled:opacity-60 ${
+          error ? 'bg-danger/20' : 'bg-bg'
         }`}
       />
       {error ? (
         <p
           role="alert"
-          className="absolute top-full left-0 z-30 mt-1 whitespace-nowrap rounded bg-[#202020] px-2 py-1 text-xs text-red-300 shadow-lg"
+          className="absolute top-full left-0 z-30 mt-1 whitespace-nowrap rounded-sm border border-outline bg-surface px-2 py-1 text-xs text-danger"
         >
           {error}
         </p>

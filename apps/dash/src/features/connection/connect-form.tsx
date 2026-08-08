@@ -1,4 +1,6 @@
 import { useState, type FormEvent } from 'react';
+import { Button } from '../../components/button.js';
+import { fieldClass } from '../../components/field.js';
 
 type ConnectFormProps = {
   claimable: boolean;
@@ -45,15 +47,15 @@ export function ConnectForm({
   }
 
   return (
-    <section className="max-w-lg rounded-lg border border-white/5 bg-[#1a1a1a] p-6">
-      <h1 className="font-semibold text-white">
+    <section className="mx-auto mt-10 max-w-lg rounded-lg border border-outline bg-surface p-6">
+      <h1 className="text-lg font-semibold text-text">
         {showToken
           ? 'Enter the owner token'
           : claimable
             ? 'This server has no owner yet'
             : 'Enter your PIN'}
       </h1>
-      <p className="mt-2 text-sm leading-6 text-slate-400">
+      <p className="mt-2 text-sm leading-6 text-muted">
         {showToken
           ? 'The token was printed in the server log on first start. This browser trades it once for a credential of its own.'
           : claimable
@@ -74,7 +76,7 @@ export function ConnectForm({
               onChange={(event) => setToken(event.target.value)}
               autoComplete="current-password"
               placeholder="Owner token"
-              className="min-w-0 flex-1 rounded-md border border-white/10 bg-[#111111] px-3.5 py-2.5 text-sm text-white outline-none placeholder:text-neutral-600 focus:border-[#e5a00d]"
+              className={`${fieldClass} flex-1`}
             />
           </>
         ) : (
@@ -92,26 +94,30 @@ export function ConnectForm({
               onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 4))}
               autoComplete={claimable ? 'new-password' : 'current-password'}
               placeholder={claimable ? 'Choose a 4-digit PIN' : '••••'}
-              className="min-w-0 flex-1 rounded-md border border-white/10 bg-[#111111] px-3.5 py-2.5 font-mono text-sm tracking-[0.4em] text-white outline-none placeholder:font-sans placeholder:tracking-normal placeholder:text-neutral-600 focus:border-[#e5a00d]"
+              className={`${fieldClass} flex-1 font-mono tracking-[0.4em] placeholder:font-sans placeholder:tracking-normal`}
             />
           </>
         )}
-        <button
+        <Button
           type="submit"
+          variant="filled"
           disabled={pending || (showToken ? !token.trim() : pin.length !== 4)}
-          className="rounded-md bg-[#e5a00d] px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-[#f2b51d] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {pending ? 'Working…' : claimable && !showToken ? 'Claim this server' : 'Continue'}
-        </button>
+        </Button>
       </form>
 
-      {error ? <p className="mt-3 text-sm text-red-300">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="mt-3 text-sm text-danger">
+          {error}
+        </p>
+      ) : null}
 
       {claimable && !showToken ? null : (
         <button
           type="button"
           onClick={() => setUseToken(!showToken)}
-          className="mt-4 text-xs text-neutral-500 underline underline-offset-4 transition hover:text-neutral-300"
+          className="mt-4 text-xs text-muted underline underline-offset-4 transition duration-120 hover:text-text"
         >
           {showToken ? 'Use the PIN instead' : 'Forgot the PIN? Use the owner token'}
         </button>

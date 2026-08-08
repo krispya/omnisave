@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { Omnisave, Revision } from '../../lib/omnisave-api.js';
 import { ForkIcon } from './fork-icon.js';
-import { useDismissibleDetails } from '../../lib/use-dismissible-details.js';
 import { forkLineage } from './fork-lineage.js';
 import { formatBytes, formatDateTime, formatHistoryStamp } from '../../lib/format.js';
 import { RevisionDetailsDialog } from './revision-details-dialog.js';
@@ -33,7 +32,6 @@ type RevisionLogProps = {
   onRequestFork: (revision: Revision) => void;
 };
 
-
 /** Lane geometry, in rem: lane width, and a dot's center within its row. */
 const LANE = 1;
 const DOT_CENTER = 1.125;
@@ -56,46 +54,56 @@ function RevisionRowMenu({
   onDownload: () => void;
   onDetails: () => void;
 }) {
-  const menu = useDismissibleDetails();
-  const act = (action: () => void) => () => {
-    menu.current?.removeAttribute('open');
-    action();
-  };
+  const menuID = useId();
 
   return (
-    <details ref={menu} className="relative shrink-0 open:z-30">
-      <summary className="grid size-6 cursor-pointer list-none place-items-center rounded text-slate-500 transition marker:content-none hover:bg-white/5 hover:text-white">
+    <div className="popover-owner relative shrink-0">
+      <button
+        type="button"
+        popoverTarget={menuID}
+        className="grid size-6 cursor-pointer place-items-center rounded-sm text-muted transition duration-120 hover:bg-text/8 hover:text-text"
+      >
         <span className="sr-only">Actions for revision {name}</span>
         <svg viewBox="0 0 24 24" className="size-4" aria-hidden="true">
           <circle cx="5" cy="12" r="1.75" fill="currentColor" />
           <circle cx="12" cy="12" r="1.75" fill="currentColor" />
           <circle cx="19" cy="12" r="1.75" fill="currentColor" />
         </svg>
-      </summary>
-      <div className="absolute top-full right-0 z-20 mt-1 w-36 rounded-md border border-white/10 bg-[#202020] p-1 shadow-xl">
+      </button>
+      <div
+        id={menuID}
+        popover="auto"
+        className="anchored-popover w-36 rounded-md border border-outline bg-surface p-1"
+      >
         <button
           type="button"
-          onClick={act(onFork)}
-          className="w-full cursor-pointer rounded px-3 py-2 text-left text-sm text-neutral-200 hover:bg-white/5"
+          popoverTarget={menuID}
+          popoverTargetAction="hide"
+          onClick={onFork}
+          className="w-full cursor-pointer rounded-sm px-3 py-2 text-left text-sm text-text hover:bg-text/8"
         >
           Fork
         </button>
         <button
           type="button"
-          onClick={act(onDownload)}
-          className="w-full cursor-pointer rounded px-3 py-2 text-left text-sm text-neutral-200 hover:bg-white/5"
+          popoverTarget={menuID}
+          popoverTargetAction="hide"
+          onClick={onDownload}
+          className="w-full cursor-pointer rounded-sm px-3 py-2 text-left text-sm text-text hover:bg-text/8"
         >
           Download
         </button>
         <button
           type="button"
-          onClick={act(onDetails)}
-          className="w-full cursor-pointer rounded px-3 py-2 text-left text-sm text-neutral-200 hover:bg-white/5"
+          popoverTarget={menuID}
+          popoverTargetAction="hide"
+          onClick={onDetails}
+          className="w-full cursor-pointer rounded-sm px-3 py-2 text-left text-sm text-text hover:bg-text/8"
         >
           Details
         </button>
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -107,7 +115,7 @@ function RailLines({ lanes }: { lanes: number[] }) {
         <span
           key={lane}
           aria-hidden="true"
-          className="absolute inset-y-0 w-px bg-white/10"
+          className="absolute inset-y-0 w-px bg-outline"
           style={{ left: laneCenter(lane) }}
         />
       ))}
@@ -154,9 +162,9 @@ export function RevisionLog({
         {Array.from({ length: 3 }, (_, index) => (
           <div key={index} className="flex h-9 items-center gap-2.5">
             <span className="flex shrink-0 justify-center" style={{ width: '1rem' }}>
-              <span className="size-2 rounded-full bg-white/10" />
+              <span className="size-2 rounded-full bg-text/15" />
             </span>
-            <span className="h-3 w-40 max-w-full animate-pulse rounded bg-white/5" />
+            <span className="h-3 w-40 max-w-full animate-pulse rounded-sm bg-text/8" />
           </div>
         ))}
       </div>
@@ -168,16 +176,14 @@ export function RevisionLog({
       {error ? (
         <div
           role="alert"
-          className="mb-2 rounded border border-red-400/20 bg-red-400/10 px-3 py-2.5 text-xs text-red-200"
+          className="mb-2 rounded-sm border border-danger/30 bg-danger/10 px-3 py-2.5 text-xs text-danger"
         >
           {error}
         </div>
       ) : null}
 
       {revisions.length === 0 ? (
-        <p className="py-6 text-center text-xs text-slate-500">
-          No revisions yet. Use the Debug menu to add the first one.
-        </p>
+        <p className="py-6 text-center text-xs text-muted">No revisions yet.</p>
       ) : (
         <ol>
           {rail.rows.map((railRow) => {
@@ -205,14 +211,14 @@ export function RevisionLog({
                   {lineUp ? (
                     <span
                       aria-hidden="true"
-                      className="absolute top-0 w-px bg-white/10"
+                      className="absolute top-0 w-px bg-outline"
                       style={{ left: laneCenter(node.lane), height: `${DOT_CENTER}rem` }}
                     />
                   ) : null}
                   {lineDown ? (
                     <span
                       aria-hidden="true"
-                      className="absolute bottom-0 w-px bg-white/10"
+                      className="absolute bottom-0 w-px bg-outline"
                       style={{ left: laneCenter(node.lane), top: `${DOT_CENTER}rem` }}
                     />
                   ) : null}
@@ -223,10 +229,8 @@ export function RevisionLog({
                       <span
                         key={fromLane}
                         aria-hidden="true"
-                        className={`absolute top-0 border-b border-white/10 ${
-                          fromLane > node.lane
-                            ? 'rounded-br border-r'
-                            : 'rounded-bl border-l'
+                        className={`absolute top-0 border-b border-outline ${
+                          fromLane > node.lane ? 'rounded-br border-r' : 'rounded-bl border-l'
                         }`}
                         style={{
                           left: laneCenter(left),
@@ -239,7 +243,7 @@ export function RevisionLog({
                   {isCurrent ? (
                     <span
                       title="Current revision"
-                      className="absolute size-2 rounded-full border-2 border-[#e5a00d] bg-[#e5a00d]"
+                      className="absolute size-2 rounded-full border-2 border-accent bg-accent"
                       style={{ left: `calc(${laneCenter(node.lane)} - 0.25rem)`, top: '0.875rem' }}
                     />
                   ) : (
@@ -247,18 +251,18 @@ export function RevisionLog({
                       type="button"
                       onClick={() => onRequestRestore(revision)}
                       title={`${moveLabel} here — make this revision current`}
-                      className="group/dot absolute grid size-4 cursor-pointer place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[#e5a00d]"
+                      className="group/dot absolute grid size-4 cursor-pointer place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-text"
                       style={{ left: dotLeft, top: '0.625rem' }}
                     >
                       <span className="sr-only">
                         {moveLabel} to {name}
                       </span>
-                      <span className="size-2 rounded-full border-2 border-neutral-600 bg-[#151515] transition group-hover/row:scale-125 group-hover/row:border-[#e5a00d] group-focus-visible/dot:scale-125 group-focus-visible/dot:border-[#e5a00d]" />
+                      <span className="size-2 rounded-full border-2 border-text/40 bg-bg transition duration-120 group-hover/row:scale-125 group-hover/row:border-accent group-focus-visible/dot:scale-125 group-focus-visible/dot:border-accent" />
                     </button>
                   )}
                 </div>
                 <div
-                  className={`min-w-0 rounded transition-colors group-hover/row:bg-white/[0.04] ${focused ? 'bg-[#e5a00d]/[0.07]' : ''}`}
+                  className={`min-w-0 rounded-sm transition-colors group-hover/row:bg-text/5 ${focused ? 'bg-text/10' : ''}`}
                 >
                   <div className="flex h-9 items-center gap-2.5">
                     <div className="relative flex h-full min-w-0 flex-1 items-center gap-2.5 px-1.5">
@@ -268,12 +272,12 @@ export function RevisionLog({
                         onSave={onRenameRevision}
                       />
                       {isCurrent ? (
-                        <span className="shrink-0 rounded bg-[#e5a00d]/15 px-1.5 py-0.5 text-[10px] font-medium text-[#e5a00d]">
+                        <span className="shrink-0 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium text-bg">
                           current
                         </span>
                       ) : null}
                       {isForkPoint ? (
-                        <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-neutral-400">
+                        <span className="shrink-0 rounded-full border border-outline px-1.5 py-0.5 text-[10px] text-muted">
                           shared fork point
                         </span>
                       ) : null}
@@ -283,19 +287,19 @@ export function RevisionLog({
                           type="button"
                           onClick={() => onOpenSave(link.save)}
                           title={`Open ${link.name} — forked from this revision`}
-                          className="inline-flex min-w-0 shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-[#e5a00d]/70 outline-none transition hover:bg-[#e5a00d]/10 hover:text-[#e5a00d] focus-visible:ring-2 focus-visible:ring-[#e5a00d]"
+                          className="inline-flex min-w-0 shrink-0 cursor-pointer items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] text-muted outline-none transition duration-120 hover:bg-text/8 hover:text-text focus-visible:ring-2 focus-visible:ring-text"
                         >
                           <ForkIcon className="size-2.5 shrink-0" />
                           <span className="max-w-40 truncate">{link.name}</span>
                         </button>
                       ))}
                       <span className="ml-auto flex shrink-0 items-center gap-4">
-                        <span className="text-[11px] text-slate-500">
+                        <span className="text-[11px] text-muted">
                           {revision.files.length} {revision.files.length === 1 ? 'file' : 'files'} ·{' '}
                           {formatBytes(totalSize)}
                         </span>
                         <span
-                          className="text-[10px] text-slate-600"
+                          className="text-[10px] text-muted"
                           title={formatDateTime(revision.created_at)}
                         >
                           {formatHistoryStamp(revision.created_at)}

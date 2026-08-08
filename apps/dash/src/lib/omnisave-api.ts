@@ -64,7 +64,13 @@ type CommitFile = {
 
 export type GameMedia = {
   id: string;
-  kind: 'cover' | 'screenshot';
+  /**
+   * `cover` is the portrait box art; `artwork` and `screenshot` are the
+   * landscape images. Which provider supplies which varies — IGDB has artwork,
+   * Hasheous has screenshots — so anything wanting a wide image should take
+   * either rather than insisting on one.
+   */
+  kind: 'cover' | 'artwork' | 'screenshot';
   position: number;
   format: string;
   size: number;

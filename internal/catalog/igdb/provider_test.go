@@ -102,6 +102,72 @@ func assertAPIRequest(t *testing.T, request *http.Request) {
 	}
 }
 
+// A resolved game carries the landscape key art as well as the portrait cover,
+// and each is fetched at the size it is drawn at: covers small enough to fill a
+// grid, artwork large enough to sit behind text full-bleed.
+func TestProviderSuppliesArtworkAlongsideCover(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/token":
+			writeJSON(response, map[string]any{"access_token": "access", "expires_in": 3600})
+		case "/v4/games":
+			body, _ := io.ReadAll(request.Body)
+			if !strings.Contains(string(body), "artworks.image_id") {
+				t.Errorf("artwork was not requested: %s", body)
+			}
+			game := gameResponse()
+			game["artworks"] = []any{
+				map[string]any{"image_id": "ar1aaa"},
+				map[string]any{"image_id": "ar2bbb"},
+			}
+			writeJSON(response, []any{game})
+		case "/images/t_1080p/ar1aaa.jpg":
+			response.Header().Set("Content-Type", "image/jpeg")
+			_, _ = response.Write([]byte("wide art"))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	provider, err := igdb.New(igdb.Config{
+		ClientID: "client", ClientSecret: "secret",
+		BaseURL: server.URL + "/v4", TokenURL: server.URL + "/token", ImageBaseURL: server.URL + "/images",
+		RequestsPerSecond: 4, SearchCacheTTL: time.Minute,
+	}, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	match, err := provider.Match(context.Background(), "17000")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var kinds []string
+	for _, media := range match.Media {
+		kinds = append(kinds, media.Kind)
+	}
+	if len(match.Media) != 3 || kinds[0] != "cover" || kinds[1] != "artwork" || kinds[2] != "artwork" {
+		t.Fatalf("expected a cover and two artworks, got %v", kinds)
+	}
+	// Position numbers artwork among artwork, so the first one a caller reaches
+	// for is IGDB's own first choice rather than whatever followed the cover.
+	if match.Media[1].Position != 0 || match.Media[2].Position != 1 {
+		t.Fatalf("artwork positions did not start at zero: %+v", match.Media[1:])
+	}
+
+	format, image, err := provider.OpenMedia(context.Background(), match.Media[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer image.Close()
+	contents, _ := io.ReadAll(image)
+	if format != "image/jpeg" || string(contents) != "wide art" {
+		t.Fatalf("artwork was not fetched at its own size: format=%q image=%q", format, contents)
+	}
+}
+
 func writeJSON(response http.ResponseWriter, value any) {
 	response.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(response).Encode(value)

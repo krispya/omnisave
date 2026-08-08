@@ -23,8 +23,8 @@ function IdentifierBadge({ identifier }: { identifier: GameIdentifier }) {
   const url = app?.url?.(identifier.value);
   const content = (
     <>
-      <span className="text-slate-500">{app?.label ?? identifier.namespace}</span>
-      <span className="font-mono text-xs text-neutral-200">{identifier.value}</span>
+      <span className="text-muted">{app?.label ?? identifier.namespace}</span>
+      <span className="font-mono text-xs text-text">{identifier.value}</span>
     </>
   );
 
@@ -33,23 +33,23 @@ function IdentifierBadge({ identifier }: { identifier: GameIdentifier }) {
       href={url}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-1.5 rounded bg-white/5 px-2 py-1 transition hover:bg-white/10"
+      className="inline-flex items-center gap-1.5 rounded bg-text/8 px-2 py-1 transition hover:bg-text/15"
     >
       {content}
-      <span className="text-[10px] text-slate-500" aria-hidden="true">
+      <span className="text-[10px] text-muted" aria-hidden="true">
         ↗
       </span>
     </a>
   ) : (
-    <span className="inline-flex items-center gap-1.5 rounded bg-white/5 px-2 py-1">{content}</span>
+    <span className="inline-flex items-center gap-1.5 rounded bg-text/8 px-2 py-1">{content}</span>
   );
 }
 
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <>
-      <dt className="text-slate-500">{label}</dt>
-      <dd className="min-w-0 text-neutral-300">{children}</dd>
+      <dt className="text-muted">{label}</dt>
+      <dd className="min-w-0 text-text">{children}</dd>
     </>
   );
 }
@@ -71,16 +71,16 @@ export function GameDetailsDialog({ game, onClose }: { game: GameSummary; onClos
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/80 px-5" role="presentation">
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 px-5" role="presentation">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleID}
-        className="max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-lg border border-white/10 bg-[#202020] p-6 shadow-2xl"
+        className="max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-lg border border-outline bg-surface p-6"
       >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h2 id={titleID} className="truncate text-lg font-medium text-white">
+            <h2 id={titleID} className="truncate text-lg font-medium text-text">
               {game.label}
             </h2>
           </div>
@@ -89,7 +89,7 @@ export function GameDetailsDialog({ game, onClose }: { game: GameSummary; onClos
             onClick={onClose}
             autoFocus
             aria-label="Close details"
-            className="-mt-1 -mr-1 rounded-md p-2 text-neutral-400 transition hover:bg-white/5 hover:text-white"
+            className="-mt-1 -mr-1 rounded-md p-2 text-muted transition hover:bg-text/8 hover:text-text"
           >
             ✕
           </button>
@@ -130,12 +130,10 @@ export function GameDetailsDialog({ game, onClose }: { game: GameSummary; onClos
                     key={`${fingerprint.platform}:${fingerprint.algorithm}:${fingerprint.value}`}
                     className="flex flex-wrap gap-x-2 text-xs"
                   >
-                    <span className="shrink-0 text-slate-500">
+                    <span className="shrink-0 text-muted">
                       {fingerprint.platform} · {fingerprint.algorithm}
                     </span>
-                    <span className="min-w-0 font-mono break-all text-neutral-200">
-                      {fingerprint.value}
-                    </span>
+                    <span className="min-w-0 font-mono break-all text-text">{fingerprint.value}</span>
                   </span>
                 ))}
               </span>
@@ -146,8 +144,8 @@ export function GameDetailsDialog({ game, onClose }: { game: GameSummary; onClos
               <span className="grid gap-1.5">
                 {game.media.map((media) => (
                   <span key={media.id} className="flex flex-wrap gap-x-2 text-xs">
-                    <span className="text-neutral-200">{media.kind}</span>
-                    <span className="text-slate-500">
+                    <span className="text-text">{media.kind}</span>
+                    <span className="text-muted">
                       {media.format} · {formatBytes(media.size)} · #{media.position}
                       {media.attribution ? ` · ${media.attribution}` : ''}
                     </span>
@@ -161,8 +159,8 @@ export function GameDetailsDialog({ game, onClose }: { game: GameSummary; onClos
               <span className="grid gap-1.5">
                 {metadataEntries.map(([key, value]) => (
                   <span key={key} className="flex flex-wrap gap-x-2 text-xs">
-                    <span className="shrink-0 text-slate-500">{key}</span>
-                    <span className="min-w-0 font-mono break-all text-neutral-200">
+                    <span className="shrink-0 text-muted">{key}</span>
+                    <span className="min-w-0 font-mono break-all text-text">
                       {typeof value === 'string' ? value : JSON.stringify(value)}
                     </span>
                   </span>
