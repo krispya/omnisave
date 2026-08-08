@@ -135,17 +135,7 @@ func runWatch(ctx context.Context, scanner *client.Scanner, arguments []string) 
 		return err
 	}
 	settings := watchSettings{poll: *poll, pull: *pullEvery, floor: *floor, plain: *plain}
-	loop := watchLoop{
-		scanner:  scanner,
-		server:   server,
-		store:    store,
-		poll:     settings.poll,
-		pull:     settings.pull,
-		floor:    settings.floor,
-		settle:   serverSettle,
-		events:   newAnnouncer(),
-		movement: server.ServerEvents,
-	}
+	loop := newWatchLoop(scanner, server, store, settings, newAnnouncer())
 	url, _ := serverConnection(initial, *serverURL, *token)
 	// watch owns its first pass, so it opens with nothing established yet.
 	return keepWatching(ctx, loop, url, settings, handoff{})
@@ -210,7 +200,8 @@ func keepWatching(
 
 // serverSettle is how long the loop lets server events coalesce before the
 // pass they trigger: a restore publishes movement more than once, and one
-// pass should answer the burst.
+// pass should answer the burst. The first event opens the window and later
+// events add nothing to it, so steady traffic cannot postpone the pass.
 const serverSettle = 2 * time.Second
 
 type watchLoop struct {
@@ -229,6 +220,24 @@ type watchLoop struct {
 	// discovered, so a hand-off from track watches immediately instead of
 	// repeating the pass that run just finished.
 	watched []string
+}
+
+// newWatchLoop wires the loop the way every real caller needs it: timings
+// from settings, movement from the server's event stream. Keeping the
+// wiring in one place is what keeps the two callers from drifting; tests
+// build the struct directly to inject their own movement feed.
+func newWatchLoop(scanner *client.Scanner, server *remote.Client, store *tracking.Store, settings watchSettings, events *announcer) watchLoop {
+	return watchLoop{
+		scanner:  scanner,
+		server:   server,
+		store:    store,
+		poll:     settings.poll,
+		pull:     settings.pull,
+		floor:    settings.floor,
+		settle:   serverSettle,
+		events:   events,
+		movement: server.ServerEvents,
+	}
 }
 
 // finish hands one pass to the sink, with the events that pass produced.
@@ -290,36 +299,63 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	settleTimer := time.NewTimer(time.Hour)
 	settleTimer.Stop()
 	defer settleTimer.Stop()
+	settleArmed := false
+
+	// refresh is the one way a pass lands: every trigger shares it, so the
+	// bookkeeping cannot drift between them. A pass answers any movement
+	// still settling, so the settle timer is disarmed too.
+	refresh := func() {
+		settleTimer.Stop()
+		settleArmed = false
+		watched = pass()
+		sink.Watching(len(watched))
+		signature = statSignature(watched)
+		dirty = false
+	}
+	// stillWriting reports whether local save writes are still landing.
+	// While they are, a triggered pass waits — committing mid-burst is how
+	// a torn save reaches the server — and the poll path, which owns the
+	// quiet-interval rule, runs the deferred pass once the burst settles.
+	stillWriting := func() bool {
+		if next := statSignature(watched); next != signature {
+			signature = next
+			dirty = true
+		}
+		return dirty
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case eventType, open := <-movement:
 			if !open {
-				// The stream only ends with ctx; going quiet leaves the
-				// periodic pull as the fallback it already is.
+				// The feed is gone for good — a refused stream does not
+				// come back — leaving the periodic pull as the fallback
+				// it already is; the passes' own errors say why.
 				movement = nil
 				continue
 			}
 			if eventType != remote.LibraryChangedEvent {
 				continue
 			}
-			settleTimer.Reset(l.settle)
+			if !settleArmed {
+				settleArmed = true
+				settleTimer.Reset(l.settle)
+			}
 		case <-settleTimer.C:
-			watched = pass()
-			sink.Watching(len(watched))
-			signature = statSignature(watched)
-			dirty = false
+			settleArmed = false
+			if stillWriting() {
+				continue
+			}
+			refresh()
 		case <-sink.Requests():
-			watched = pass()
-			sink.Watching(len(watched))
-			signature = statSignature(watched)
-			dirty = false
+			// The user asked; theirs is the one trigger that never waits.
+			refresh()
 		case <-pullTicker.C:
-			watched = pass()
-			sink.Watching(len(watched))
-			signature = statSignature(watched)
-			dirty = false
+			if stillWriting() {
+				continue
+			}
+			refresh()
 		case <-pollTicker.C:
 			next := statSignature(watched)
 			if next != signature {
@@ -330,10 +366,7 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 				continue
 			}
 			if dirty {
-				dirty = false
-				watched = pass()
-				sink.Watching(len(watched))
-				signature = statSignature(watched)
+				refresh()
 			}
 		}
 	}

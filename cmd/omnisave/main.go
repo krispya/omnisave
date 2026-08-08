@@ -649,18 +649,8 @@ func keepTracking(
 	// The run's own pass is the view's opening state, not news: the loop
 	// starts from it so the stream announces only what happens next.
 	events.seen(pass.snapshot)
-	loop := watchLoop{
-		scanner:  scanner,
-		server:   server,
-		store:    store,
-		poll:     settings.poll,
-		pull:     settings.pull,
-		floor:    settings.floor,
-		settle:   serverSettle,
-		events:   events,
-		movement: server.ServerEvents,
-		watched:  watchedFiles(state, scans),
-	}
+	loop := newWatchLoop(scanner, server, store, settings, events)
+	loop.watched = watchedFiles(state, scans)
 	url, _ := serverConnection(*state, flagURL, flagToken)
 	return keepWatching(ctx, loop, url, settings, pass)
 }
@@ -1173,7 +1163,7 @@ func syncSaveToDevice(
 	}
 	type availableSave struct {
 		save        omnisave.Omnisave
-		current        omnisave.Revision
+		current     omnisave.Revision
 		destination target.SaveDestination
 	}
 	options := make([]tui.SyncToDeviceOption, 0, len(gameSaves))

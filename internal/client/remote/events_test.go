@@ -91,6 +91,99 @@ func TestServerEventsReconnectsAfterTheStreamDrops(t *testing.T) {
 	}
 }
 
+func TestAReplayedCheckpointIsSuppressedAndFreshMovementIsNot(t *testing.T) {
+	client, _ := newEventServer(t, func(connection int64, w http.ResponseWriter, flush, hold func()) {
+		if connection == 1 {
+			fmt.Fprint(w, "id: 7\nevent: library.changed\ndata: {}\n\n")
+			flush()
+			// Returning drops the stream; the client reconnects.
+			return
+		}
+		// The reconnect's checkpoint replays the ID the client already
+		// acted on; only the event after it is news.
+		fmt.Fprint(w, "id: 7\nevent: library.changed\ndata: {}\n\n")
+		fmt.Fprint(w, "id: 8\nevent: access.changed\ndata: {}\n\n")
+		flush()
+		hold()
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	events := client.ServerEvents(ctx)
+	if event := receiveEvent(t, events); event != remote.LibraryChangedEvent {
+		t.Fatalf("expected the first connection's checkpoint, got %q", event)
+	}
+	if event := receiveEvent(t, events); event != "access.changed" {
+		t.Fatalf("expected the replayed checkpoint suppressed and the fresh event delivered, got %q", event)
+	}
+}
+
+func TestAServerWhoseIDsStartedOverStillTriggersMovement(t *testing.T) {
+	client, _ := newEventServer(t, func(connection int64, w http.ResponseWriter, flush, hold func()) {
+		if connection == 1 {
+			fmt.Fprint(w, "id: 41\nevent: library.changed\ndata: {}\n\n")
+			flush()
+			return
+		}
+		// A restarted server numbers events from scratch; a backward ID
+		// must still count as movement or the client goes deaf until the
+		// new numbering catches up.
+		fmt.Fprint(w, "id: 2\nevent: library.changed\ndata: {}\n\n")
+		flush()
+		hold()
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	events := client.ServerEvents(ctx)
+	receiveEvent(t, events)
+	if event := receiveEvent(t, events); event != remote.LibraryChangedEvent {
+		t.Fatalf("expected the restarted server's checkpoint delivered, got %q", event)
+	}
+}
+
+func TestARefusedStreamClosesInsteadOfRetrying(t *testing.T) {
+	client, connections := newEventServer(t, func(connection int64, w http.ResponseWriter, flush, hold func()) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	events := client.ServerEvents(ctx)
+	select {
+	case _, open := <-events:
+		if open {
+			t.Fatal("expected no events from a refused stream")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the refused stream to close the feed")
+	}
+	if connections.Load() != 1 {
+		t.Fatalf("expected no retry after an authoritative refusal, got %d connections", connections.Load())
+	}
+}
+
+func TestAnInstantlyDroppedStreamBacksOffInsteadOfRedialingAtTheFloor(t *testing.T) {
+	client, connections := newEventServer(t, func(connection int64, w http.ResponseWriter, flush, hold func()) {
+		// Accept and drop immediately: a 200 alone must not reset backoff.
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	started := time.Now()
+	client.ServerEvents(ctx)
+	deadline := time.Now().Add(10 * time.Second)
+	for connections.Load() < 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the reconnect")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if elapsed := time.Since(started); elapsed < 1500*time.Millisecond {
+		t.Fatalf("expected the second dial only after backoff grew past the floor, took %v", elapsed)
+	}
+}
+
 func TestServerEventsClosesWhenTheContextEnds(t *testing.T) {
 	client, _ := newEventServer(t, func(connection int64, w http.ResponseWriter, flush, hold func()) {
 		fmt.Fprint(w, "id: 1\nevent: library.changed\ndata: {}\n\n")

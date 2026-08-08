@@ -224,3 +224,56 @@ func TestAServerEventTriggersAPassThatAppliesADashRewind(t *testing.T) {
 		t.Fatalf("expected the pass to pull the restored revision, got %q", content)
 	}
 }
+
+func TestSteadyServerEventsCoalesceIntoAPassInsteadOfStarvingIt(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+
+	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(fixture.state); err != nil {
+		t.Fatal(err)
+	}
+	movement := make(chan string)
+	loop := watchLoop{
+		scanner: client.NewScanner(nil, fixtureAdapter{fixture: &fixture}),
+		server:  server,
+		store:   store,
+		poll:    time.Hour,
+		pull:    time.Hour,
+		floor:   0,
+		settle:  50 * time.Millisecond,
+		events:  newAnnouncer(),
+		movement: func(context.Context) <-chan string {
+			return movement
+		},
+		watched: []string{fixture.localPath},
+	}
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+
+	// Events keep arriving faster than the settle window closes; the first
+	// one must still win a pass rather than be postponed by the rest.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case movement <- remote.LibraryChangedEvent:
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
+	}()
+
+	select {
+	case result := <-sink.finished:
+		if result.Err != nil {
+			t.Fatalf("expected the coalesced pass to succeed, got %v", result.Err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out: steady events starved the settle window")
+	}
+}
