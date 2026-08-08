@@ -7,14 +7,16 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
 const (
-	libraryChangedEvent = "library.changed"
+	libraryChangedEvent = omnisave.LibraryChangedEvent
 	// A pending request is worth watching for: it is visible only while it
 	// lives, and an owner staring at the Dash should not have to reload to
 	// see the Device in their hands ask, or to watch it expire.
-	accessChangedEvent = "access.changed"
+	accessChangedEvent = omnisave.AccessChangedEvent
 	eventHeartbeat     = 15 * time.Second
 )
 
