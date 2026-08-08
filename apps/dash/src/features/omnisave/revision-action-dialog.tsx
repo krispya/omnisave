@@ -82,7 +82,7 @@ export function RevisionActionDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/80 px-5"
+      className="fixed inset-0 z-50 grid place-items-center bg-black/70 px-5"
       role="presentation"
       onClick={(event) => {
         if (event.target === event.currentTarget && !busy) onCancel();
@@ -95,17 +95,15 @@ export function RevisionActionDialog({
         aria-labelledby={titleID}
         onSubmit={submit}
         onKeyDown={wrapTab}
-        className="w-full max-w-md rounded-lg border border-white/10 bg-[#202020] p-6 shadow-2xl"
+        className="w-full max-w-md rounded-lg border border-outline bg-surface p-6"
       >
-        <p className="text-xs font-semibold tracking-[0.14em] text-[#e5a00d] uppercase">
-          {saveName}
-        </p>
-        <h2 id={titleID} className="mt-2 text-lg font-medium text-white">
+        <p className="text-xs font-semibold tracking-[0.14em] text-text uppercase">{saveName}</p>
+        <h2 id={titleID} className="mt-2 text-lg font-medium text-text">
           {restoring
             ? `${label} to ${revisionName(action.revision)}?`
             : `Fork from ${revisionName(action.revision)}?`}
         </h2>
-        <p className="mt-3 text-sm leading-6 text-neutral-400">
+        <p className="mt-3 text-sm leading-6 text-muted">
           {restoring
             ? 'This snapshot becomes current for every bound Device. No revision or branch is deleted.'
             : 'The new save shares this revision and its ancestors, then synchronizes independently.'}
@@ -113,7 +111,7 @@ export function RevisionActionDialog({
 
         {!restoring ? (
           <div className="mt-5">
-            <label htmlFor={inputID} className="text-xs font-medium text-neutral-300">
+            <label htmlFor={inputID} className="text-xs font-medium text-text">
               Save name
             </label>
             <input
@@ -122,13 +120,13 @@ export function RevisionActionDialog({
               onChange={(event) => setDisplayName(event.target.value)}
               data-autofocus
               maxLength={100}
-              className="mt-2 w-full rounded-md border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none focus:border-[#e5a00d]"
+              className="mt-2 w-full rounded-md border border-outline bg-black/25 px-3 py-2 text-sm text-text outline-none focus:bg-text/15"
             />
           </div>
         ) : null}
 
         {error ? (
-          <p role="alert" className="mt-4 rounded-md bg-red-400/10 px-3 py-2 text-sm text-red-200">
+          <p role="alert" className="mt-4 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">
             {error}
           </p>
         ) : null}
@@ -139,14 +137,14 @@ export function RevisionActionDialog({
             onClick={onCancel}
             disabled={busy}
             data-autofocus={restoring ? true : undefined}
-            className="rounded-md bg-white/5 px-4 py-2 text-sm font-medium text-neutral-300 transition hover:bg-white/10 disabled:opacity-40"
+            className="rounded-md bg-text/8 px-4 py-2 text-sm font-medium text-text transition hover:bg-text/15 disabled:opacity-40"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={busy || (!restoring && !displayName.trim())}
-            className="rounded-md bg-[#e5a00d] px-4 py-2 text-sm font-semibold text-black transition hover:bg-[#f2b72c] disabled:opacity-40"
+            className="rounded-md bg-text px-4 py-2 text-sm font-semibold text-black transition hover:bg-[#f2b72c] disabled:opacity-40"
           >
             {busy ? `${label}ing…` : label}
           </button>

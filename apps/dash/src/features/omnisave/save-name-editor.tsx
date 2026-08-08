@@ -75,7 +75,7 @@ export function SaveNameEditor({ save, fallbackName, onSave }: SaveNameEditorPro
       <button
         type="button"
         onClick={startEditing}
-        className="pointer-events-auto inline-block h-5 max-w-full truncate rounded align-top text-sm leading-5 font-semibold text-white outline-none hover:text-[#e5a00d] focus-visible:ring-2 focus-visible:ring-[#e5a00d]"
+        className="pointer-events-auto inline-block h-5 max-w-full truncate rounded align-top text-sm leading-5 font-semibold text-text outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-text"
         title={`Rename ${displaySaveName(save, fallbackName)}`}
       >
         {displaySaveName(save, fallbackName)}
@@ -100,14 +100,14 @@ export function SaveNameEditor({ save, fallbackName, onSave }: SaveNameEditorPro
         maxLength={100}
         aria-label={`Display name for ${fallbackName}`}
         aria-invalid={Boolean(error)}
-        className={`pointer-events-auto -ml-2 h-5 w-[calc(100%+0.5rem)] min-w-0 rounded border-0 px-2 text-sm leading-5 font-semibold text-white outline-none disabled:opacity-60 ${
-          error ? 'bg-red-950' : 'bg-[#111111]'
+        className={`pointer-events-auto -ml-2 h-5 w-[calc(100%+0.5rem)] min-w-0 rounded border-0 px-2 text-sm leading-5 font-semibold text-text outline-none disabled:opacity-60 ${
+          error ? 'bg-danger/20' : 'bg-bg'
         }`}
       />
       {error ? (
         <p
           role="alert"
-          className="absolute top-full left-0 z-30 mt-1 whitespace-nowrap rounded bg-[#202020] px-2 py-1 text-xs text-red-300 shadow-lg"
+          className="absolute top-full left-0 z-30 mt-1 whitespace-nowrap rounded-sm border border-outline bg-surface px-2 py-1 text-xs text-danger"
         >
           {error}
         </p>

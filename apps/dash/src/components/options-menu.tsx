@@ -1,4 +1,4 @@
-import { useDismissibleDetails } from '../lib/use-dismissible-details.js';
+import { useId } from 'react';
 
 type OptionsMenuProps = {
   label: string;
@@ -19,46 +19,36 @@ export function OptionsMenu({
   onDelete,
   onDeleteGame,
 }: OptionsMenuProps) {
-  const menu = useDismissibleDetails();
+  const menuID = useId();
 
   if (!onDownload && !onFixMatch && !onDelete && !onDeleteGame) return null;
 
-  function requestDownload() {
-    menu.current?.removeAttribute('open');
-    onDownload?.();
-  }
-
-  function requestDelete() {
-    menu.current?.removeAttribute('open');
-    onDelete?.();
-  }
-
-  function requestDeleteGame() {
-    menu.current?.removeAttribute('open');
-    onDeleteGame?.();
-  }
-
-  function requestFixMatch() {
-    menu.current?.removeAttribute('open');
-    onFixMatch?.();
-  }
-
   return (
-    <details ref={menu} className={className}>
-      <summary className="grid size-8 cursor-pointer list-none place-items-center rounded-full bg-black/75 text-white marker:content-none hover:bg-black">
+    <div className={`popover-owner ${className}`}>
+      <button
+        type="button"
+        popoverTarget={menuID}
+        className="grid size-8 cursor-pointer place-items-center rounded-full bg-black/75 text-text hover:bg-black"
+      >
         <span className="sr-only">Options for {label}</span>
         <svg viewBox="0 0 24 24" className="size-4" aria-hidden="true">
           <circle cx="5" cy="12" r="1.75" fill="currentColor" />
           <circle cx="12" cy="12" r="1.75" fill="currentColor" />
           <circle cx="19" cy="12" r="1.75" fill="currentColor" />
         </svg>
-      </summary>
-      <div className="absolute right-0 bottom-full mb-2 w-36 rounded-md border border-white/10 bg-[#202020] p-1 shadow-xl">
+      </button>
+      <div
+        id={menuID}
+        popover="auto"
+        className="anchored-popover w-36 rounded-md border border-outline bg-surface p-1"
+      >
         {onDownload ? (
           <button
             type="button"
-            onClick={requestDownload}
-            className="w-full rounded px-3 py-2 text-left text-sm text-neutral-200 hover:bg-white/5"
+            popoverTarget={menuID}
+            popoverTargetAction="hide"
+            onClick={onDownload}
+            className="w-full rounded px-3 py-2 text-left text-sm text-text hover:bg-text/8"
           >
             Download
           </button>
@@ -66,8 +56,10 @@ export function OptionsMenu({
         {onFixMatch ? (
           <button
             type="button"
-            onClick={requestFixMatch}
-            className="w-full rounded px-3 py-2 text-left text-sm text-neutral-200 hover:bg-white/5"
+            popoverTarget={menuID}
+            popoverTargetAction="hide"
+            onClick={onFixMatch}
+            className="w-full rounded px-3 py-2 text-left text-sm text-text hover:bg-text/8"
           >
             Fix Match…
           </button>
@@ -75,8 +67,10 @@ export function OptionsMenu({
         {onDelete ? (
           <button
             type="button"
-            onClick={requestDelete}
-            className="w-full rounded px-3 py-2 text-left text-sm text-red-300 hover:bg-white/5"
+            popoverTarget={menuID}
+            popoverTargetAction="hide"
+            onClick={onDelete}
+            className="w-full rounded px-3 py-2 text-left text-sm text-danger hover:bg-text/8"
           >
             {deleteLabel}
           </button>
@@ -84,13 +78,15 @@ export function OptionsMenu({
         {onDeleteGame ? (
           <button
             type="button"
-            onClick={requestDeleteGame}
-            className="w-full rounded px-3 py-2 text-left text-sm text-red-300 hover:bg-white/5"
+            popoverTarget={menuID}
+            popoverTargetAction="hide"
+            onClick={onDeleteGame}
+            className="w-full rounded px-3 py-2 text-left text-sm text-danger hover:bg-text/8"
           >
             Delete Game…
           </button>
         ) : null}
       </div>
-    </details>
+    </div>
   );
 }

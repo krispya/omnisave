@@ -106,14 +106,13 @@ export function SaveList({
         return (
           <div
             key={save.id}
-            // Never clip the card: the options menu opens upward, past its top edge.
-            className={`group rounded-md border bg-[#1a1a1a] transition ${
-              selected ? 'border-[#e5a00d]' : 'border-white/5'
+            className={`group rounded-lg border bg-surface transition duration-120 ${
+              selected ? 'border-text/50' : 'border-outline'
             }`}
           >
             <div
-              className={`relative transition hover:bg-[#202020] ${
-                expanded ? 'rounded-t-md' : 'rounded-md'
+              className={`relative transition duration-120 hover:bg-text/5 ${
+                expanded ? 'rounded-t-lg' : 'rounded-lg'
               }`}
             >
               <button
@@ -123,25 +122,25 @@ export function SaveList({
                 onPointerEnter={() => onPrefetchSave(save)}
                 onFocus={() => onPrefetchSave(save)}
                 onClick={() => onToggleSave(save)}
-                className={`absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-[#e5a00d] ${
-                  expanded ? 'rounded-t-md' : 'rounded-md'
+                className={`absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-text ${
+                  expanded ? 'rounded-t-lg' : 'rounded-lg'
                 }`}
               />
               <div className="pointer-events-none relative z-10 grid grid-cols-[2.25rem_minmax(0,1fr)_auto_1rem_2rem] items-center gap-4 p-3.5">
-                <div className="grid size-9 shrink-0 place-items-center rounded bg-white/5 text-[#e5a00d]">
+                <div className="grid size-9 shrink-0 place-items-center rounded-sm bg-text/8 text-text">
                   <SaveFileIcon />
                 </div>
                 <div className="min-w-0">
                   <div className="h-5">
                     <SaveNameEditor save={save} fallbackName={fallbackName} onSave={onRenameSave} />
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">
+                  <p className="mt-1 text-xs text-muted">
                     {save.current_revision_id
                       ? `Current from ${formatDate(save.current_revision_created_at)}`
                       : 'No revisions yet'}
                   </p>
                 </div>
-                <div className="max-w-36 min-w-0 text-right text-[11px] text-[#e5a00d]/80">
+                <div className="max-w-36 min-w-0 text-right text-[11px] text-muted">
                   {sourceName ? (
                     <p
                       className="flex items-center justify-end gap-1.5"
@@ -160,12 +159,12 @@ export function SaveList({
                     </p>
                   ) : null}
                 </div>
-                <span className={expanded ? 'text-[#e5a00d]' : 'text-slate-500'}>
+                <span className={expanded ? 'text-text' : 'text-muted'}>
                   <DisclosureIcon open={expanded} />
                 </span>
                 <OptionsMenu
                   label={name}
-                  className="pointer-events-auto relative z-20 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 open:opacity-100"
+                  className="pointer-events-auto relative z-20 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100"
                   onDownload={save.current_revision_id ? () => onDownloadSave(save, name) : undefined}
                   onDelete={() => onRequestDelete(save, name)}
                 />
@@ -173,7 +172,7 @@ export function SaveList({
             </div>
 
             {expanded ? (
-              <div className="rounded-b-md border-t border-white/5 bg-[#151515] px-3.5 py-3">
+              <div className="rounded-b-lg border-t border-outline bg-bg/40 px-3.5 py-3">
                 <RevisionLog
                   save={save}
                   saves={saves}

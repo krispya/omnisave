@@ -181,12 +181,18 @@ func (p *Provider) Match(ctx context.Context, selectionToken string) (*catalog.P
 	return game.match(nil), nil
 }
 
+// imageSizes maps a media kind to the IGDB image size that suits it. Artwork
+// is fetched at 1080p because it is drawn full-bleed behind text, where a
+// cover-sized image would visibly soften.
+var imageSizes = map[string]string{"cover": "t_cover_big", "artwork": "t_1080p"}
+
 func (p *Provider) OpenMedia(ctx context.Context, reference catalog.MediaReference) (string, io.ReadCloser, error) {
-	if reference.Kind != "cover" || !imageIDPattern.MatchString(reference.ProviderID) {
+	size, known := imageSizes[reference.Kind]
+	if !known || !imageIDPattern.MatchString(reference.ProviderID) {
 		return "", nil, catalog.ErrInvalid
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		p.config.ImageBaseURL+"/t_cover_big/"+reference.ProviderID+".jpg", nil)
+		p.config.ImageBaseURL+"/"+size+"/"+reference.ProviderID+".jpg", nil)
 	if err != nil {
 		return "", nil, err
 	}
@@ -393,6 +399,7 @@ type game struct {
 	FirstReleaseDate int64             `json:"first_release_date"`
 	Platforms        []namedValue      `json:"platforms"`
 	Cover            cover             `json:"cover"`
+	Artworks         []cover           `json:"artworks"`
 	Companies        []involvedCompany `json:"involved_companies"`
 	Genres           []namedValue      `json:"genres"`
 }
@@ -436,6 +443,22 @@ func (g game) match(additional []catalog.GameIdentifier) *catalog.ProviderMatch 
 			Provider: "igdb", Kind: "cover", ProviderID: g.Cover.ImageID, Attribution: "IGDB",
 		}}
 	}
+	// Artwork is the landscape key art, which a portrait cover cannot stand in
+	// for. IGDB returns it already ordered, so the index is the position.
+	position := 0
+	for _, artwork := range g.Artworks {
+		if !imageIDPattern.MatchString(artwork.ImageID) {
+			continue
+		}
+		match.Media = append(match.Media, catalog.MediaReference{
+			Provider:    "igdb",
+			Kind:        "artwork",
+			Position:    position,
+			ProviderID:  artwork.ImageID,
+			Attribution: "IGDB",
+		})
+		position++
+	}
 	return match
 }
 
@@ -459,6 +482,7 @@ func (g game) candidate(platformHint string) catalog.GameCandidate {
 func gameFields(prefix string) string {
 	fields := []string{
 		"id", "name", "summary", "first_release_date", "platforms.name", "cover.image_id",
+		"artworks.image_id",
 		"involved_companies.company.name", "involved_companies.publisher", "genres.name",
 	}
 	for index := range fields {

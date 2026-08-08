@@ -37,13 +37,6 @@ import {
 import { ConnectForm } from '../features/connection/connect-form.js';
 import { PairingDialog } from '../features/connection/pairing-dialog.js';
 import { ServerSettings } from '../features/connection/server-settings.js';
-import {
-  createRandomTestOmnisave,
-  createTestRevision,
-  createTestSave,
-  forkTestSave,
-} from '../features/debug/debug-actions.js';
-import { DebugMenu } from '../features/debug/debug-menu.js';
 import { DeleteGameDialog, DeleteGameSavesDialog } from '../features/game/delete-game-dialog.js';
 import { preloadGameArtwork } from '../features/game/game-artwork.js';
 import { GameDetail } from '../features/game/game-detail.js';
@@ -53,9 +46,10 @@ import { buildLibrary } from '../features/library/build-library.js';
 import { FixMatchDialog } from '../features/library/fix-match-dialog.js';
 import { DeleteSaveDialog } from '../features/omnisave/delete-save-dialog.js';
 import { GameLibrary, GameLibraryLoading } from '../features/library/game-library.js';
+import { NowPlaying } from '../features/library/now-playing.js';
 import { navigate, useRoute } from '../lib/route.js';
 import { useServerEvents, type ServerEventStatus } from '../lib/use-server-events.js';
-import { RouteLink } from '../components/route-link.js';
+import { ConnectionBanner, NavigationBar, NavigationRail, TopBar } from './navigation-chrome.js';
 
 /**
  * The Dash holds a credential of its own, traded for the owner token once and
@@ -213,7 +207,6 @@ function LibraryDashboard({
   const [selectedSaveID, setSelectedSaveID] = useState('');
   const [error, setError] = useState('');
   const [revisionError, setRevisionError] = useState('');
-  const [debugAction, setDebugAction] = useState<'game' | 'save' | 'revision' | 'fork' | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -241,100 +234,6 @@ function LibraryDashboard({
       setSelectedSaveID('');
     }
   }, [games, onCloseGame, saves, selectedGameID, selectedSaveID]);
-
-  async function addRandomGame() {
-    if (!token) return;
-
-    setDebugAction('game');
-    setError('');
-    try {
-      const created = await createRandomTestOmnisave(
-        token,
-        games.map((game) => game.label)
-      );
-      onReplace({
-        catalog: catalog ? upsertCatalogGame(catalog, created.game) : null,
-        saves: [...saves, created.save],
-        error: '',
-      });
-      created.catalog
-        .then(() => onReload())
-        .catch((catalogError: unknown) => {
-          setError(
-            catalogError instanceof Error ? catalogError.message : 'Could not match the test game.'
-          );
-        });
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : 'Could not create an Omnisave.');
-    } finally {
-      setDebugAction(null);
-    }
-  }
-
-  async function addSave() {
-    if (!token || !selectedGame) return;
-
-    setDebugAction('save');
-    setError('');
-    try {
-      const created = await createTestSave(token, {
-        id: selectedGame.id,
-        label: selectedGame.label,
-        platform: selectedGame.platform,
-      });
-      await onReload();
-      setSelectedSaveID(created.id);
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : 'Could not create a save.');
-    } finally {
-      setDebugAction(null);
-    }
-  }
-
-  async function addRevision() {
-    if (!token || !selectedSave) return;
-
-    setDebugAction('revision');
-    setRevisionError('');
-    try {
-      await createTestRevision(token, selectedSave.id, selectedSave.current_revision_id);
-      await onReload();
-    } catch (createError) {
-      if (createError instanceof CurrentRevisionConflictError) await onReload();
-      setRevisionError(
-        createError instanceof CurrentRevisionConflictError
-          ? 'This save changed elsewhere. History was refreshed; fork it to preserve both versions.'
-          : createError instanceof Error
-            ? createError.message
-            : 'Could not add a revision.'
-      );
-    } finally {
-      setDebugAction(null);
-    }
-  }
-
-  async function forkSave() {
-    if (!token || !selectedSave || !selectedSave.current_revision_id) return;
-
-    setDebugAction('fork');
-    setRevisionError('');
-    try {
-      const result = await forkTestSave(
-        token,
-        selectedSave.id,
-        selectedSave.current_revision_id,
-        selectedSave.display_name || 'Save'
-      );
-      await onReload();
-      setSelectedSaveID(result.omnisave.id);
-    } catch (createError) {
-      setRevisionError(
-        createError instanceof Error ? createError.message : 'Could not fork this save.'
-      );
-    } finally {
-      setDebugAction(null);
-    }
-  }
 
   async function downloadSave(save: Omnisave, name: string) {
     if (!token) return;
@@ -455,48 +354,17 @@ function LibraryDashboard({
     }
   }
 
-  const librarySummary = catalog
-    ? `${games.length} ${games.length === 1 ? 'game' : 'games'} in your library · ${saves.length} ${
-        saves.length === 1 ? 'save' : 'saves'
-      }.`
-    : `${games.length} ${games.length === 1 ? 'game' : 'games'} with saved progress.`;
   const visibleError = error || snapshot.error;
 
   return (
     <>
-      <section
-        className={`flex justify-between gap-5 ${selectedGame ? 'items-center' : 'items-end'}`}
-      >
-        {selectedGame ? (
-          <RouteLink
-            to={{ name: 'library' }}
-            className="text-sm font-medium text-slate-400 transition hover:text-white"
-          >
-            ← All games
-          </RouteLink>
-        ) : (
-          <div>
-            <h1 className="text-2xl font-medium tracking-tight text-white">Games</h1>
-            <p className="mt-1.5 text-sm text-neutral-500">{librarySummary}</p>
-          </div>
-        )}
-
-        <DebugMenu
-          game={selectedGame}
-          selectedSave={selectedSave}
-          action={debugAction}
-          canFork={Boolean(selectedSave?.current_revision_id)}
-          onAddRandomGame={() => void addRandomGame()}
-          onAddSave={() => void addSave()}
-          onAddRevision={() => void addRevision()}
-          onForkSave={() => void forkSave()}
-        />
-      </section>
-
+      {/* The top bar names this section and the rail leads back out, so
+          neither the Library nor an open game draws a header or a back link
+          of its own. */}
       {visibleError ? (
         <div
           role="alert"
-          className="mt-5 rounded-md border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm text-red-200"
+          className="mt-5 rounded-md border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger"
         >
           {visibleError}
         </div>
@@ -517,15 +385,19 @@ function LibraryDashboard({
           onForkRevision={forkSaveAtRevision}
         />
       ) : (
-        <section className="mt-8" aria-label="Game library" aria-busy={libraryPending}>
-          <GameLibrary
-            games={games}
-            token={token}
-            onRequestFixMatch={setFixMatchTarget}
-            onRequestDeleteSaves={requestDeleteGameSaves}
-            onRequestDeleteGame={requestDeleteGame}
-          />
-        </section>
+        <div aria-busy={libraryPending}>
+          <NowPlaying games={games} token={token} />
+
+          <section aria-label="Game library">
+            <GameLibrary
+              games={games}
+              token={token}
+              onRequestFixMatch={setFixMatchTarget}
+              onRequestDeleteSaves={requestDeleteGameSaves}
+              onRequestDeleteGame={requestDeleteGame}
+            />
+          </section>
+        </div>
       )}
 
       {deleteTarget?.type === 'game' ? (
@@ -582,6 +454,8 @@ export function App() {
   const [answering, setAnswering] = useState('');
   const [pairingError, setPairingError] = useState('');
   const [dismissed, setDismissed] = useState<string[]>([]);
+  // Open deliberately, from the menu — unlike the interrupt, it can be empty.
+  const [requestsOpen, setRequestsOpen] = useState(false);
   const [resource, setResource] = useState<LibraryResource | null>(() =>
     token ? initialLibraryResource(token) : null
   );
@@ -656,8 +530,8 @@ export function App() {
 
   // One stream for the whole shell. The Library refreshes on its own changes,
   // and a device asking to connect reaches the owner wherever they are —
-  // pending requests expire in minutes, so waiting for a visit to the server
-  // settings would mean missing most of them.
+  // pending requests expire in minutes, so waiting for someone to open the
+  // top bar's "Asking to connect" would mean missing most of them.
   const refreshAll = useCallback(async () => {
     await Promise.all([resource ? reloadLibrary() : Promise.resolve(), refreshPending()]);
   }, [refreshPending, reloadLibrary, resource]);
@@ -769,110 +643,84 @@ export function App() {
     closeGame();
   }
 
-  const connectionLabel = !token
-    ? 'Not connected'
-    : libraryPending
-      ? 'Syncing…'
-      : eventStatus === 'live'
-        ? 'Connected'
-        : eventStatus === 'unauthorized'
-          ? 'Authentication failed'
-          : eventStatus === 'retrying'
-            ? 'Reconnecting…'
-            : 'Connecting…';
-  const connectionColor = !token
-    ? 'bg-neutral-600'
-    : eventStatus === 'unauthorized'
-      ? 'bg-red-400'
-      : eventStatus === 'live'
-        ? 'bg-[#e5a00d]'
-        : 'bg-sky-400';
-
   // Dismissing sets this request aside without answering it; the next one to
   // arrive still interrupts.
   const unanswered = pending.filter((request) => !dismissed.includes(request.id));
 
+  // Connected is the ordinary case and goes unsaid. A rejected credential is
+  // not reported either — the shell has already dropped it by the time this
+  // renders, so what shows is the way back in rather than a complaint about it.
+  const connectionLost = Boolean(token) && eventStatus === 'retrying';
+
   return (
-    <div className="min-h-screen bg-[#111111] text-[#e5e5e5]">
-      <header className="border-b border-white/5 bg-[#181818]">
-        <div className="flex items-center justify-between px-5 py-3 sm:px-8">
-          <RouteLink to={{ name: 'library' }} className="flex items-center gap-3 text-left">
-            <span className="grid size-8 place-items-center rounded-md bg-[#e5a00d] text-sm font-black text-black">
-              O
-            </span>
-            <span className="text-sm font-semibold text-white">Omnisave</span>
-          </RouteLink>
+    <div className="flex min-h-screen flex-col bg-bg text-text">
+      {/* Above the menu as well as the content: what it reports is true of the
+          whole app, not of the section anyone happens to be reading. */}
+      <ConnectionBanner lost={connectionLost} />
 
-          <div className="flex items-center gap-3">
-            <span className="hidden items-center gap-2 text-xs text-slate-400 sm:flex">
-              <span className={`size-1.5 rounded-full ${connectionColor}`} aria-hidden="true" />
-              {connectionLabel}
-            </span>
-            {token ? (
-              <>
-                <RouteLink
-                  to={{ name: 'settings' }}
-                  className={`rounded-md px-3 py-2 text-xs font-medium transition hover:bg-white/5 hover:text-white ${
-                    route.name === 'settings' ? 'text-white' : 'text-neutral-400'
-                  }`}
-                >
-                  Server
-                </RouteLink>
-                <button
-                  type="button"
-                  onClick={disconnect}
-                  className="rounded-md px-3 py-2 text-xs font-medium text-neutral-400 transition hover:bg-white/5 hover:text-white"
-                >
-                  Disconnect
-                </button>
-              </>
-            ) : null}
-          </div>
-        </div>
-      </header>
+      <div className="flex flex-1">
+        {token ? <NavigationRail route={route} /> : null}
 
-      <main className="px-5 py-8 sm:px-8 lg:px-10">
-        {!token ? (
-          <ConnectForm
-            claimable={access.claimable}
-            pinSet={access.pinSet}
-            pending={connecting}
-            error={connectError}
-            onClaim={claim}
-            onSignIn={enterPIN}
-            onOwnerToken={enterOwnerToken}
-          />
-        ) : route.name === 'settings' ? (
-          <ServerSettings
-            token={token}
-            credentialID={credential.id}
-            requests={pending}
-            onAnswered={refreshPending}
-          />
-        ) : resource ? (
-          <Suspense fallback={<GameLibraryLoading />}>
-            <LibraryDashboard
-              token={token}
-              resource={resource}
-              libraryPending={libraryPending}
-              selectedGameID={selectedGameID}
-              onCloseGame={closeGame}
-              onReload={reloadLibrary}
-              onReplace={replaceLibrary}
-              onSnapshot={rememberSnapshot}
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* Every page starts below this bar: it names the section being
+              read and holds the app-wide controls, so no page draws a title
+              of its own. */}
+          {token ? (
+            <TopBar
+              title={route.name === 'settings' ? 'Server' : 'Games Library'}
+              back={route.name === 'game' ? { name: 'library' } : undefined}
+              pendingCount={pending.length}
+              onOpenRequests={() => setRequestsOpen(true)}
             />
-          </Suspense>
-        ) : null}
-      </main>
+          ) : null}
 
-      {token && route.name !== 'settings' && unanswered.length > 0 ? (
+          <main className="flex-1 px-5 py-8 sm:px-8 lg:px-10">
+            {!token ? (
+              <ConnectForm
+                claimable={access.claimable}
+                pinSet={access.pinSet}
+                pending={connecting}
+                error={connectError}
+                onClaim={claim}
+                onSignIn={enterPIN}
+                onOwnerToken={enterOwnerToken}
+              />
+            ) : route.name === 'settings' ? (
+              <ServerSettings token={token} credentialID={credential.id} onDisconnect={disconnect} />
+            ) : resource ? (
+              <Suspense fallback={<GameLibraryLoading />}>
+                <LibraryDashboard
+                  token={token}
+                  resource={resource}
+                  libraryPending={libraryPending}
+                  selectedGameID={selectedGameID}
+                  onCloseGame={closeGame}
+                  onReload={reloadLibrary}
+                  onReplace={replaceLibrary}
+                  onSnapshot={rememberSnapshot}
+                />
+              </Suspense>
+            ) : null}
+          </main>
+
+          {token ? <NavigationBar route={route} /> : null}
+        </div>
+      </div>
+
+      {/* One dialog for both ways in: a new request opens it over whatever the
+          owner was doing, and the top bar's control opens it deliberately —
+          showing every live request, dismissed ones included. */}
+      {token && (requestsOpen || unanswered.length > 0) ? (
         <PairingDialog
-          requests={unanswered}
+          requests={requestsOpen ? pending : unanswered}
           busyID={answering}
           error={pairingError}
           onApprove={(request) => void answerPairing(request, true)}
           onDeny={(request) => void answerPairing(request, false)}
-          onDismiss={() => setDismissed(pending.map((request) => request.id))}
+          onDismiss={() => {
+            setRequestsOpen(false);
+            setDismissed(pending.map((request) => request.id));
+          }}
         />
       ) : null}
     </div>

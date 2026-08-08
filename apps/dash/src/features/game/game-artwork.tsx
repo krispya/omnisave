@@ -3,13 +3,16 @@ import { loadGameMedia, type CatalogGame, type GameMedia } from '../../lib/omnis
 import { createPromiseCache } from '../cache/promise-cache.js';
 import type { GameSummary } from './game-summary.js';
 
+// A game without cover art still needs to be told apart from its neighbours, so
+// the fallback varies — but in value only. Hue here would make the covers the
+// library is actually about compete with the ones it is still missing.
 const artworkStyles = [
-  'from-emerald-950 via-emerald-800 to-teal-400',
-  'from-violet-950 via-violet-800 to-fuchsia-400',
-  'from-amber-950 via-orange-800 to-amber-400',
-  'from-sky-950 via-blue-800 to-cyan-400',
-  'from-rose-950 via-red-800 to-orange-400',
-  'from-indigo-950 via-indigo-800 to-violet-400',
+  'from-[#14161a] to-[#2c2f38]',
+  'from-[#111318] to-[#242730]',
+  'from-[#181a20] to-[#33363f]',
+  'from-[#101216] to-[#2a2d36]',
+  'from-[#15171d] to-[#383b45]',
+  'from-[#131519] to-[#282b33]',
 ];
 
 function artworkIndex(id: string) {
@@ -43,15 +46,20 @@ export function GameArtwork({
 
   return (
     <div
-      className={`relative overflow-hidden rounded-md bg-gradient-to-br ${artworkStyle} ${className}`}
+      className={`relative overflow-hidden rounded-sm bg-gradient-to-br ${artworkStyle} ${className}`}
       aria-hidden="true"
     >
-      <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-white/5" />
-      <span className="absolute inset-0 grid place-items-center text-4xl font-black tracking-tighter text-white/85 sm:text-5xl">
-        {initials(game.label)}
-      </span>
+      <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-white/5" />
+      {/* The monogram stands in for cover art a library game does not have
+          yet. A game the server does not list gets no such identity mark —
+          its card presents a problem, not a game missing a picture. */}
+      {game.inLibrary ? (
+        <span className="absolute inset-0 grid place-items-center text-4xl font-black tracking-tighter text-text/70 sm:text-5xl">
+          {initials(game.label)}
+        </span>
+      ) : null}
       {game.platform ? (
-        <span className="absolute right-3 bottom-3 left-3 truncate text-[10px] font-semibold tracking-[0.16em] text-white/70 uppercase">
+        <span className="absolute right-3 bottom-3 left-3 truncate text-[10px] font-semibold tracking-[0.16em] text-text/50 uppercase">
           {game.platform}
         </span>
       ) : null}
@@ -155,7 +163,7 @@ export function GameMediaImage({
 
   if (source) return <img src={source} alt={alt} className={className} />;
   if (source === undefined) {
-    return <div className={`animate-pulse bg-neutral-800 ${className}`} aria-hidden="true" />;
+    return <div className={`animate-pulse bg-text/10 ${className}`} aria-hidden="true" />;
   }
   return null;
 }
