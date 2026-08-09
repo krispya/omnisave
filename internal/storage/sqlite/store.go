@@ -144,21 +144,25 @@ func (r *Repository) buildOmnisaveFrom(
 		UNION SELECT forked_from_revision_id FROM omnisaves WHERE id = ? AND forked_from_revision_id IS NOT NULL
 		UNION SELECT revisions.parent_id FROM revisions JOIN members ON revisions.id = members.id
 			WHERE revisions.parent_id IS NOT NULL
-	) SELECT id, display_name FROM revisions
+	) SELECT id, display_name, name_source FROM revisions
 		WHERE id IN (SELECT id FROM members) AND display_name <> '' ORDER BY created_at, id`, id, id, id)
 	if err != nil {
 		return store.Omnisave{}, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var revisionID, displayName string
-		if err := rows.Scan(&revisionID, &displayName); err != nil {
+		var revisionID, displayName, nameSource string
+		if err := rows.Scan(&revisionID, &displayName, &nameSource); err != nil {
 			return store.Omnisave{}, err
 		}
 		if record.RevisionNames == nil {
 			record.RevisionNames = make(map[string]string)
+			record.RevisionNameSources = make(map[string]string)
 		}
 		record.RevisionNames[revisionID] = displayName
+		if nameSource != "" {
+			record.RevisionNameSources[revisionID] = nameSource
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return store.Omnisave{}, err

@@ -20,6 +20,7 @@ import (
 
 type service struct {
 	repository storage.OmnisaveRepository
+	namer      RevisionNamer
 }
 
 const (
@@ -28,9 +29,24 @@ const (
 	maxRevisionPathLength = 1024
 )
 
-// New creates an Omnisave service backed by repository.
+// RevisionNamer derives a display name for a freshly committed revision from
+// the game it belongs to and its complete file set. It is best-effort by
+// contract: "" means the revision stays unnamed, and implementations must not
+// fail a commit for want of a name.
+type RevisionNamer interface {
+	NameRevision(ctx context.Context, gameID string, files []omnisave.RevisionFile) string
+}
+
+// New creates an Omnisave service backed by repository, committing revisions
+// unnamed.
 func New(repository storage.OmnisaveRepository) omnisave.Service {
-	return &service{repository: repository}
+	return NewWithNamer(repository, nil)
+}
+
+// NewWithNamer creates an Omnisave service that asks namer to name each
+// committed revision from its content. A nil namer commits unnamed.
+func NewWithNamer(repository storage.OmnisaveRepository, namer RevisionNamer) omnisave.Service {
+	return &service{repository: repository, namer: namer}
 }
 
 func (s *service) Create(ctx context.Context, input omnisave.CreateOmnisave) (*omnisave.Omnisave, error) {
@@ -242,6 +258,12 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 		CreatedAt:  time.Now().UTC(),
 		Files:      files,
 		Metadata:   cloneMap(input.Metadata),
+	}
+	if s.namer != nil {
+		if name, valid := normalizeDisplayName(s.namer.NameRevision(ctx, save.GameID, files)); valid && name != "" {
+			revision.DisplayName = name
+			revision.NameSource = omnisave.NameSourceLabeler
+		}
 	}
 	if err := s.repository.CommitRevision(ctx, input.ExpectedCurrentRevisionID, revision); err != nil {
 		var conflict *storage.CurrentRevisionConflict

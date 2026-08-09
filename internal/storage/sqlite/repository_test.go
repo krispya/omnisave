@@ -903,6 +903,85 @@ func TestArtifactsRestCompressedButKeepTheirIdentity(t *testing.T) {
 	}
 }
 
+// fixedNamer names every committed revision the same way, standing in for a
+// game's labeler.
+type fixedNamer struct{ name string }
+
+func (n *fixedNamer) NameRevision(context.Context, string, []omnisave.RevisionFile) string {
+	return n.name
+}
+
+func TestRevisionNamesRememberWhoSetThem(t *testing.T) {
+	ctx := context.Background()
+	original := t.TempDir()
+	repository, err := sqlite.Open(
+		filepath.Join(original, "omnisave.db"),
+		filepath.Join(original, "store"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := omnisaveservice.NewWithNamer(repository, &fixedNamer{name: "Necrobinder A5, floor 12"})
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-spire2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{
+			Path: "remote/run.save", Artifact: storeOmnisaveArtifact(t, ctx, saves, "floor 12"),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	displayName := "The good run"
+	if _, err := saves.UpdateRevision(ctx, save.ID, first.ID, omnisave.UpdateRevision{
+		DisplayName: &displayName,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &first.ID,
+		Upserts: []omnisave.RevisionFile{{
+			Path: "remote/run.save", Artifact: storeOmnisaveArtifact(t, ctx, saves, "floor 13"),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// A database rebuilt from a copy of the store alone must still know which
+	// name a person chose and which the labeler wrote, or later automation
+	// could not tell whose names it may replace.
+	elsewhere := t.TempDir()
+	copyDirectory(t, filepath.Join(original, "store"), filepath.Join(elsewhere, "store"))
+	rebuilt, err := sqlite.Open(
+		filepath.Join(elsewhere, "omnisave.db"),
+		filepath.Join(elsewhere, "store"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rebuilt.Close()
+	renamed, err := rebuilt.GetRevision(ctx, save.ID, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.DisplayName != "The good run" || renamed.NameSource != omnisave.NameSourceManual {
+		t.Fatalf("the manual name did not survive the rebuild: %+v", renamed)
+	}
+	labeled, err := rebuilt.GetRevision(ctx, save.ID, second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if labeled.DisplayName != "Necrobinder A5, floor 12" || labeled.NameSource != omnisave.NameSourceLabeler {
+		t.Fatalf("the labeler's name did not survive the rebuild: %+v", labeled)
+	}
+}
+
 func TestDeleteRevisionPrunesAnUnneededTip(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()

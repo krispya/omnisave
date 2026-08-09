@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,9 +23,20 @@ func TestMigrationGraftsLegacyCopiedRootForksOntoTheirForkPoint(t *testing.T) {
 	directory := t.TempDir()
 	databasePath := filepath.Join(directory, "omnisave.db")
 
-	// Build the database a pre-change deployment leaves behind: every
-	// migration but the last applied, and a linear save beside a fork that
-	// copied its root, as forks then did.
+	// Build the database a pre-graft deployment leaves behind: every migration
+	// up to the graft applied, and a linear save beside a fork that copied its
+	// root, as forks then did. The graft is found by its content rather than
+	// its position so migrations appended later do not move the story's start.
+	graft := -1
+	for index, migration := range migrations {
+		if strings.Contains(migration, "forked_from_revision_id <> revisions.id") {
+			graft = index
+			break
+		}
+	}
+	if graft < 0 {
+		t.Fatal("the graft migration is gone; this story needs rewriting")
+	}
 	db, err := sql.Open("sqlite", databasePath)
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +44,7 @@ func TestMigrationGraftsLegacyCopiedRootForksOntoTheirForkPoint(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)`); err != nil {
 		t.Fatal(err)
 	}
-	for index, migration := range migrations[:len(migrations)-2] {
+	for index, migration := range migrations[:graft] {
 		if _, err := db.Exec(migration); err != nil {
 			t.Fatalf("apply migration %d: %v", index+1, err)
 		}

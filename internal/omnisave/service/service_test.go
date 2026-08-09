@@ -455,6 +455,68 @@ func TestRejectInvalidChangesAndReportMissingArtifacts(t *testing.T) {
 	}
 }
 
+// notingNamer answers every revision with one fixed name and remembers which
+// game it was asked about, standing in for a game's labeler.
+type notingNamer struct {
+	name    string
+	gameIDs []string
+}
+
+func (n *notingNamer) NameRevision(_ context.Context, gameID string, _ []omnisave.RevisionFile) string {
+	n.gameIDs = append(n.gameIDs, gameID)
+	return n.name
+}
+
+func TestCommittedRevisionsAreNamedByTheGamesLabeler(t *testing.T) {
+	ctx := context.Background()
+	namer := &notingNamer{name: "Necrobinder A5, Underdocks floor 12"}
+	saves := omnisaveservice.NewWithNamer(storagetest.NewMemoryRepository(), namer)
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-spire2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := storeBlob(t, ctx, saves, "run in progress")
+	revision, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "remote/current_run.save", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revision.DisplayName != "Necrobinder A5, Underdocks floor 12" ||
+		revision.NameSource != omnisave.NameSourceLabeler {
+		t.Fatalf("commit did not carry the labeler's name: %+v", revision)
+	}
+	if len(namer.gameIDs) != 1 || namer.gameIDs[0] != "game-spire2" {
+		t.Fatalf("the namer was asked about %v, want the save's game", namer.gameIDs)
+	}
+
+	// A person's rename outranks the labeler's: the name changes hands and the
+	// source records that it is now manual.
+	displayName := "The run that beat the Spire"
+	renamed, err := saves.UpdateRevision(ctx, save.ID, revision.ID, omnisave.UpdateRevision{
+		DisplayName: &displayName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.DisplayName != displayName || renamed.NameSource != omnisave.NameSourceManual {
+		t.Fatalf("rename did not take the name over: %+v", renamed)
+	}
+
+	// A labeler with nothing to say leaves the revision unnamed.
+	namer.name = "   "
+	second, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &revision.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "remote/history/1.run", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.DisplayName != "" || second.NameSource != "" {
+		t.Fatalf("a declined name still landed on the revision: %+v", second)
+	}
+}
+
 func TestDeleteRevisionPrunesOnlyUnneededTips(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
@@ -477,7 +539,6 @@ func TestDeleteRevisionPrunesOnlyUnneededTips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	reason := func(err error) string {
 		t.Helper()
 		var inUse *omnisave.RevisionInUse

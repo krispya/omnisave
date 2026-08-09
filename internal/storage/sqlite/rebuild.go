@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
+	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
@@ -55,6 +56,7 @@ func (r *Repository) rebuild(ctx context.Context, inventory recoveryInventory) (
 		return false, err
 	}
 	revisionNames := make(map[string]map[string]string)
+	revisionNameSources := make(map[string]map[string]string)
 	storeCurrents := make(map[string]*string)
 	// Saves absent from the database need a legacy fallback when their portable
 	// record predates the explicit Current Revision field.
@@ -85,6 +87,7 @@ func (r *Repository) rebuild(ctx context.Context, inventory recoveryInventory) (
 		}
 		record := inventory.saves[id]
 		revisionNames[id] = record.RevisionNames
+		revisionNameSources[id] = record.RevisionNameSources
 		storeCurrents[id] = record.CurrentRevisionID
 		if knownSaves[id] {
 			r.noteRecordRowDivergence(ctx, record)
@@ -142,7 +145,7 @@ func (r *Repository) rebuild(ctx context.Context, inventory recoveryInventory) (
 			imported.games++
 		}
 	}
-	count, missing, err := r.importRevisions(ctx, arrivals, knownRevisions, revisionNames, importedSaves, storeCurrents)
+	count, missing, err := r.importRevisions(ctx, arrivals, knownRevisions, revisionNames, revisionNameSources, importedSaves, storeCurrents)
 	if err != nil {
 		return false, err
 	}
@@ -324,6 +327,7 @@ func (r *Repository) importRevisions(
 	arrivals map[string][]store.Revision,
 	knownRevisions map[string]bool,
 	revisionNames map[string]map[string]string,
+	revisionNameSources map[string]map[string]string,
 	importedSaves map[string]bool,
 	storeCurrents map[string]*string,
 ) (int, int, error) {
@@ -353,10 +357,17 @@ func (r *Repository) importRevisions(
 		if parent != nil && !knownRevisions[*parent] {
 			parent = nil
 		}
+		displayName := revisionNames[manifest.Omnisave.ID][manifest.ID]
+		nameSource := revisionNameSources[manifest.Omnisave.ID][manifest.ID]
+		// A named revision whose record predates name sources was named by a
+		// person; only names automation stamped as its own are ever replaceable.
+		if displayName != "" && nameSource == "" {
+			nameSource = omnisave.NameSourceManual
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO revisions(
-			id, game_id, omnisave_id, display_name, parent_id, created_at, metadata
-		) VALUES (?, ?, ?, ?, ?, ?, ?)`, manifest.ID, manifest.Game.ID, manifest.Omnisave.ID,
-			revisionNames[manifest.Omnisave.ID][manifest.ID], parent,
+			id, game_id, omnisave_id, display_name, name_source, parent_id, created_at, metadata
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, manifest.ID, manifest.Game.ID, manifest.Omnisave.ID,
+			displayName, nameSource, parent,
 			manifest.CreatedAt.Format(time.RFC3339Nano), string(metadata)); err != nil {
 			return 0, 0, err
 		}
