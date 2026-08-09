@@ -7,7 +7,7 @@
 
 Revision labeling names each committed revision from the save content it
 carries, so a history reads as moments in a game — "Necrobinder A5, Underdocks
-floor 12, 11/66 HP" — rather than as timestamps. A labeler is a small script
+flr 12, 11/66 HP" — rather than as timestamps. A labeler is a small script
 bound to one game; Omnisave ships built-in labelers for supported games, and
 the same mechanism is designed to accept user-provided labelers later.
 

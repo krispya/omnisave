@@ -30,7 +30,7 @@ User-facing concepts. If a user might say the word, it goes here.
 
 **Current Revision**. The one revision an omnisave presently represents and every bound Device synchronizes toward. Restoring another node moves this global pointer without changing either revision. The next commit becomes a child of the selected node. A **tip** is any revision without children and need not be current.
 
-**Labeler**. A per-game script that names a revision from its save content at commit — "Necrobinder A5, Underdocks floor 12" — running on the server so every device sees the same name. A labeler with nothing to say leaves the revision unnamed, and a name a person chooses by hand always outranks the labeler's. See [FDR-007](fdr/FDR-007-revision-labeling.md).
+**Labeler**. A per-game script that names a revision from its save content at commit — "Necrobinder A5, Underdocks flr 12" — running on the server so every device sees the same name. A labeler with nothing to say leaves the revision unnamed, and a name a person chooses by hand always outranks the labeler's. See [FDR-007](fdr/FDR-007-revision-labeling.md).
 
 **Restore**. Make any revision in an omnisave's tree current without creating or changing a revision. Moving to an ancestor is a **rewind**, moving to a descendant is a **fast-forward**, and moving between sibling branches is a **jump**.
 

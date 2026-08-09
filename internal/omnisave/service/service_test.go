@@ -469,7 +469,7 @@ func (n *notingNamer) NameRevision(_ context.Context, gameID string, _ []omnisav
 
 func TestCommittedRevisionsAreNamedByTheGamesLabeler(t *testing.T) {
 	ctx := context.Background()
-	namer := &notingNamer{name: "Necrobinder A5, Underdocks floor 12"}
+	namer := &notingNamer{name: "Necrobinder A5, Underdocks flr 12"}
 	saves := omnisaveservice.NewWithNamer(storagetest.NewMemoryRepository(), namer)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-spire2"})
 	if err != nil {
@@ -482,7 +482,7 @@ func TestCommittedRevisionsAreNamedByTheGamesLabeler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if revision.DisplayName != "Necrobinder A5, Underdocks floor 12" ||
+	if revision.DisplayName != "Necrobinder A5, Underdocks flr 12" ||
 		revision.NameSource != omnisave.NameSourceLabeler {
 		t.Fatalf("commit did not carry the labeler's name: %+v", revision)
 	}

@@ -37,7 +37,7 @@ func TestLabelsFollowARunAcrossItsLife(t *testing.T) {
 				"remote/profile1/saves/current_run.save":       "current_run.save",
 				"remote/profile1/saves/history/1783479289.run": "1783479289.run",
 			},
-			label: "Necrobinder A5, Underdocks floor 12, 11/66 HP",
+			label: "Necrobinder A5, Underdocks flr 12, 11/66 HP",
 		},
 		{
 			name: "a finished run is named by its outcome",
@@ -48,7 +48,7 @@ func TestLabelsFollowARunAcrossItsLife(t *testing.T) {
 				"remote/profile1/saves/history/1783567598.run": "1783567598.run",
 				"remote/profile1/saves/history/1783569631.run": "1783569631.run",
 			},
-			label: "Necrobinder A5 abandoned, Hive floor 23",
+			label: "Necrobinder A5 abandoned, Hive flr 23",
 		},
 		{
 			name: "wins carry the climb and its duration",
@@ -56,7 +56,7 @@ func TestLabelsFollowARunAcrossItsLife(t *testing.T) {
 				"remote/profile.save":                          "profile.save",
 				"remote/profile1/saves/history/1783479289.run": "1783479289.run",
 			},
-			label: "Necrobinder A4 win, 45 floors, 1h02m",
+			label: "Necrobinder A4 win, 45 flrs, 1h02m",
 		},
 		{
 			name: "deaths to events name the event",
@@ -64,7 +64,7 @@ func TestLabelsFollowARunAcrossItsLife(t *testing.T) {
 				"remote/profile.save":                          "profile.save",
 				"remote/profile1/saves/history/1783567598.run": "1783567598.run",
 			},
-			label: "Necrobinder A5 died to Slippery Bridge, Hive floor 20",
+			label: "Necrobinder A5 died to Slippery Bridge, Hive flr 20",
 		},
 		{
 			name: "a fresh profile has nothing to say",

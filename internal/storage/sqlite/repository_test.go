@@ -921,7 +921,7 @@ func TestRevisionNamesRememberWhoSetThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saves := omnisaveservice.NewWithNamer(repository, &fixedNamer{name: "Necrobinder A5, floor 12"})
+	saves := omnisaveservice.NewWithNamer(repository, &fixedNamer{name: "Necrobinder A5, flr 12"})
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-spire2"})
 	if err != nil {
 		t.Fatal(err)
@@ -977,7 +977,7 @@ func TestRevisionNamesRememberWhoSetThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if labeled.DisplayName != "Necrobinder A5, floor 12" || labeled.NameSource != omnisave.NameSourceLabeler {
+	if labeled.DisplayName != "Necrobinder A5, flr 12" || labeled.NameSource != omnisave.NameSourceLabeler {
 		t.Fatalf("the labeler's name did not survive the rebuild: %+v", labeled)
 	}
 }

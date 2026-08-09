@@ -1,9 +1,9 @@
 # Labels Slay the Spire II revisions from the run state in the save.
 #
-#   Mid-run:  "Necrobinder A5, Underdocks floor 12, 11/66 HP"
-#   Run over: "Necrobinder A4 win, 45 floors, 1h02m"
-#             "Necrobinder A5 died to Decimillipede, Hive floor 23"
-#             "Necrobinder A5 abandoned, Hive floor 23"
+#   Mid-run:  "Necrobinder A5, Underdocks flr 12, 11/66 HP"
+#   Run over: "Necrobinder A4 win, 45 flrs, 1h02m"
+#             "Necrobinder A5 died to Decimillipede, Hive flr 23"
+#             "Necrobinder A5 abandoned, Hive flr 23"
 #
 # A snapshot mid-run carries saves/current_run.save; a finished run deletes it
 # and appends saves/history/<start_time>.run. A snapshot with neither is a
@@ -89,7 +89,7 @@ def _place(doc):
     act = _act_name(doc)
     floors = _floors(doc.get("map_point_history"))
     if act and floors:
-        return "%s floor %d" % (act, floors)
+        return "%s flr %d" % (act, floors)
     return act
 
 def _after_place(doc):
@@ -100,7 +100,7 @@ def _run_over(doc):
     """Label for a finished run: outcome first, then where it ended."""
     who = _character(doc) + _ascension(doc)
     if doc.get("win"):
-        name = "%s win, %d floors" % (who, _floors(doc.get("map_point_history")))
+        name = "%s win, %d flrs" % (who, _floors(doc.get("map_point_history")))
         time = _duration(doc.get("run_time"))
         return (name + ", " + time) if time else name
     # An abandon mid-fight also records the encounter; quitting is still the outcome.
