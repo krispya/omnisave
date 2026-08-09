@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
@@ -183,7 +184,51 @@ func (r *Repository) buildOmnisave(ctx context.Context, id string) (store.Omnisa
 	if err := rows.Err(); err != nil {
 		return store.Omnisave{}, err
 	}
+	// The deleted-revisions tombstones live only in the store record — the
+	// database deletes the rows outright — so a rebuild of the record carries
+	// the existing list forward. An entry whose row is back in the database
+	// marks a deletion that never committed, and is dropped rather than
+	// honored; that filter is what lets a tombstone written for a failed
+	// delete self-correct on the next rewrite.
+	existing, err := r.store.GetOmnisave(id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return store.Omnisave{}, err
+	}
+	for _, revisionID := range existing.DeletedRevisions {
+		var resurrected bool
+		if err := r.db.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM revisions WHERE id = ?)`, revisionID,
+		).Scan(&resurrected); err != nil {
+			return store.Omnisave{}, err
+		}
+		if !resurrected {
+			record.DeletedRevisions = append(record.DeletedRevisions, revisionID)
+		}
+	}
 	return record, nil
+}
+
+// tombstoneRevision records one revision's deletion on its owner's store
+// record. It runs before the deleting transaction commits — the same ordering
+// as tombstoneOmnisave, for the same reason: a deletion a crash can undo is
+// not a deletion. A tombstone written for a delete that then fails is
+// harmless and self-correcting: the row survives, so the next rewrite of the
+// record drops the entry.
+//
+// Unlike a whole-lineage deletion, a missing record fails the delete instead
+// of skipping the tombstone. The record is the only thing standing between
+// the manifest and a rebuild importing it back, so the deletion waits until
+// an open has reconciled the record into place.
+func (r *Repository) tombstoneRevision(ownerID, revisionID string) error {
+	record, err := r.store.GetOmnisave(ownerID)
+	if err != nil {
+		return fmt.Errorf("record deletion of revision %s: %w", revisionID, err)
+	}
+	if slices.Contains(record.DeletedRevisions, revisionID) {
+		return nil
+	}
+	record.DeletedRevisions = append(record.DeletedRevisions, revisionID)
+	return r.store.PutOmnisave(record)
 }
 
 // tombstoneOmnisave marks a lineage deleted. The record stays so that restoring

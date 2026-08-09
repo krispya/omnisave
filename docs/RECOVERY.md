@@ -33,7 +33,9 @@ The JSON files are plain text on purpose. Open them in any editor.
        grep -rl '"game_id": "<game id>"' omnisaves/
 
    Each match is one save lineage. Its "display_name" is what it was called.
-   A record with a "deleted_at" was deliberately deleted.
+   A record with a "deleted_at" was deliberately deleted. Any revision named
+   in a record's "deleted_revisions" list was deleted on its own — a manifest
+   for one of those is a leftover, not a save to recover.
 
 3. Find the newest snapshot of that lineage. Search `revisions/` for the
    lineage's identifier:

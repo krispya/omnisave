@@ -49,9 +49,24 @@ export class CurrentRevisionConflictError extends Error {
 
 type ErrorResponse = {
   error?: string;
+  reason?: string;
   expected_current_revision_id?: string | null;
   actual_current_revision_id?: string | null;
 };
+
+/** Why the server refused to delete a revision, in the dialog's voice. */
+function revisionInUseMessage(reason?: string) {
+  switch (reason) {
+    case 'current':
+      return 'This revision is current. Restore another revision first.';
+    case 'children':
+      return 'Later revisions build on this one. Delete them first.';
+    case 'fork_origin':
+      return 'A fork begins at this revision.';
+    default:
+      return 'This revision is still needed.';
+  }
+}
 
 type CommitFile = {
   path: string;
@@ -227,6 +242,9 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
         expected_current_revision_id: body.expected_current_revision_id ?? null,
         actual_current_revision_id: body.actual_current_revision_id ?? null,
       });
+    }
+    if (response.status === 409 && body?.error === 'revision_in_use') {
+      throw new Error(revisionInUseMessage(body.reason));
     }
     if (response.status === 401) throw new UnauthorizedError();
     throw new Error(`Request failed (${response.status}).`);
@@ -415,6 +433,12 @@ export function updateRevisionDisplayName(
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ display_name: displayName }),
+  });
+}
+
+export function deleteRevision(token: string, omnisaveID: string, revisionID: string) {
+  return request<void>(`/api/v1/omnisaves/${omnisaveID}/revisions/${revisionID}`, token, {
+    method: 'DELETE',
   });
 }
 

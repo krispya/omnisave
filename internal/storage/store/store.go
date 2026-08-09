@@ -34,8 +34,11 @@ import (
 
 // Version is the store format this package writes. A reader refuses a store
 // numbered higher than this: an older binary cannot know what a newer format
-// left out, and guessing with save data is not acceptable.
-const Version = 2
+// left out, and guessing with save data is not acceptable. Version 3 added
+// deleted_revisions to lineage records — a reader that ignored it would
+// resurrect deleted revisions on rebuild, which is exactly the guessing this
+// refusal exists to prevent.
+const Version = 3
 
 const (
 	versionFile   = "VERSION"

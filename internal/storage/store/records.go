@@ -89,8 +89,15 @@ type Omnisave struct {
 	// DeletedAt tombstones a lineage instead of erasing its record. Without
 	// this, restoring a store would resurrect every save its owner had
 	// deliberately thrown away.
-	DeletedAt *time.Time        `json:"deleted_at,omitempty"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// DeletedRevisions tombstones single revisions deleted out of a live
+	// lineage, for the same reason DeletedAt exists: a manifest that survives
+	// its deletion — a crash before the removal, or a store restored from a
+	// backup — must not be imported back behind the owner's decision. Entries
+	// stay forever; the list lives only here, so every rewrite of this record
+	// carries it forward.
+	DeletedRevisions []string          `json:"deleted_revisions,omitempty"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
 }
 
 // Game records catalog identity, so a recovered save has a title rather than an
@@ -228,8 +235,9 @@ func (s *Store) EachGameID(visit func(id string) error) error {
 	return s.eachRecordID(gameDir, visit)
 }
 
-// RemoveRevision deletes a manifest. Only deletion of a whole lineage reaches
-// this; revisions are otherwise immutable and permanent.
+// RemoveRevision deletes a manifest. Only deletion reaches this — of a whole
+// lineage, or of one revision behind a deleted_revisions tombstone; revisions
+// are otherwise immutable and permanent.
 func (s *Store) RemoveRevision(id string) error {
 	if err := os.Remove(s.revisionPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err

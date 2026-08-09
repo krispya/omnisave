@@ -69,7 +69,18 @@ record. A revision manifest is dropped only when no surviving Omnisave retains
 that node through shared fork ancestry, so deleting a fork source cannot erase
 history still active through another save.
 
-**A commit is recorded after the database accepts it; a deletion before.** The
+Deleting a single revision out of a live lineage is recorded the same way: the
+owner's record lists it under `deleted_revisions`, rebuild refuses to import a
+manifest named there, and the entry stays forever, so a store restored from a
+backup cannot resurrect the deleted snapshot. Only a node the graph no longer
+needs may go — nothing builds on it, no save holds it as current, no fork
+begins there — because a child's manifest names its parent, and manifests are
+never rewritten. The list lives only in the record; a rewrite carries it
+forward, dropping any entry whose revision the database still holds, which is
+how a tombstone written for a deletion that never committed self-corrects.
+
+**A commit is recorded after the database accepts it; a deletion before.**
+This holds for deleting a save and for deleting a single revision alike. The
 expected-current check is what makes a commit atomic, so for commits the database
 decides: a manifest written first could describe a commit that check rejected,
 and an invented revision is worse than a missing one. Deletion inverts because

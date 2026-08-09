@@ -84,8 +84,11 @@ func (r *Repository) rebuild(ctx context.Context) error {
 
 	// Lineage records: import live ones the database lacks, and remember the
 	// tombstoned ones so their manifests — leftovers of a deletion a crash
-	// interrupted — are not imported behind the owner's back.
+	// interrupted — are not imported behind the owner's back. Single-revision
+	// tombstones are collected the same way: a manifest named there was
+	// deleted out of a live lineage, and importing it back would undo that.
 	tombstoned := make(map[string]bool)
+	deletedRevisions := make(map[string]bool)
 	if err := r.store.EachOmnisaveID(func(id string) error {
 		record, err := r.store.GetOmnisave(id)
 		if err != nil {
@@ -94,6 +97,9 @@ func (r *Repository) rebuild(ctx context.Context) error {
 		}
 		revisionNames[id] = record.RevisionNames
 		storeCurrents[id] = record.CurrentRevisionID
+		for _, revisionID := range record.DeletedRevisions {
+			deletedRevisions[revisionID] = true
+		}
 		if knownSaves[id] {
 			return nil
 		}
@@ -113,9 +119,12 @@ func (r *Repository) rebuild(ctx context.Context) error {
 	}
 
 	// Manifests the database lacks, grouped by lineage. Only these are read.
+	// A manifest behind a deleted-revision tombstone is a leftover of a
+	// deletion a crash interrupted, and stays out for the same reason a
+	// tombstoned lineage's manifests do.
 	arrivals := make(map[string][]store.Revision)
 	if err := r.store.EachRevisionID(func(id string) error {
-		if knownRevisions[id] {
+		if knownRevisions[id] || deletedRevisions[id] {
 			return nil
 		}
 		manifest, err := r.store.GetRevision(id)

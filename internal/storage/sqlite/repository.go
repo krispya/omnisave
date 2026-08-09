@@ -466,6 +466,110 @@ func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revi
 	return nil
 }
 
+// DeleteRevision removes one revision reachable through the named save. Only
+// a node the graph no longer needs may go: nothing builds on it, no save
+// points at it as current, and no fork began there. Anything else is refused
+// rather than repaired — moving a current pointer would rewind every bound
+// device behind the owner's back, and a child cannot be reparented because
+// its manifest, which records the parent, is immutable.
+func (r *Repository) DeleteRevision(ctx context.Context, saveID, revisionID string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// The save has to exist and reach the revision through its membership, so
+	// a deleted save's URLs stay dead — the same rule reads follow.
+	var saveExists bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM omnisaves WHERE id = ?)`, saveID,
+	).Scan(&saveExists); err != nil {
+		return err
+	}
+	if !saveExists {
+		return storage.ErrNotFound
+	}
+	member, err := revisionIsMember(ctx, tx, saveID, revisionID)
+	if err != nil {
+		return err
+	}
+	if !member {
+		return storage.ErrNotFound
+	}
+	var ownerID string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT omnisave_id FROM revisions WHERE id = ?`, revisionID,
+	).Scan(&ownerID); err != nil {
+		return translateNotFound(err)
+	}
+
+	refusals := []struct {
+		query  string
+		reason string
+	}{
+		{`SELECT EXISTS(SELECT 1 FROM omnisaves WHERE current_revision_id = ?)`, storage.RevisionInUseCurrent},
+		{`SELECT EXISTS(SELECT 1 FROM revisions WHERE parent_id = ?)`, storage.RevisionInUseChildren},
+		{`SELECT EXISTS(SELECT 1 FROM omnisaves WHERE forked_from_revision_id = ?)`, storage.RevisionInUseForkOrigin},
+	}
+	for _, refusal := range refusals {
+		var used bool
+		if err := tx.QueryRowContext(ctx, refusal.query, revisionID).Scan(&used); err != nil {
+			return err
+		}
+		if used {
+			return &storage.RevisionInUse{Reason: refusal.reason}
+		}
+	}
+
+	hashes, err := queryIDs(ctx, tx,
+		`SELECT DISTINCT artifact_sha256 FROM revision_files WHERE revision_id = ?`, revisionID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM revisions WHERE id = ?`, revisionID); err != nil {
+		return err
+	}
+	var unreferenced []string
+	for _, hash := range hashes {
+		var used bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT
+				EXISTS(SELECT 1 FROM revision_files WHERE artifact_sha256 = ?) OR
+				EXISTS(SELECT 1 FROM game_media WHERE sha256 = ?)`, hash, hash,
+		).Scan(&used); err != nil {
+			return err
+		}
+		if !used {
+			unreferenced = append(unreferenced, hash)
+		}
+	}
+
+	// Recorded in the store before the database commits, the same ordering as
+	// a lineage deletion (ADR-012): a deletion a crash can undo is not a
+	// deletion. The tombstone rests on the owner's record, which the checks
+	// above guarantee survives — a deletable node is always owned by a live
+	// save, because a dead owner's leftovers are reachable only as someone's
+	// ancestor, current, or fork origin.
+	if err := r.tombstoneRevision(ownerID, revisionID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	r.noteStoreLag("deletion of revision "+revisionID, r.dropRevisions([]string{revisionID}))
+	// Rewriting the owner's record drops the deleted revision's label while
+	// buildOmnisave carries the tombstone forward.
+	r.noteStoreLag("save "+ownerID, r.recordOmnisave(ctx, ownerID))
+	for _, hash := range unreferenced {
+		if err := r.removeArtifact(hash); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Repository) memberOmnisaveIDs(ctx context.Context, revisionID string) ([]string, error) {
 	saves, err := r.ListOmnisaves(ctx)
 	if err != nil {

@@ -30,6 +30,7 @@ type RevisionLogProps = {
   onOpenSave: (save: Omnisave, revisionID?: string) => void;
   onRequestRestore: (revision: Revision) => void;
   onRequestFork: (revision: Revision) => void;
+  onRequestDelete: (revision: Revision) => void;
 };
 
 /** Lane geometry, in rem: lane width, and a dot's center within its row. */
@@ -48,11 +49,13 @@ function RevisionRowMenu({
   onFork,
   onDownload,
   onDetails,
+  onDelete,
 }: {
   name: string;
   onFork: () => void;
   onDownload: () => void;
   onDetails: () => void;
+  onDelete?: () => void;
 }) {
   const menuID = useId();
 
@@ -102,6 +105,17 @@ function RevisionRowMenu({
         >
           Details
         </button>
+        {onDelete ? (
+          <button
+            type="button"
+            popoverTarget={menuID}
+            popoverTargetAction="hide"
+            onClick={onDelete}
+            className="w-full cursor-pointer rounded-sm px-3 py-2 text-left text-sm text-danger hover:bg-text/8"
+          >
+            Delete
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -135,6 +149,7 @@ export function RevisionLog({
   onOpenSave,
   onRequestRestore,
   onRequestFork,
+  onRequestDelete,
 }: RevisionLogProps) {
   const [detailsRevisionID, setDetailsRevisionID] = useState('');
   // Resolved from the list each render, so an open dialog follows renames and reloads.
@@ -192,6 +207,14 @@ export function RevisionLog({
             const forkLinks = lineage.forks.get(revision.id) ?? [];
             const isCurrent = revision.id === save.current_revision_id;
             const isForkPoint = revision.id === save.forked_from?.revision_id;
+            // Only a tip nothing needs offers deletion: not current, nothing
+            // building on it, no fork starting here. The server re-checks
+            // globally; this only hides the action where it must refuse.
+            const deletable =
+              !isCurrent &&
+              !isForkPoint &&
+              forkLinks.length === 0 &&
+              !revisions.some((candidate) => candidate.parent_id === revision.id);
             const focused = revision.id === focusedID;
             const name = revision.display_name || shortID(revision.id);
             const totalSize = revision.files.reduce((total, file) => total + file.artifact.size, 0);
@@ -311,6 +334,7 @@ export function RevisionLog({
                       onFork={() => onRequestFork(revision)}
                       onDownload={() => onDownloadRevision(revision)}
                       onDetails={() => setDetailsRevisionID(revision.id)}
+                      onDelete={deletable ? () => onRequestDelete(revision) : undefined}
                     />
                   </div>
                 </div>
