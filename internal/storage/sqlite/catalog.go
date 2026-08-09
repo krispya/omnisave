@@ -72,6 +72,8 @@ func (r *Repository) ListGames(ctx context.Context) ([]catalog.Game, error) {
 }
 
 func (r *Repository) SaveGame(ctx context.Context, game catalog.Game, rom *catalog.GameROM) error {
+	r.mutate.Lock()
+	defer r.mutate.Unlock()
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -190,6 +192,8 @@ func saveGameMetadata(ctx context.Context, executor contextExecutor, game catalo
 // DeleteGame removes a game, its saves with their revision history, and any
 // artifacts left unreferenced. Media and identity rows cascade via foreign keys.
 func (r *Repository) DeleteGame(ctx context.Context, id string) error {
+	r.mutate.Lock()
+	defer r.mutate.Unlock()
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -257,20 +261,6 @@ func (r *Repository) DeleteGame(ctx context.Context, id string) error {
 		return storage.ErrNotFound
 	}
 
-	var unreferenced []string
-	for _, hash := range hashes {
-		var used bool
-		if err := tx.QueryRowContext(ctx,
-			`SELECT
-				EXISTS(SELECT 1 FROM revision_files WHERE artifact_sha256 = ?) OR
-				EXISTS(SELECT 1 FROM game_media WHERE sha256 = ?)`, hash, hash,
-		).Scan(&used); err != nil {
-			return err
-		}
-		if !used {
-			unreferenced = append(unreferenced, hash)
-		}
-	}
 	deletedAt := time.Now().UTC()
 	for _, omnisaveID := range saveIDs {
 		if err := r.tombstoneOmnisave(omnisaveID, deletedAt); err != nil {
@@ -278,20 +268,25 @@ func (r *Repository) DeleteGame(ctx context.Context, id string) error {
 		}
 	}
 	if err := tx.Commit(); err != nil {
+		// The deletion did not happen, so its tombstones must not stand: the
+		// surviving rows rebuild each record without one now rather than at
+		// the next open, which stays the backstop.
+		for _, omnisaveID := range saveIDs {
+			r.noteStoreLag("save "+omnisaveID, r.recordOmnisave(ctx, omnisaveID))
+		}
 		return err
 	}
 
 	r.noteStoreLag("deletion of game "+id, r.dropRevisions(revisionIDs))
 	r.noteStoreLag("deletion of game "+id, r.store.RemoveGame(id))
-	for _, hash := range unreferenced {
-		if err := r.removeArtifact(hash); err != nil {
-			return err
-		}
-	}
+	r.reclaimArtifacts(ctx, hashes)
 	return nil
 }
 
 func (r *Repository) SaveGameMedia(ctx context.Context, media catalog.GameMedia) error {
+	// Creates a reference reclamation must not decide against mid-write.
+	r.mutate.Lock()
+	defer r.mutate.Unlock()
 	_, err := r.db.ExecContext(ctx, `INSERT INTO game_media(
 		id, game_id, kind, position, format, sha256, size, provider, provider_id, attribution
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -305,6 +300,8 @@ func (r *Repository) SaveGameMedia(ctx context.Context, media catalog.GameMedia)
 }
 
 func (r *Repository) ClearGameMedia(ctx context.Context, gameID string) error {
+	r.mutate.Lock()
+	defer r.mutate.Unlock()
 	_, err := r.db.ExecContext(ctx, `DELETE FROM game_media WHERE game_id = ?`, gameID)
 	return err
 }

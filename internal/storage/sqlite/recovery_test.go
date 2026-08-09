@@ -1,7 +1,10 @@
 package sqlite_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
@@ -262,6 +265,62 @@ func TestDeletedRevisionsStayDeletedWhenTheirManifestSurvives(t *testing.T) {
 	}
 	if len(record.DeletedRevisions) != 1 || record.DeletedRevisions[0] != second.ID {
 		t.Fatalf("the tombstone should survive the reopen, got %v", record.DeletedRevisions)
+	}
+	// The sweep collects what the crash left: the manifest and the content
+	// only it referenced.
+	if repository.Store().HasRevision(second.ID) {
+		t.Fatal("the leftover manifest should be swept at open")
+	}
+	if repository.Store().HasObject(discardedArtifact.SHA256) {
+		t.Fatal("content only the deleted revision referenced should be swept at open")
+	}
+}
+
+// Opening reclaims objects nothing references — content a crash orphaned
+// between storing and committing, or a reclamation that could not finish.
+func TestOpeningSweepsWhatNothingReferences(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "omnisave.db")
+	storeDir := filepath.Join(directory, "store")
+
+	repository, err := sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := omnisaveservice.New(repository)
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Main run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := storeOmnisaveArtifact(t, ctx, saves, "referenced content")
+	if _, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: kept}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// An upload no revision ever came to reference.
+	orphanContent := []byte("orphaned upload")
+	orphanSum := sha256.Sum256(orphanContent)
+	orphanHash := hex.EncodeToString(orphanSum[:])
+	if _, err := repository.Store().PutObject(orphanHash, bytes.NewReader(orphanContent)); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err = sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+
+	if repository.Store().HasObject(orphanHash) {
+		t.Fatal("an object nothing references should be swept at open")
+	}
+	if !repository.Store().HasObject(kept.SHA256) {
+		t.Fatal("referenced content must survive the sweep")
 	}
 }
 

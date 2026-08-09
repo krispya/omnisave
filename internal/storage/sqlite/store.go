@@ -259,8 +259,8 @@ func (r *Repository) tombstoneOmnisave(id string, at time.Time) error {
 // after the commit, because a manifest removed for a delete that then failed
 // would be a snapshot missing from a save that still exists. Failing here
 // leaves manifests behind a tombstone: the tombstone keeps the save itself
-// from resurrecting, and the next reconcile does not rewrite what the
-// database no longer holds.
+// from resurrecting, the next reconcile does not rewrite what the database no
+// longer holds, and the next open's sweep collects the leftovers.
 func (r *Repository) dropRevisions(revisionIDs []string) error {
 	for _, revisionID := range revisionIDs {
 		if err := r.store.RemoveRevision(revisionID); err != nil {

@@ -80,7 +80,9 @@ forward, dropping any entry whose revision the database still holds, which is
 how a tombstone written for a deletion that never committed self-corrects.
 
 **A commit is recorded after the database accepts it; a deletion before.**
-This holds for deleting a save and for deleting a single revision alike. The
+This holds for deleting a save and for deleting a single revision alike. A
+tombstone whose deletion then fails to commit is corrected immediately from
+the surviving rows, with the next open as the backstop. The
 expected-current check is what makes a commit atomic, so for commits the database
 decides: a manifest written first could describe a commit that check rejected,
 and an invented revision is worse than a missing one. Deletion inverts because
@@ -90,6 +92,17 @@ deletion a crash can undo is not a deletion. Both orderings are safe for the
 same reason: whatever the database still holds, reconciling on open writes to
 the store, so a manifest missed by a crash is rebuilt and a tombstone left by a
 failed deletion is cleared.
+
+**Content is reclaimed only against live references.** A deletion decides
+inside its transaction what leaves the history, but never what leaves the
+disk. Objects are removed afterwards, under the server's one mutation lock,
+by re-checking at removal time that nothing references them — a commit or a
+media save landing after the transaction keeps its content, because the
+reference check and the removal cannot interleave with the write that would
+invalidate them. What a crash strands — an object nothing references, a
+manifest behind a tombstone, an index row for either — is swept at the next
+open, after both repair passes, when the rebuilt database makes deadness
+provable.
 
 Revision identifiers stay opaque rather than becoming content hashes. Hashing
 manifests would make the history a verifiable Merkle DAG, but it changes the API
@@ -116,8 +129,11 @@ More difficult:
   lacks, so whichever of the two survived is enough. Each direction only adds —
   rebuild never deletes from the database, reconcile never deletes from the
   store — which is what keeps repair safe to run blind, and why every ordering
-  decision above exists. Both passes have to be tested as the correctness
-  mechanism they are.
+  decision above exists. The sweep that follows them is the one pass that
+  removes, and it may run blind only because they ran first: with the database
+  rebuilt, what nothing references and what a tombstone names is provably
+  dead. All three passes have to be tested as the correctness mechanism they
+  are.
 - Rebuild trusts identity wherever it finds it. A lineage whose record was lost
   is reconstructed from the identity its manifests carry — with the caveat that
   a rename after the last commit lived only in the lost record. Tombstones are
