@@ -13,6 +13,9 @@ TEST_PACKAGES = $(if $(F),$(TEST_FILTER_PACKAGES),$(TEST_GOAL_PACKAGES))
 install:
 	pnpm install
 
+install-client:
+	GOBIN="$(HOME)/.local/bin" go install ./cmd/omnisave
+
 build-web:
 	pnpm --filter @omnisave/dash run build
 
@@ -66,5 +69,5 @@ build-spk-x86_64: build-web
 build-spk-armv8: build-web
 	VERSION=$(VERSION) SPK_BUILD=$(SPK_BUILD) SPK_ARCH=armv8 ./scripts/package-synology.sh
 
-.PHONY: install build-web build-server build-client build-all test \
+.PHONY: install install-client build-web build-server build-client build-all test \
 		build-oci push-oci export-oci build-spk build-spk-x86_64 build-spk-armv8
