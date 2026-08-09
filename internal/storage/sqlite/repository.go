@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -23,9 +24,12 @@ import (
 type Repository struct {
 	db    *sql.DB
 	store *store.Store
+	// storeErr stops later portable mutations after an outbox projection
+	// failure. Open replays the queue before exposing the repository again.
+	storeErr error
 	// mutate serializes every mutation together with its store side effects,
-	// so no request observes another halfway through: a record rewrite cannot
-	// overwrite a tombstone written beside it, and content reclamation cannot
+	// so no request observes another halfway through: projections stay ordered,
+	// and content reclamation cannot
 	// decide against a reference a concurrent commit is creating. Everything
 	// under it is a quick local operation — the one streaming write, an
 	// artifact upload, stays outside and takes the lock only to record what
@@ -68,19 +72,53 @@ func Open(databasePath, storeDir string) (*Repository, error) {
 		return nil, err
 	}
 	repository := &Repository{db: db, store: saveStore}
-	if err := repository.rebuild(context.Background()); err != nil {
+	if err := repository.flushStoreOutbox(context.Background()); err != nil {
+		// The queue is ahead of the store, and rebuild treats store records
+		// as acknowledged state, so recovery must not run: importing records
+		// the queue is still ahead of would roll committed rows back. Reads
+		// serve from the database; durable mutations wait for an open that
+		// can land the queued work.
+		repository.storeErr = fmt.Errorf("replay portable store outbox: %w", err)
+		log.Printf("save store: %v; opened read-only with recovery deferred", repository.storeErr)
+		return repository, nil
+	}
+	legacyComplete := repository.migrateLegacyDeletionMarkers()
+	inventory := repository.inspectStore()
+	inventory.complete = inventory.complete && legacyComplete
+	inventory.deletionsComplete = inventory.deletionsComplete && legacyComplete
+	imported, err := repository.rebuild(context.Background(), inventory)
+	if err != nil {
 		db.Close()
 		return nil, err
 	}
-	if err := repository.reconcile(context.Background()); err != nil {
+	// Reconcile only adds — it writes what the database holds and the store
+	// lacks — so it runs even when the inventory is incomplete. The gap is
+	// often a manifest the database can simply rewrite, and a repair pass
+	// gated on the health it is meant to restore would make the degraded
+	// state permanent.
+	reconciled, err := repository.reconcile(context.Background())
+	if err != nil {
 		db.Close()
 		return nil, err
 	}
-	// Reclamation after repair: with the database complete, what the sweep
-	// removes is provably dead. A sweep that cannot finish costs leftovers,
-	// not correctness, so it never stops the server from opening.
-	if err := repository.sweep(context.Background()); err != nil {
-		log.Printf("save store: sweep could not finish; the next open retries it: %v", err)
+	recoveryComplete := imported && reconciled
+	if !inventory.complete && inventory.deletionsComplete && reconciled {
+		// The repair may have filled exactly the gaps the inventory reported.
+		// Look again before settling for the degraded answer; damage that
+		// reconcile cannot rewrite keeps it.
+		inventory = repository.inspectStore()
+		inventory.complete = inventory.complete && legacyComplete
+		inventory.deletionsComplete = inventory.deletionsComplete && legacyComplete
+		recoveryComplete = inventory.complete
+	}
+	if proof, ok := inventory.proof(); recoveryComplete && ok {
+		// Reclamation requires the proof produced by the complete inventory.
+		if err := repository.sweep(context.Background(), proof); err != nil {
+			log.Printf("save store: sweep could not finish; the next open retries it: %v", err)
+		}
+	} else {
+		repository.storeErr = errRecoveryInventoryIncomplete
+		log.Printf("save store: opened in read-only recovery mode; durable mutations require a complete inventory")
 	}
 	return repository, nil
 }
@@ -95,11 +133,22 @@ func (r *Repository) Close() error {
 func (r *Repository) InsertOmnisave(ctx context.Context, save omnisave.Omnisave) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
+	if err := r.requireStoreReady(); err != nil {
+		return err
+	}
+	if r.store.HasDeletion(store.DeletionOmnisave, save.ID) {
+		return storage.ErrConflict
+	}
 	metadata, err := json.Marshal(save.Metadata)
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx,
 		`INSERT INTO omnisaves(
 			id, game_id, display_name, current_revision_id,
 			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
@@ -111,8 +160,13 @@ func (r *Repository) InsertOmnisave(ctx context.Context, save omnisave.Omnisave)
 	if err != nil {
 		return translateUniqueViolation(err)
 	}
-	r.noteStoreLag("save "+save.ID, r.recordOmnisave(ctx, save.ID))
-	return nil
+	if err := r.enqueueOmnisaveProjection(ctx, tx, save.ID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return r.projectStore(ctx)
 }
 
 func (r *Repository) ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, error) {
@@ -157,7 +211,15 @@ func (r *Repository) GetOmnisave(ctx context.Context, id string) (*omnisave.Omni
 func (r *Repository) UpdateOmnisaveDisplayName(ctx context.Context, id, displayName string) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
-	result, err := r.db.ExecContext(ctx,
+	if err := r.requireStoreReady(); err != nil {
+		return err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx,
 		`UPDATE omnisaves SET display_name = ? WHERE id = ?`, displayName, id,
 	)
 	if err != nil {
@@ -170,13 +232,21 @@ func (r *Repository) UpdateOmnisaveDisplayName(ctx context.Context, id, displayN
 	if count == 0 {
 		return storage.ErrNotFound
 	}
-	r.noteStoreLag("save "+id, r.recordOmnisave(ctx, id))
-	return nil
+	if err := r.enqueueOmnisaveProjection(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return r.projectStore(ctx)
 }
 
 func (r *Repository) DeleteOmnisave(ctx context.Context, id string) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
+	if err := r.requireStoreReady(); err != nil {
+		return err
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -192,6 +262,9 @@ func (r *Repository) DeleteOmnisave(ctx context.Context, id string) error {
 		return err
 	}
 	if count == 0 {
+		if r.store.HasDeletion(store.DeletionOmnisave, id) {
+			return nil
+		}
 		return storage.ErrNotFound
 	}
 
@@ -230,18 +303,29 @@ func (r *Repository) DeleteOmnisave(ctx context.Context, id string) error {
 		}
 	}
 
-	if err := r.tombstoneOmnisave(id, time.Now().UTC()); err != nil {
+	deletedAt := time.Now().UTC()
+	if err := enqueueDeletion(ctx, tx, store.Deletion{
+		TargetKind: store.DeletionOmnisave,
+		TargetID:   id,
+		DeletedAt:  deletedAt,
+	}); err != nil {
 		return err
+	}
+	for _, revisionID := range revisionIDs {
+		if err := enqueueDeletion(ctx, tx, store.Deletion{
+			TargetKind: store.DeletionRevision,
+			TargetID:   revisionID,
+			DeletedAt:  deletedAt,
+		}); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
-		// The deletion did not happen, so the tombstone written for it must
-		// not stand: a store copied before the next open would say deleted
-		// about a save this server still serves. The surviving row rebuilds
-		// the record without it; the next open remains the backstop.
-		r.noteStoreLag("save "+id, r.recordOmnisave(ctx, id))
 		return err
 	}
-
+	if err := r.projectStore(ctx); err != nil {
+		return err
+	}
 	r.noteStoreLag("deletion of save "+id, r.dropRevisions(revisionIDs))
 	r.reclaimArtifacts(ctx, hashes)
 	return nil
@@ -250,6 +334,12 @@ func (r *Repository) DeleteOmnisave(ctx context.Context, id string) error {
 func (r *Repository) ForkOmnisave(ctx context.Context, save omnisave.Omnisave) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
+	if err := r.requireStoreReady(); err != nil {
+		return err
+	}
+	if r.store.HasDeletion(store.DeletionOmnisave, save.ID) {
+		return storage.ErrConflict
+	}
 	saveMetadata, err := json.Marshal(save.Metadata)
 	if err != nil {
 		return err
@@ -283,16 +373,21 @@ func (r *Repository) ForkOmnisave(ctx context.Context, save omnisave.Omnisave) e
 		save.CreatedAt.Format(time.RFC3339Nano), string(saveMetadata)); err != nil {
 		return translateUniqueViolation(err)
 	}
+	if err := r.enqueueOmnisaveProjection(ctx, tx, save.ID); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	r.noteStoreLag("save "+save.ID, r.recordOmnisave(ctx, save.ID))
-	return nil
+	return r.projectStore(ctx)
 }
 
 func (r *Repository) RestoreOmnisave(ctx context.Context, id, revisionID string, expectedCurrentRevisionID *string) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
+	if err := r.requireStoreReady(); err != nil {
+		return err
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -327,16 +422,21 @@ func (r *Repository) RestoreOmnisave(ctx context.Context, id, revisionID string,
 		}
 		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: nullableStringPointer(latest)}
 	}
+	if err := r.enqueueOmnisaveProjection(ctx, tx, id); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	r.noteStoreLag("current revision of save "+id, r.recordOmnisave(ctx, id))
-	return nil
+	return r.projectStore(ctx)
 }
 
 func (r *Repository) CommitRevision(ctx context.Context, expectedCurrentRevisionID *string, revision omnisave.Revision) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
+	if err := r.requireStoreReady(); err != nil {
+		return err
+	}
 	metadata, err := json.Marshal(revision.Metadata)
 	if err != nil {
 		return err
@@ -355,6 +455,13 @@ func (r *Repository) CommitRevision(ctx context.Context, expectedCurrentRevision
 	if !sameNullableString(actualCurrentRevisionID, expectedCurrentRevisionID) {
 		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: nullableStringPointer(actualCurrentRevisionID)}
 	}
+	descriptors := make(map[string]int64, len(revision.Files))
+	for _, file := range revision.Files {
+		descriptors[file.Artifact.SHA256] = file.Artifact.Size
+	}
+	if err := r.requireAvailableArtifacts(ctx, tx, descriptors); err != nil {
+		return err
+	}
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO revisions(
 		id, game_id, omnisave_id, parent_id, created_at, metadata
@@ -362,7 +469,7 @@ func (r *Repository) CommitRevision(ctx context.Context, expectedCurrentRevision
 		revision.ID, revision.OmnisaveID, revision.ParentID,
 		revision.CreatedAt.Format(time.RFC3339Nano), string(metadata), revision.OmnisaveID)
 	if err != nil {
-		return err
+		return translateUniqueViolation(err)
 	}
 	if err := insertRevisionFiles(ctx, tx, revision); err != nil {
 		return err
@@ -384,12 +491,16 @@ func (r *Repository) CommitRevision(ctx context.Context, expectedCurrentRevision
 		}
 		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: nullableStringPointer(actual)}
 	}
+	if err := r.enqueueRevisionProjection(ctx, tx, revision.ID); err != nil {
+		return err
+	}
+	if err := r.enqueueOmnisaveProjection(ctx, tx, revision.OmnisaveID); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	r.noteStoreLag("revision "+revision.ID, r.recordRevision(ctx, revision.ID))
-	r.noteStoreLag("current revision of save "+revision.OmnisaveID, r.recordOmnisave(ctx, revision.OmnisaveID))
-	return nil
+	return r.projectStore(ctx)
 }
 
 func (r *Repository) GetRevision(ctx context.Context, saveID, revisionID string) (*omnisave.Revision, error) {
@@ -459,10 +570,18 @@ func (r *Repository) ListRevisions(ctx context.Context, saveID string) ([]omnisa
 func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revisionID, displayName string) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
+	if err := r.requireStoreReady(); err != nil {
+		return err
+	}
 	if _, err := r.GetRevision(ctx, saveID, revisionID); err != nil {
 		return err
 	}
-	result, err := r.db.ExecContext(ctx, `UPDATE revisions SET display_name = ? WHERE id = ?`,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE revisions SET display_name = ? WHERE id = ?`,
 		displayName, revisionID)
 	if err != nil {
 		return err
@@ -474,14 +593,23 @@ func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revi
 	if count == 0 {
 		return storage.ErrNotFound
 	}
-	memberSaveIDs, err := r.memberOmnisaveIDs(ctx, revisionID)
+	// Revision labels are denormalized into lineage records. Snapshot every
+	// live lineage in this transaction: it is deliberately broader than a
+	// process-local membership preflight, and therefore stays correct when a
+	// second repository creates a fork concurrently.
+	saveIDs, err := queryIDs(ctx, tx, `SELECT id FROM omnisaves`)
 	if err != nil {
 		return err
 	}
-	for _, memberSaveID := range memberSaveIDs {
-		r.noteStoreLag("revision name "+revisionID, r.recordOmnisave(ctx, memberSaveID))
+	for _, id := range saveIDs {
+		if err := r.enqueueOmnisaveProjection(ctx, tx, id); err != nil {
+			return err
+		}
 	}
-	return nil
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return r.projectStore(ctx)
 }
 
 // DeleteRevision removes one revision reachable through the named save. Only
@@ -493,6 +621,9 @@ func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revi
 func (r *Repository) DeleteRevision(ctx context.Context, saveID, revisionID string) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
+	if err := r.requireStoreReady(); err != nil {
+		return err
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -509,6 +640,11 @@ func (r *Repository) DeleteRevision(ctx context.Context, saveID, revisionID stri
 	}
 	if !saveExists {
 		return storage.ErrNotFound
+	}
+	// Idempotent only through a live save: the marker check sits behind the
+	// existence check so a deleted save's URLs answer not-found, not success.
+	if r.store.HasDeletion(store.DeletionRevision, revisionID) {
+		return nil
 	}
 	member, err := revisionIsMember(ctx, tx, saveID, revisionID)
 	if err != nil {
@@ -551,45 +687,26 @@ func (r *Repository) DeleteRevision(ctx context.Context, saveID, revisionID stri
 		return err
 	}
 
-	// Recorded in the store before the database commits, the same ordering as
-	// a lineage deletion (ADR-012): a deletion a crash can undo is not a
-	// deletion. The tombstone rests on the owner's record, which the checks
-	// above guarantee survives — a deletable node is always owned by a live
-	// save, because a dead owner's leftovers are reachable only as someone's
-	// ancestor, current, or fork origin.
-	if err := r.tombstoneRevision(ownerID, revisionID); err != nil {
+	deletedAt := time.Now().UTC()
+	if err := enqueueDeletion(ctx, tx, store.Deletion{
+		TargetKind: store.DeletionRevision,
+		TargetID:   revisionID,
+		DeletedAt:  deletedAt,
+	}); err != nil {
+		return err
+	}
+	if err := r.enqueueOmnisaveProjection(ctx, tx, ownerID); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		// The deletion did not happen, so its tombstone must not stand: the
-		// surviving row rebuilds the record without it now rather than at
-		// the next open, which stays the backstop.
-		r.noteStoreLag("save "+ownerID, r.recordOmnisave(ctx, ownerID))
 		return err
 	}
-
+	if err := r.projectStore(ctx); err != nil {
+		return err
+	}
 	r.noteStoreLag("deletion of revision "+revisionID, r.dropRevisions([]string{revisionID}))
-	// Rewriting the owner's record drops the deleted revision's label while
-	// buildOmnisave carries the tombstone forward.
-	r.noteStoreLag("save "+ownerID, r.recordOmnisave(ctx, ownerID))
 	r.reclaimArtifacts(ctx, hashes)
 	return nil
-}
-
-func (r *Repository) memberOmnisaveIDs(ctx context.Context, revisionID string) ([]string, error) {
-	saves, err := r.ListOmnisaves(ctx)
-	if err != nil {
-		return nil, err
-	}
-	var ids []string
-	for _, save := range saves {
-		if _, err := r.GetRevision(ctx, save.ID, revisionID); err == nil {
-			ids = append(ids, save.ID)
-		} else if !errors.Is(err, storage.ErrNotFound) {
-			return nil, err
-		}
-	}
-	return ids, nil
 }
 
 func unreachableRevisionIDs(
@@ -665,7 +782,11 @@ func (r *Repository) StatArtifact(_ context.Context, hash string) (int64, error)
 }
 
 func (r *Repository) listRevisionFiles(ctx context.Context, revisionID string) ([]omnisave.RevisionFile, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT path, artifact_format, artifact_sha256, artifact_size
+	return listRevisionFilesFrom(ctx, r.db, revisionID)
+}
+
+func listRevisionFilesFrom(ctx context.Context, queryer storeQueryer, revisionID string) ([]omnisave.RevisionFile, error) {
+	rows, err := queryer.QueryContext(ctx, `SELECT path, artifact_format, artifact_sha256, artifact_size
 		FROM revision_files WHERE revision_id = ? ORDER BY path`, revisionID)
 	if err != nil {
 		return nil, err
@@ -816,7 +937,8 @@ func translateUniqueViolation(err error) error {
 	var driverError *sqlitedriver.Error
 	if errors.As(err, &driverError) {
 		switch driverError.Code() {
-		case sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY, sqlite3.SQLITE_CONSTRAINT_UNIQUE:
+		case sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY, sqlite3.SQLITE_CONSTRAINT_UNIQUE,
+			sqlite3.SQLITE_CONSTRAINT_TRIGGER:
 			return storage.ErrConflict
 		}
 	}

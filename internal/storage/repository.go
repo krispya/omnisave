@@ -15,6 +15,16 @@ import (
 var ErrNotFound = errors.New("storage: not found")
 var ErrConflict = errors.New("storage: conflict")
 var ErrArtifactMismatch = errors.New("storage: artifact mismatch")
+var ErrArtifactUnavailable = errors.New("storage: artifact unavailable")
+
+// ArtifactsUnavailable reports content that could not be proven available in
+// the same transaction that attempted to reference it.
+type ArtifactsUnavailable struct {
+	SHA256 []string
+}
+
+func (e *ArtifactsUnavailable) Error() string { return ErrArtifactUnavailable.Error() }
+func (e *ArtifactsUnavailable) Unwrap() error { return ErrArtifactUnavailable }
 
 // CurrentRevisionConflict carries the actual current revision observed atomically.
 type CurrentRevisionConflict struct {

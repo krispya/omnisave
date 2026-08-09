@@ -13,6 +13,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
 	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
+	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
 // This is the goal the store exists for, closed end to end: the database is
@@ -191,17 +192,16 @@ func TestAServerThatLostItsDatabaseRebuildsEverything(t *testing.T) {
 	if _, err := saves.Get(ctx, discarded.ID); err == nil {
 		t.Fatal("a deleted save was resurrected by the rebuild")
 	}
-	record, err := repository.Store().GetOmnisave(discarded.ID)
-	if err != nil || record.DeletedAt == nil {
-		t.Fatalf("expected the tombstone to survive the rebuild, got %+v (%v)", record, err)
+	marker, err := repository.Store().GetDeletion(store.DeletionOmnisave, discarded.ID)
+	if err != nil || marker.TargetID != discarded.ID {
+		t.Fatalf("expected the deletion marker to survive the rebuild, got %+v (%v)", marker, err)
 	}
 }
 
 // A database restored from an older backup is missing the revisions committed
 // after the backup was taken, and the store still holds their manifests. They
-// are imported — but the Current Revision stays where the database says: the
-// database is the live authority on a save it already knows, and the imported
-// history remains reachable to fast-forward onto.
+// are imported, and the acknowledged portable record advances the stale
+// database's Current Revision to the newer commit.
 func TestRebuildImportsRevisionsADatabaseBackupMissed(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
@@ -278,8 +278,8 @@ func TestRebuildImportsRevisionsADatabaseBackupMissed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.CurrentRevisionID == nil || *restored.CurrentRevisionID != first.ID {
-		t.Fatalf("expected current where the database remembers it, got %v", restored.CurrentRevisionID)
+	if restored.CurrentRevisionID == nil || *restored.CurrentRevisionID != second.ID {
+		t.Fatalf("expected current restored from the portable record, got %v", restored.CurrentRevisionID)
 	}
 }
 
@@ -352,12 +352,10 @@ func TestALineageWhoseRecordWasLostIsRebuiltFromItsManifests(t *testing.T) {
 	}
 }
 
-// A store that cannot accept a manifest must not fail the commit it trails:
-// the database has already durably accepted it, and telling the client
-// otherwise would make it retry a commit it holds and be told its own revision
-// is a conflict. The store lags, says so in the log, and heals when it is next
-// writable at open.
-func TestACommitOutlivesAStoreThatCannotRecordIt(t *testing.T) {
+// A request is not acknowledged while its portable projection is unavailable.
+// The database commit may already have happened, so its self-contained outbox
+// payload survives and is replayed before the repository opens again.
+func TestACommitIsNotAcknowledgedUntilItsOutboxProjectionIsDurable(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
 	databasePath := filepath.Join(directory, "omnisave.db")
@@ -384,19 +382,20 @@ func TestACommitOutlivesAStoreThatCannotRecordIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	revision, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+	_, err = saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
 		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
 	})
-	if err != nil {
-		t.Fatalf("expected the commit to succeed despite the store: %v", err)
+	if err == nil {
+		t.Fatal("expected the request to remain unacknowledged while the store is unavailable")
 	}
 	after, err := saves.Get(ctx, save.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.CurrentRevisionID == nil || *after.CurrentRevisionID != revision.ID {
-		t.Fatalf("expected the committed revision to be current, got %v", after.CurrentRevisionID)
+	if after.CurrentRevisionID == nil {
+		t.Fatal("expected the committed database state to remain discoverable")
 	}
+	revisionID := *after.CurrentRevisionID
 	if err := repository.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +410,7 @@ func TestACommitOutlivesAStoreThatCannotRecordIt(t *testing.T) {
 	}
 	defer repository.Close()
 
-	manifest, err := repository.Store().GetRevision(revision.ID)
+	manifest, err := repository.Store().GetRevision(revisionID)
 	if err != nil {
 		t.Fatalf("expected the manifest recorded once the store healed: %v", err)
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/storage"
 	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
 	"github.com/krisbaumgartner/omnisave/internal/storage/storagetest"
+	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
 func TestRecordsSurviveRepositoryRestart(t *testing.T) {
@@ -517,8 +518,11 @@ func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 	if _, err := saves.Get(ctx, survivor.ID); err != nil {
 		t.Fatalf("the other game's save should remain: %v", err)
 	}
-	if err := repository.DeleteGame(ctx, game.ID); !errors.Is(err, storage.ErrNotFound) {
-		t.Fatalf("deleting a missing game should report not found, got %v", err)
+	if err := repository.DeleteGame(ctx, game.ID); err != nil {
+		t.Fatalf("repeating a committed game deletion should be idempotent, got %v", err)
+	}
+	if err := repository.DeleteGame(ctx, "never-existed"); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("deleting a game that never existed should report not found, got %v", err)
 	}
 }
 
@@ -957,12 +961,15 @@ func TestDeleteRevisionPrunesAnUnneededTip(t *testing.T) {
 	if repository.Store().HasRevision(second.ID) {
 		t.Fatal("the deleted revision's manifest should be removed from the store")
 	}
-	record, err := repository.Store().GetOmnisave(save.ID)
-	if err != nil {
-		t.Fatal(err)
+	marker, err := repository.Store().GetDeletion(store.DeletionRevision, second.ID)
+	if err != nil || marker.TargetID != second.ID {
+		t.Fatalf("expected an immutable deletion marker, got %+v (%v)", marker, err)
 	}
-	if len(record.DeletedRevisions) != 1 || record.DeletedRevisions[0] != second.ID {
-		t.Fatalf("expected the record to tombstone the deleted revision, got %v", record.DeletedRevisions)
+	if err := saves.DeleteRevision(ctx, save.ID, second.ID); err != nil {
+		t.Fatalf("repeating a committed revision deletion should be idempotent, got %v", err)
+	}
+	if err := saves.DeleteRevision(ctx, "does-not-exist", second.ID); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("a deleted revision under a missing save should stay not found, got %v", err)
 	}
 }
 

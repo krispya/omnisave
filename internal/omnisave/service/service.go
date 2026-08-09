@@ -251,6 +251,10 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 				ActualCurrentRevisionID:   cloneString(conflict.ActualCurrentRevisionID),
 			}
 		}
+		var unavailable *storage.ArtifactsUnavailable
+		if errors.As(err, &unavailable) {
+			return nil, &omnisave.MissingArtifacts{SHA256: unavailable.SHA256}
+		}
 		return nil, translateError(err)
 	}
 	return &revision, nil

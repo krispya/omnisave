@@ -9,75 +9,42 @@ import (
 // This file reclaims at open what deletion marked and a crash left behind.
 //
 // Runtime deletion works in two steps: the transaction removes the rows and
-// records the tombstones, and reclamation removes the manifests and objects
-// afterwards. Everything after the commit can be interrupted, and the repair
-// passes never delete — rebuild only adds to the database, reconcile only
-// adds to the store — so the leftovers would otherwise accumulate forever: a
-// manifest behind a tombstone, an object nothing references, an index row for
-// either. The sweep collects them on open, after both repair passes, while
-// nothing else is running. That timing is what makes it safe to delete
-// blindly: with rebuild finished, the database names every live revision and
-// every file those revisions hold, so what the sweep removes is provably
-// dead, and no request can be creating a reference while it decides.
+// records immutable markers, and reclamation removes the manifests and objects
+// afterwards. Everything after the commit can be interrupted. Rebuild deletes
+// only rows named by positive markers and otherwise adds; reconcile only adds
+// to the store. Physical leftovers would therefore accumulate forever. The
+// sweep collects them on open after both repair passes. At that point the
+// database names every live revision and file, and the complete inventory
+// proves no unreadable portable record was mistaken for absence.
 //
-// The sweep stays conservative where it cannot judge. An unreadable lineage
-// record may name tombstones it cannot report, and an unreadable manifest may
-// be history — both are skipped, and skipping only ever keeps too much.
+// The sweep cannot be called without the complete inventory produced by
+// recovery. Damage therefore disables the whole pass instead of turning an
+// unreadable record into evidence that its content is garbage.
 
-// sweep removes tombstone-condemned manifests and unreferenced objects. Its
+// sweep removes marker-condemned manifests and unreferenced objects. Its
 // error is for the caller to log: a failed sweep leaves leftovers for the
 // next one, never an unservable store.
-func (r *Repository) sweep(ctx context.Context) error {
-	// The tombstones say which manifests are leftovers rather than history.
-	tombstonedSaves := make(map[string]bool)
-	deletedRevisions := make(map[string]bool)
-	if err := r.store.EachOmnisaveID(func(id string) error {
-		record, err := r.store.GetOmnisave(id)
-		if err != nil {
-			return nil
-		}
-		if record.DeletedAt != nil {
-			tombstonedSaves[record.ID] = true
-		}
-		for _, revisionID := range record.DeletedRevisions {
-			deletedRevisions[revisionID] = true
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
+func (r *Repository) sweep(ctx context.Context, proof completeInventory) error {
 	knownRevisions, err := tableIDs(ctx, r.db, "revisions")
 	if err != nil {
 		return err
 	}
 	removedManifests := 0
-	if err := r.store.EachRevisionID(func(id string) error {
-		// A manifest the database holds is live history, whatever a stale
-		// tombstone says; the record rewrite that clears the tombstone may
-		// simply not have happened yet.
+	for id, manifest := range proof.revisions {
 		if knownRevisions[id] {
-			return nil
+			continue
 		}
-		condemned := deletedRevisions[id]
+		_, revisionDeleted := proof.deletedRevisions[id]
+		_, saveDeleted := proof.deletedSaves[manifest.Omnisave.ID]
+		condemned := revisionDeleted || saveDeleted
 		if !condemned {
-			manifest, err := r.store.GetRevision(id)
-			if err != nil {
-				return nil
-			}
-			condemned = tombstonedSaves[manifest.Omnisave.ID]
-		}
-		if !condemned {
-			return nil
+			continue
 		}
 		if err := r.store.RemoveRevision(id); err != nil {
 			log.Printf("save store: could not sweep manifest %s: %v", id, err)
-			return nil
+			continue
 		}
 		removedManifests++
-		return nil
-	}); err != nil {
-		return err
 	}
 
 	referenced, err := referencedArtifacts(ctx, r.db)
@@ -89,8 +56,8 @@ func (r *Repository) sweep(ctx context.Context) error {
 		if referenced[hash] {
 			return nil
 		}
-		if err := r.store.RemoveObject(hash); err != nil {
-			log.Printf("save store: could not sweep object %s: %v", hash, err)
+		r.reclaimArtifacts(ctx, []string{hash})
+		if r.store.HasObject(hash) {
 			return nil
 		}
 		removedObjects++
@@ -98,15 +65,6 @@ func (r *Repository) sweep(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	// Index rows for content that no longer rests here would answer a HEAD
-	// with a size the store cannot honor, so they leave with their objects.
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM artifacts WHERE sha256 NOT IN (
-		SELECT artifact_sha256 FROM revision_files
-		UNION SELECT sha256 FROM game_media
-	)`); err != nil {
-		return err
-	}
-
 	if removedManifests+removedObjects > 0 {
 		log.Printf("save store: swept %d leftover manifest(s) and %d unreferenced object(s)",
 			removedManifests, removedObjects)

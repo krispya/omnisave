@@ -22,6 +22,11 @@ const (
 	KindRevision = "revision"
 	KindOmnisave = "omnisave"
 	KindGame     = "game"
+	KindDeletion = "deletion"
+
+	DeletionOmnisave = "omnisave"
+	DeletionRevision = "revision"
+	DeletionGame     = "game"
 )
 
 // Revision is a manifest: one immutable snapshot, naming the content of every
@@ -70,9 +75,8 @@ type RevisionFile struct {
 }
 
 // Omnisave records a lineage's mutable facts — the ones no immutable revision
-// can carry. It is written when a save is created, renamed, restored, or
-// deleted, and after every commit, because the Current Revision pointer it
-// carries moves with each one.
+// can carry. It is written when a save is created, renamed, restored, and after
+// every commit because the Current Revision pointer moves with each one.
 type Omnisave struct {
 	Kind        string `json:"kind"`
 	Version     int    `json:"version"`
@@ -86,16 +90,9 @@ type Omnisave struct {
 	RevisionNames map[string]string    `json:"revision_names,omitempty"`
 	ForkedFrom    *omnisave.ForkOrigin `json:"forked_from,omitempty"`
 	CreatedAt     time.Time            `json:"created_at"`
-	// DeletedAt tombstones a lineage instead of erasing its record. Without
-	// this, restoring a store would resurrect every save its owner had
-	// deliberately thrown away.
-	DeletedAt *time.Time `json:"deleted_at,omitempty"`
-	// DeletedRevisions tombstones single revisions deleted out of a live
-	// lineage, for the same reason DeletedAt exists: a manifest that survives
-	// its deletion — a crash before the removal, or a store restored from a
-	// backup — must not be imported back behind the owner's decision. Entries
-	// stay forever; the list lives only here, so every rewrite of this record
-	// carries it forward.
+	// DeletedAt and DeletedRevisions are version-3 compatibility fields. Open
+	// migrates them to immutable deletion markers before recovery.
+	DeletedAt        *time.Time        `json:"deleted_at,omitempty"`
 	DeletedRevisions []string          `json:"deleted_revisions,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
 }
@@ -114,6 +111,17 @@ type Game struct {
 	Publisher       string                    `json:"publisher,omitempty"`
 	Identifiers     []catalog.GameIdentifier  `json:"identifiers,omitempty"`
 	Fingerprints    []catalog.GameFingerprint `json:"fingerprints,omitempty"`
+}
+
+// Deletion is an immutable committed fact. Its presence, rather than absence
+// from SQLite or the store, is the proof recovery and reclamation require
+// before forgetting a save or revision.
+type Deletion struct {
+	Kind       string    `json:"kind"`
+	Version    int       `json:"version"`
+	TargetKind string    `json:"target_kind"`
+	TargetID   string    `json:"target_id"`
+	DeletedAt  time.Time `json:"deleted_at"`
 }
 
 // PutRevision writes a manifest. Manifests are immutable: writing one that
@@ -181,6 +189,67 @@ func (s *Store) GetGame(id string) (Game, error) {
 	return record, err
 }
 
+// PutDeletion records an acknowledged deletion once. Identifiers are never
+// reused, so an existing immutable marker is already the same committed fact.
+func (s *Store) PutDeletion(marker Deletion) error {
+	if marker.TargetID == "" || marker.DeletedAt.IsZero() || !validDeletionKind(marker.TargetKind) {
+		return errors.New("store: deletion needs a supported target and timestamp")
+	}
+	marker.Kind, marker.Version = KindDeletion, Version
+	path := s.deletionPath(marker.TargetKind, marker.TargetID)
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return s.writeRecord(path, marker)
+}
+
+// GetDeletion reads one committed deletion marker.
+func (s *Store) GetDeletion(targetKind, id string) (Deletion, error) {
+	if !validDeletionKind(targetKind) {
+		return Deletion{}, ErrNotFound
+	}
+	var marker Deletion
+	err := s.readRecord(s.deletionPath(targetKind, id), KindDeletion, &marker)
+	return marker, err
+}
+
+// HasDeletion reports whether a committed marker rests in the store.
+func (s *Store) HasDeletion(targetKind, id string) bool {
+	if !validDeletionKind(targetKind) {
+		return false
+	}
+	_, err := os.Stat(s.deletionPath(targetKind, id))
+	return err == nil
+}
+
+// EachDeletion calls visit for every marker of one supported target kind.
+func (s *Store) EachDeletion(targetKind string, visit func(Deletion) error) error {
+	if !validDeletionKind(targetKind) {
+		return errors.New("store: unsupported deletion target")
+	}
+	return s.eachRecord(filepath.Join(deletionDir, targetKind), func(path string) error {
+		var marker Deletion
+		if err := s.readRecord(path, KindDeletion, &marker); err != nil {
+			return err
+		}
+		return visit(marker)
+	})
+}
+
+// EachDeletionID lists marker identifiers without reading their records.
+func (s *Store) EachDeletionID(targetKind string, visit func(id string) error) error {
+	if !validDeletionKind(targetKind) {
+		return errors.New("store: unsupported deletion target")
+	}
+	return s.eachRecordID(filepath.Join(deletionDir, targetKind), visit)
+}
+
+func validDeletionKind(targetKind string) bool {
+	return targetKind == DeletionOmnisave || targetKind == DeletionRevision || targetKind == DeletionGame
+}
+
 // EachRevision calls visit with every manifest in the store, in no particular
 // order. Recovery walks this: the manifests are the history.
 func (s *Store) EachRevision(visit func(Revision) error) error {
@@ -193,7 +262,7 @@ func (s *Store) EachRevision(visit func(Revision) error) error {
 	})
 }
 
-// EachOmnisave calls visit with every lineage record, tombstoned ones included.
+// EachOmnisave calls visit with every lineage record.
 func (s *Store) EachOmnisave(visit func(Omnisave) error) error {
 	return s.eachRecord(omnisaveDir, func(path string) error {
 		var record Omnisave
@@ -235,9 +304,8 @@ func (s *Store) EachGameID(visit func(id string) error) error {
 	return s.eachRecordID(gameDir, visit)
 }
 
-// RemoveRevision deletes a manifest. Only deletion reaches this — of a whole
-// lineage, or of one revision behind a deleted_revisions tombstone; revisions
-// are otherwise immutable and permanent.
+// RemoveRevision deletes a manifest only after an immutable deletion marker is
+// durable; revisions are otherwise immutable and permanent.
 func (s *Store) RemoveRevision(id string) error {
 	if err := os.Remove(s.revisionPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -245,9 +313,8 @@ func (s *Store) RemoveRevision(id string) error {
 	return nil
 }
 
-// RemoveGame deletes a catalog identity record. The lineages that referenced it
-// keep their tombstones, which carry the game identifier, so a deleted game
-// still explains the saves that were deleted with it.
+// RemoveGame deletes a catalog identity record after its immutable game marker
+// and the markers for its lineages are durable.
 func (s *Store) RemoveGame(id string) error {
 	if err := os.Remove(s.gamePath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err

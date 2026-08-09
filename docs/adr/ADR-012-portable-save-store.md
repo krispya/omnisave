@@ -34,6 +34,7 @@ objects/ab/<sha256>.gz    file content, sharded by the hash's first byte
 revisions/ab/<id>.json    one manifest per snapshot
 omnisaves/ab/<id>.json    lineage records
 games/ab/<id>.json        catalog identity
+deletions/<kind>/ab/<id>.json committed save, revision, and game deletions
 ```
 
 **Manifests carry identity rather than referencing it.** Each names the game and
@@ -60,49 +61,39 @@ therefore costs credentials and pairings, never a save: a server pointed at a
 surviving store lists everything in it again, under the same revision
 identifiers a device's sync baseline already names.
 
-**Nothing is rewritten in place.** Objects and manifests are immutable. The
-Omnisave record that carries a save's name, Current Revision, fork origin,
-revision labels, and tombstone is replaced atomically.
+**Nothing is rewritten in place.** Objects, manifests, and deletion markers are
+immutable. The Omnisave record that carries a save's name, Current Revision,
+fork origin, and revision labels is replaced atomically.
 
-**Deletion is recorded, not merely performed.** Deleting a save tombstones its
-record. A revision manifest is dropped only when no surviving Omnisave retains
-that node through shared fork ancestry, so deleting a fork source cannot erase
-history still active through another save.
+**Deletion is recorded, not merely performed.** Deleting a save writes an
+immutable deletion marker. A revision manifest is dropped only when no
+surviving Omnisave retains that node through shared fork ancestry, so deleting
+a fork source cannot erase history still active through another save.
 
-Deleting a single revision out of a live lineage is recorded the same way: the
-owner's record lists it under `deleted_revisions`, rebuild refuses to import a
-manifest named there, and the entry stays forever, so a store restored from a
-backup cannot resurrect the deleted snapshot. Only a node the graph no longer
-needs may go — nothing builds on it, no save holds it as current, no fork
-begins there — because a child's manifest names its parent, and manifests are
-never rewritten. The list lives only in the record; a rewrite carries it
-forward, dropping any entry whose revision the database still holds, which is
-how a tombstone written for a deletion that never committed self-corrects.
+Deleting a single revision out of a live lineage is recorded the same way:
+rebuild refuses to import a manifest named by a committed deletion marker, and
+the marker stays forever, so a store restored from a backup cannot resurrect
+the deleted snapshot. Only a node the graph no longer needs may go — nothing
+builds on it, no save holds it as current, no fork begins there — because a
+child's manifest names its parent, and manifests are never rewritten.
 
-**A commit is recorded after the database accepts it; a deletion before.**
-This holds for deleting a save and for deleting a single revision alike. A
-tombstone whose deletion then fails to commit is corrected immediately from
-the surviving rows, with the next open as the backstop. The
-expected-current check is what makes a commit atomic, so for commits the database
-decides: a manifest written first could describe a commit that check rejected,
-and an invented revision is worse than a missing one. Deletion inverts because
-the failure inverts. A deletion recorded late leaves a save the database has
-forgotten and the store still offers, and the store is what a restore reads — a
-deletion a crash can undo is not a deletion. Both orderings are safe for the
-same reason: whatever the database still holds, reconciling on open writes to
-the store, so a manifest missed by a crash is rebuilt and a tombstone left by a
-failed deletion is cleared.
+**SQLite commits before the store records the result.** The same transaction
+that accepts a change enqueues its portable-store projection. The ordered
+outbox then writes manifests, mutable records, or immutable deletion markers;
+a durable-save request is not successful until that work rests in the store.
+A database failure therefore creates no deletion marker, while a store failure
+leaves replayable work rather than an untracked gap. This is the proof protocol
+defined by [ADR-014](ADR-014-durable-proof-before-forgetting.md).
 
-**Content is reclaimed only against live references.** A deletion decides
-inside its transaction what leaves the history, but never what leaves the
-disk. Objects are removed afterwards, under the server's one mutation lock,
-by re-checking at removal time that nothing references them — a commit or a
-media save landing after the transaction keeps its content, because the
-reference check and the removal cannot interleave with the write that would
-invalidate them. What a crash strands — an object nothing references, a
-manifest behind a tombstone, an index row for either — is swept at the next
-open, after both repair passes, when the rebuilt database makes deadness
-provable.
+**Content is reclaimed only with proof.** Relational references can name only
+available artifacts and prevent their registry rows from being removed.
+Filesystem removal and the availability change share a short SQLite write
+transaction and a reversible quarantine rename, so a concurrent reference
+either lands first and prevents the removal or lands later and observes the
+artifact as unavailable. Startup restores an interrupted quarantine; what a
+crash strands is swept only after recovery read every reachability record
+successfully; damage disables sweeping rather than turning unknown content into
+garbage ([ADR-014](ADR-014-durable-proof-before-forgetting.md)).
 
 Revision identifiers stay opaque rather than becoming content hashes. Hashing
 manifests would make the history a verifiable Merkle DAG, but it changes the API
@@ -122,31 +113,36 @@ Easier:
 
 More difficult:
 
-- **Repair is load-bearing, and runs both ways.** Two write paths per change
-  means the database and the store can disagree in the window between them.
-  Opening repairs both directions: rebuild imports what the store holds and the
-  database lacks, then reconcile writes what the database holds and the store
-  lacks, so whichever of the two survived is enough. Each direction only adds —
-  rebuild never deletes from the database, reconcile never deletes from the
-  store — which is what keeps repair safe to run blind, and why every ordering
-  decision above exists. The sweep that follows them is the one pass that
-  removes, and it may run blind only because they ran first: with the database
-  rebuilt, what nothing references and what a tombstone names is provably
-  dead. All three passes have to be tested as the correctness mechanism they
-  are.
+- **Repair is load-bearing, and runs both ways.** Opening first replays the
+  transactional outbox, then inventories the portable store. Valid deletion
+  markers remove stale rows from an older database; complete portable records
+  restore acknowledged mutable state and missing history; reconcile fills only
+  records absent from a healthy store. The sweep that follows is the one pass
+  that infers garbage, and its API requires the completeness proof produced by
+  that inventory. These passes have to be tested as the correctness mechanism
+  they are.
 - Rebuild trusts identity wherever it finds it. A lineage whose record was lost
   is reconstructed from the identity its manifests carry — with the caveat that
-  a rename after the last commit lived only in the lost record. Tombstones are
-  the one thing it will not cross: a tombstoned lineage is never imported, so a
-  restore does not resurrect what its owner threw away.
-- A failed store write at runtime no longer fails the request it trails — the
-  database has already durably accepted the change, and a client told otherwise
-  would retry a commit it holds. The store lags instead, loudly in the log,
-  until the next open repairs it; a copy of the store taken inside that window
-  lacks what could not be written.
-- An unreadable record is logged and skipped, by rebuild and reconcile alike —
-  the rest of the store still recovers, and refusing to start over one damaged
-  file would turn a blemish into an outage.
+  a rename after the last commit lived only in the lost record. Immutable
+  deletion markers are the boundary it will not cross, so a restore does not
+  resurrect what its owner threw away.
+- A failed store write remains in SQLite's transactional outbox and fails the
+  request until the portable projection is durable. Retrying the outbox is safe
+  because every operation is ordered and idempotent. An open that cannot replay
+  the queue serves reads and defers recovery rather than running rebuild
+  against a store the queue is still ahead of; durable mutations wait for an
+  open that lands the queued work.
+- An unreadable record leaves reads available from the database and disables
+  imports, durable mutations, and reclamation until the inventory is complete.
+  Reconcile still runs — it only adds — so a gap the database can rewrite, such
+  as a lost manifest for a revision it still holds, is repaired and the
+  inventory retaken in the same open; only damage the database cannot rewrite
+  keeps the server read-only. Unknown state is retained rather than rewritten.
+- Portable records are the acknowledged mutable state: a record that disagrees
+  with a row the database already holds overwrites it, and says so in the log.
+  The two agree at rest — the outbox is the only writer — so a disagreement
+  means a legacy store that lagged, or an older store backup restored beside a
+  newer database, and the rollback is deliberate and loud rather than silent.
 - A store is many small files — one manifest per revision on top of one object
   per distinct file — and the inode cost is real where they are metered.
 - Denormalized identity ages: a renamed game leaves older manifests carrying the

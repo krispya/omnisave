@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"slices"
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
@@ -18,26 +17,14 @@ import (
 
 // This file keeps the portable store in step with the database.
 //
-// The database is the live authority — it enforces current-revision checks that make a
-// commit atomic — and the store is the durable record that outlives it. Records
-// are therefore written to the store immediately after the transaction that
-// created them commits, never before: a manifest written first would describe a
-// commit that a current revision conflict then rejected, and an invented revision is a
-// worse failure than a missing one.
-//
-// That ordering leaves one gap, between the commit and the write. Reconcile
-// closes it on the next start by writing whatever the database has and the
-// store lacks, which is the same pass that imports a store-less deployment.
-// The same reasoning sets what a failed store write costs at runtime: the
-// operation it trails has already durably happened, so the failure is logged
-// as a debt for reconcile rather than reported as if the operation had not.
+// SQLite is the online authority and the store is the portable durable record.
+// Every mutation commits a self-contained store projection to SQLite's outbox;
+// only that queue writes manifests, records, and deletion markers. Reconcile
+// remains repair for a legacy or manually incomplete store, not the mechanism
+// that makes current writes safe.
 
-// noteStoreLag logs a store write that failed after the database committed.
-// Failing the request would report an operation that durably happened as one
-// that did not — a client would retry a commit it already holds and be told
-// its own revision is a conflict. The store is behind until the next open
-// reconciles it, and that window is the one thing worth saying out loud: a
-// copy of the store taken during it lacks what could not be written.
+// noteStoreLag logs best-effort physical cleanup after its immutable deletion
+// marker is durable. Failure retains bytes and is retried by a complete sweep.
 func (r *Repository) noteStoreLag(what string, err error) {
 	if err != nil {
 		log.Printf("save store: could not record %s; reconciling on the next open repairs it: %v", what, err)
@@ -55,6 +42,19 @@ func (r *Repository) recordRevision(ctx context.Context, revisionID string) erro
 }
 
 func (r *Repository) buildRevision(ctx context.Context, revisionID string) (store.Revision, error) {
+	return r.buildRevisionFrom(ctx, r.db, revisionID)
+}
+
+type storeQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func (r *Repository) buildRevisionFrom(
+	ctx context.Context,
+	queryer storeQueryer,
+	revisionID string,
+) (store.Revision, error) {
 	var (
 		manifest  store.Revision
 		parent    sql.NullString
@@ -64,7 +64,7 @@ func (r *Repository) buildRevision(ctx context.Context, revisionID string) (stor
 		gameTitle string
 		platform  sql.NullString
 	)
-	err := r.db.QueryRowContext(ctx, `SELECT
+	err := queryer.QueryRowContext(ctx, `SELECT
 			revisions.id, revisions.parent_id, revisions.created_at, revisions.metadata,
 			COALESCE(omnisaves.id, revisions.omnisave_id), COALESCE(omnisaves.display_name, ''), revisions.game_id,
 			COALESCE(games.title, ''), games.platform
@@ -95,11 +95,11 @@ func (r *Repository) buildRevision(ctx context.Context, revisionID string) (stor
 	}
 
 	manifest.Game = store.RevisionGame{ID: gameID, Title: gameTitle, Platform: platform.String}
-	if manifest.Game.Identifiers, err = r.listGameIdentifiers(ctx, gameID); err != nil {
+	if manifest.Game.Identifiers, err = listGameIdentifiersFrom(ctx, queryer, gameID); err != nil {
 		return store.Revision{}, err
 	}
 
-	files, err := r.listRevisionFiles(ctx, revisionID)
+	files, err := listRevisionFilesFrom(ctx, queryer, revisionID)
 	if err != nil {
 		return store.Revision{}, err
 	}
@@ -126,6 +126,14 @@ func (r *Repository) recordOmnisave(ctx context.Context, id string) error {
 }
 
 func (r *Repository) buildOmnisave(ctx context.Context, id string) (store.Omnisave, error) {
+	return r.buildOmnisaveFrom(ctx, r.db, id)
+}
+
+func (r *Repository) buildOmnisaveFrom(
+	ctx context.Context,
+	queryer storeQueryer,
+	id string,
+) (store.Omnisave, error) {
 	var (
 		record     store.Omnisave
 		forkedSave sql.NullString
@@ -133,7 +141,7 @@ func (r *Repository) buildOmnisave(ctx context.Context, id string) (store.Omnisa
 		createdAt  string
 		metadata   string
 	)
-	err := r.db.QueryRowContext(ctx, `SELECT id, game_id, display_name, current_revision_id,
+	err := queryer.QueryRowContext(ctx, `SELECT id, game_id, display_name, current_revision_id,
 			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
 		FROM omnisaves WHERE id = ?`, id).Scan(
 		&record.ID, &record.GameID, &record.DisplayName, &record.CurrentRevisionID,
@@ -159,7 +167,7 @@ func (r *Repository) buildOmnisave(ctx context.Context, id string) (store.Omnisa
 			return store.Omnisave{}, err
 		}
 	}
-	rows, err := r.db.QueryContext(ctx, `WITH RECURSIVE members(id) AS (
+	rows, err := queryer.QueryContext(ctx, `WITH RECURSIVE members(id) AS (
 		SELECT id FROM revisions WHERE omnisave_id = ?
 		UNION SELECT current_revision_id FROM omnisaves WHERE id = ? AND current_revision_id IS NOT NULL
 		UNION SELECT forked_from_revision_id FROM omnisaves WHERE id = ? AND forked_from_revision_id IS NOT NULL
@@ -184,83 +192,80 @@ func (r *Repository) buildOmnisave(ctx context.Context, id string) (store.Omnisa
 	if err := rows.Err(); err != nil {
 		return store.Omnisave{}, err
 	}
-	// The deleted-revisions tombstones live only in the store record — the
-	// database deletes the rows outright — so a rebuild of the record carries
-	// the existing list forward. An entry whose row is back in the database
-	// marks a deletion that never committed, and is dropped rather than
-	// honored; that filter is what lets a tombstone written for a failed
-	// delete self-correct on the next rewrite.
-	existing, err := r.store.GetOmnisave(id)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return store.Omnisave{}, err
-	}
-	for _, revisionID := range existing.DeletedRevisions {
-		var resurrected bool
-		if err := r.db.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM revisions WHERE id = ?)`, revisionID,
-		).Scan(&resurrected); err != nil {
-			return store.Omnisave{}, err
-		}
-		if !resurrected {
-			record.DeletedRevisions = append(record.DeletedRevisions, revisionID)
-		}
-	}
 	return record, nil
 }
 
-// tombstoneRevision records one revision's deletion on its owner's store
-// record. It runs before the deleting transaction commits — the same ordering
-// as tombstoneOmnisave, for the same reason: a deletion a crash can undo is
-// not a deletion. A tombstone written for a delete that then fails is
-// harmless and self-correcting: the row survives, so the next rewrite of the
-// record drops the entry.
-//
-// Unlike a whole-lineage deletion, a missing record fails the delete instead
-// of skipping the tombstone. The record is the only thing standing between
-// the manifest and a rebuild importing it back, so the deletion waits until
-// an open has reconciled the record into place.
-func (r *Repository) tombstoneRevision(ownerID, revisionID string) error {
-	record, err := r.store.GetOmnisave(ownerID)
-	if err != nil {
-		return fmt.Errorf("record deletion of revision %s: %w", revisionID, err)
+// migrateLegacyDeletionMarkers turns version-3 mutable tombstones into the
+// immutable committed facts version 4 uses. It is idempotent so an interrupted
+// upgrade resumes on the next open.
+func (r *Repository) migrateLegacyDeletionMarkers() bool {
+	complete := true
+	note := func(id string, err error) {
+		complete = false
+		log.Printf("save store: could not migrate legacy deletion state for save %s: %v", id, err)
 	}
-	if slices.Contains(record.DeletedRevisions, revisionID) {
+	if err := r.store.EachOmnisaveID(func(id string) error {
+		record, err := r.store.GetOmnisave(id)
+		if err != nil {
+			note(id, err)
+			return nil
+		}
+		changed := false
+		if record.DeletedAt != nil {
+			var exists bool
+			if err := r.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM omnisaves WHERE id = ?)`, id).Scan(&exists); err != nil {
+				note(id, err)
+				return nil
+			}
+			// Version 3 wrote tombstones before commit, so a live row makes
+			// their meaning ambiguous. Absence is not proof: preserve the row.
+			if !exists {
+				if err := r.store.PutDeletion(store.Deletion{
+					TargetKind: store.DeletionOmnisave,
+					TargetID:   record.ID,
+					DeletedAt:  *record.DeletedAt,
+				}); err != nil {
+					note(id, err)
+					return nil
+				}
+			}
+			record.DeletedAt = nil
+			changed = true
+		}
+		for _, revisionID := range record.DeletedRevisions {
+			var exists bool
+			if err := r.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM revisions WHERE id = ?)`, revisionID).Scan(&exists); err != nil {
+				note(id, err)
+				return nil
+			}
+			if !exists {
+				if err := r.store.PutDeletion(store.Deletion{
+					TargetKind: store.DeletionRevision,
+					TargetID:   revisionID,
+					DeletedAt:  time.Now().UTC(),
+				}); err != nil {
+					note(id, err)
+					return nil
+				}
+			}
+			changed = true
+		}
+		if !changed {
+			return nil
+		}
+		record.DeletedRevisions = nil
+		if err := r.store.PutOmnisave(record); err != nil {
+			note(id, err)
+		}
 		return nil
+	}); err != nil {
+		note("namespace", err)
 	}
-	record.DeletedRevisions = append(record.DeletedRevisions, revisionID)
-	return r.store.PutOmnisave(record)
+	return complete
 }
 
-// tombstoneOmnisave marks a lineage deleted. The record stays so that restoring
-// this store does not resurrect a save its owner threw away; a lineage the
-// store never knew about needs no tombstone.
-//
-// This runs before the deleting transaction commits, which is the opposite of
-// how a commit is recorded and for the opposite reason. Recording a commit
-// early would invent a revision that a current revision conflict then refused. Recording a
-// deletion late would leave a save that the database has forgotten and the
-// store still offers, and the store is what a restore reads — a deletion that
-// a crash can undo is not a deletion. A tombstone written for a delete that
-// then fails is harmless and self-correcting: the row survives, so the next
-// reconcile rewrites the record from it with no deletion time.
-func (r *Repository) tombstoneOmnisave(id string, at time.Time) error {
-	record, err := r.store.GetOmnisave(id)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		return nil
-	case err != nil:
-		return err
-	}
-	record.DeletedAt = &at
-	return r.store.PutOmnisave(record)
-}
-
-// dropRevisions removes manifests after the rows behind them are gone. It runs
-// after the commit, because a manifest removed for a delete that then failed
-// would be a snapshot missing from a save that still exists. Failing here
-// leaves manifests behind a tombstone: the tombstone keeps the save itself
-// from resurrecting, the next reconcile does not rewrite what the database no
-// longer holds, and the next open's sweep collects the leftovers.
+// dropRevisions removes manifests after the rows and immutable markers commit.
+// Failing here only retains data; a complete later sweep retries the cleanup.
 func (r *Repository) dropRevisions(revisionIDs []string) error {
 	for _, revisionID := range revisionIDs {
 		if err := r.store.RemoveRevision(revisionID); err != nil {
@@ -295,10 +300,10 @@ func (r *Repository) recordGame(game catalog.Game) error {
 // unreadable row is reported and stepped over — the database is the live
 // authority and can serve every save perfectly well, so refusing to start over
 // one bad record would turn a blemish into an outage.
-func (r *Repository) reconcile(ctx context.Context) error {
+func (r *Repository) reconcile(ctx context.Context) (bool, error) {
 	games, err := r.ListGames(ctx)
 	if err != nil {
-		return fmt.Errorf("reconcile games: %w", err)
+		return false, fmt.Errorf("reconcile games: %w", err)
 	}
 	var failures int
 	note := func(what string, err error) {
@@ -314,7 +319,7 @@ func (r *Repository) reconcile(ctx context.Context) error {
 
 	saves, err := r.ListOmnisaves(ctx)
 	if err != nil {
-		return fmt.Errorf("reconcile saves: %w", err)
+		return false, fmt.Errorf("reconcile saves: %w", err)
 	}
 	for _, save := range saves {
 		if err := r.recordOmnisave(ctx, save.ID); err != nil {
@@ -327,7 +332,7 @@ func (r *Repository) reconcile(ctx context.Context) error {
 	// creator is gone is exactly a shared ancestor a fork still needs.
 	missing, err := r.unrecordedRevisions(ctx)
 	if err != nil {
-		return fmt.Errorf("reconcile revisions: %w", err)
+		return false, fmt.Errorf("reconcile revisions: %w", err)
 	}
 	for _, revisionID := range missing {
 		if err := r.recordRevision(ctx, revisionID); err != nil {
@@ -337,7 +342,7 @@ func (r *Repository) reconcile(ctx context.Context) error {
 	if failures > 0 {
 		log.Printf("save store: %d record(s) could not be written; the database still holds them", failures)
 	}
-	return nil
+	return failures == 0, nil
 }
 
 // unrecordedRevisions names the revisions that have no manifest yet. Asking

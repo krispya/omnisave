@@ -9,8 +9,10 @@
 //	VERSION                  the format marker, so a reader knows what it has
 //	objects/ab/<sha>.gz      file content, gzip, sharded by the hash's first byte
 //	revisions/ab/<id>.json   one manifest per revision, naming its files
-//	omnisaves/ab/<id>.json   lineage records: name, game, fork origin, tombstone
+//	omnisaves/ab/<id>.json   lineage records: name, game, fork origin
 //	games/ab/<id>.json       catalog identity, so a recovered save has a name
+//	deletions/<kind>/ab/<id>.json committed deletion markers
+//	reclaiming/ab/<sha>.gz objects staged for crash-safe removal
 //
 // Manifests and records are uncompressed JSON because a person reading them
 // during a recovery has a text editor and may have nothing else. Object content
@@ -34,11 +36,9 @@ import (
 
 // Version is the store format this package writes. A reader refuses a store
 // numbered higher than this: an older binary cannot know what a newer format
-// left out, and guessing with save data is not acceptable. Version 3 added
-// deleted_revisions to lineage records — a reader that ignored it would
-// resurrect deleted revisions on rebuild, which is exactly the guessing this
-// refusal exists to prevent.
-const Version = 3
+// left out, and guessing with save data is not acceptable. Version 4 replaced
+// mutable tombstones with immutable deletion markers.
+const Version = 4
 
 const (
 	versionFile   = "VERSION"
@@ -46,6 +46,8 @@ const (
 	revisionDir   = "revisions"
 	omnisaveDir   = "omnisaves"
 	gameDir       = "games"
+	deletionDir   = "deletions"
+	reclaimingDir = "reclaiming"
 	versionPrefix = "omnisave-store"
 )
 
@@ -83,12 +85,17 @@ func Open(root string) (*Store, error) {
 func (s *Store) Root() string { return s.root }
 
 func (s *Store) ensureLayout() error {
-	for _, directory := range []string{"", objectDir, revisionDir, omnisaveDir, gameDir} {
+	for _, directory := range []string{"", objectDir, revisionDir, omnisaveDir, gameDir, reclaimingDir,
+		filepath.Join(deletionDir, DeletionOmnisave), filepath.Join(deletionDir, DeletionRevision),
+		filepath.Join(deletionDir, DeletionGame)} {
 		if err := os.MkdirAll(filepath.Join(s.root, directory), 0o755); err != nil {
 			return fmt.Errorf("store: create layout: %w", err)
 		}
 	}
 	if err := s.checkVersion(); err != nil {
+		return err
+	}
+	if err := s.restoreQuarantinedObjects(); err != nil {
 		return err
 	}
 	return s.sweepTemporaries()
@@ -157,6 +164,10 @@ func (s *Store) objectPath(hash string) string {
 	return filepath.Join(s.root, objectDir, hash[:2], hash+".gz")
 }
 
+func (s *Store) quarantinedObjectPath(hash string) string {
+	return filepath.Join(s.root, reclaimingDir, hash[:2], hash+".gz")
+}
+
 func (s *Store) revisionPath(id string) string {
 	return filepath.Join(s.root, revisionDir, shard(id), id+".json")
 }
@@ -167,6 +178,10 @@ func (s *Store) omnisavePath(id string) string {
 
 func (s *Store) gamePath(id string) string {
 	return filepath.Join(s.root, gameDir, shard(id), id+".json")
+}
+
+func (s *Store) deletionPath(targetKind, id string) string {
+	return filepath.Join(s.root, deletionDir, targetKind, shard(id), id+".json")
 }
 
 // shard groups records the way objects are grouped. Record identifiers are

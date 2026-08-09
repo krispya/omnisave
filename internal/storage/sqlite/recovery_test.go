@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"io"
 	"os"
@@ -178,18 +179,112 @@ func TestDeletedSavesStayDeletedInACopyOfTheStore(t *testing.T) {
 		t.Fatal("the kept save was lost")
 	}
 
-	// The tombstone stays, so a recovery can say the save was deleted rather
+	// The immutable marker stays, so recovery can distinguish deletion from
 	// than that it never existed.
 	copied, err := store.Open(elsewhere)
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := copied.GetOmnisave(discarded.ID)
-	if err != nil {
-		t.Fatalf("expected the deleted save's record to remain: %v", err)
+	marker, err := copied.GetDeletion(store.DeletionOmnisave, discarded.ID)
+	if err != nil || marker.TargetID != discarded.ID {
+		t.Fatalf("expected the copy to carry the deletion marker: %+v (%v)", marker, err)
 	}
-	if record.DeletedAt == nil {
-		t.Fatal("expected the record to carry a deletion time")
+}
+
+func TestCommittedDeletionOverridesAnOlderDatabaseBackup(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "omnisave.db")
+	storeDir := filepath.Join(directory, "store")
+	repository, err := sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := omnisaveservice.New(repository)
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Discarded"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := os.ReadFile(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err = sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := omnisaveservice.New(repository).Delete(ctx, save.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(databasePath, backup, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err = sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	if _, err := repository.GetOmnisave(ctx, save.ID); err == nil {
+		t.Fatal("an older database backup overrode the committed deletion marker")
+	}
+}
+
+func TestDeletedGamesStayDeletedWhenOnlyThePortableStoreSurvives(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "omnisave.db")
+	storeDir := filepath.Join(directory, "store")
+	repository, err := sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	game := catalog.Game{ID: "game-to-forget", Title: "Forgotten Game"}
+	if err := repository.SaveGame(ctx, game, nil); err != nil {
+		t.Fatal(err)
+	}
+	saves := omnisaveservice.New(repository)
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: game.ID, DisplayName: "Discarded"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := storeOmnisaveArtifact(t, ctx, saves, "discarded game content")
+	if _, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.DeleteGame(ctx, game.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(databasePath); err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err = sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves = omnisaveservice.New(repository)
+	if _, err := repository.GetGame(ctx, game.ID); err == nil {
+		t.Fatal("the game record was resurrected despite its committed marker")
+	}
+	if _, err := saves.Get(ctx, save.ID); err == nil {
+		t.Fatal("a save deleted with its game was resurrected")
+	}
+	if _, err := repository.Store().GetDeletion(store.DeletionGame, game.ID); err != nil {
+		t.Fatalf("expected the game deletion marker to survive: %v", err)
 	}
 }
 
@@ -259,12 +354,9 @@ func TestDeletedRevisionsStayDeletedWhenTheirManifestSurvives(t *testing.T) {
 	if err != nil || len(history) != 1 || history[0].ID != first.ID {
 		t.Fatalf("the deleted revision should stay deleted: history=%+v err=%v", history, err)
 	}
-	record, err := repository.Store().GetOmnisave(save.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(record.DeletedRevisions) != 1 || record.DeletedRevisions[0] != second.ID {
-		t.Fatalf("the tombstone should survive the reopen, got %v", record.DeletedRevisions)
+	marker, err := repository.Store().GetDeletion(store.DeletionRevision, second.ID)
+	if err != nil || marker.TargetID != second.ID {
+		t.Fatalf("the deletion marker should survive the reopen: %+v (%v)", marker, err)
 	}
 	// The sweep collects what the crash left: the manifest and the content
 	// only it referenced.
@@ -383,6 +475,123 @@ func TestAStaleRevisionTombstoneIsClearedWhenTheDeleteNeverCommitted(t *testing.
 	}
 }
 
+// A store that lost a manifest the database still holds must not trap the
+// server: reconcile rewrites the manifest, the inventory is retaken in the
+// same open, and the server comes up fully mutable — degraded mode is for
+// damage no additive pass can rewrite, not for gaps the database can fill.
+func TestAMissingManifestIsRepairedAndMutationsResume(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "omnisave.db")
+	storeDir := filepath.Join(directory, "store")
+
+	repository, err := sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := omnisaveservice.New(repository)
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Main run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := storeOmnisaveArtifact(t, ctx, saves, "content the database still holds")
+	revision, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The store loses the manifest the record's Current Revision names.
+	var manifestPath string
+	if err := filepath.WalkDir(filepath.Join(storeDir, "revisions"),
+		func(path string, entry os.DirEntry, err error) error {
+			if err == nil && !entry.IsDir() && filepath.Ext(path) == ".json" {
+				manifestPath = path
+			}
+			return err
+		}); err != nil {
+		t.Fatal(err)
+	}
+	if manifestPath == "" {
+		t.Fatal("no manifest was written")
+	}
+	if err := os.Remove(manifestPath); err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err = sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves = omnisaveservice.New(repository)
+
+	if !repository.Store().HasRevision(revision.ID) {
+		t.Fatal("reconcile should rewrite the manifest the database still holds")
+	}
+	displayName := "Renamed after repair"
+	if _, err := saves.Update(ctx, save.ID, omnisave.UpdateOmnisave{DisplayName: &displayName}); err != nil {
+		t.Fatalf("the repaired server should accept mutations, got %v", err)
+	}
+}
+
+// Queued portable-store work that cannot be applied leaves the server
+// readable: recovery is deferred — rebuild must not import records the queue
+// is still ahead of — and every durable mutation waits for an open that lands
+// the queue.
+func TestAnUnreplayableOutboxOpensReadOnly(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "omnisave.db")
+	storeDir := filepath.Join(directory, "store")
+
+	repository, err := sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := omnisaveservice.New(repository)
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Main run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Poison the queue the way a future format or a corrupted row would.
+	db, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO store_outbox(kind, target_id, payload, created_at)
+		VALUES ('unknown-action', 'x', '{}', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err = sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatalf("an unreplayable outbox should defer recovery, not fail the open: %v", err)
+	}
+	defer repository.Close()
+	saves = omnisaveservice.New(repository)
+
+	listed, err := saves.List(ctx)
+	if err != nil || len(listed) != 1 || listed[0].ID != save.ID {
+		t.Fatalf("reads should serve from the database: %v, %v", listed, err)
+	}
+	displayName := "Renamed"
+	if _, err := saves.Update(ctx, save.ID, omnisave.UpdateOmnisave{DisplayName: &displayName}); err == nil {
+		t.Fatal("durable mutations should wait for an open that lands the queued work")
+	}
+}
+
 // A crash between a commit and its manifest, or a store deleted out from under
 // a healthy database, is repaired on the next open.
 func TestOpeningRebuildsWhatTheStoreIsMissing(t *testing.T) {
@@ -458,9 +667,24 @@ func recoverFromStore(t *testing.T, root string) map[string]recoveredSave {
 		t.Fatal(err)
 	}
 
+	deletedSaves := make(map[string]bool)
+	if err := saveStore.EachDeletionID(store.DeletionOmnisave, func(id string) error {
+		deletedSaves[id] = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deletedRevisions := make(map[string]bool)
+	if err := saveStore.EachDeletionID(store.DeletionRevision, func(id string) error {
+		deletedRevisions[id] = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	lineages := make(map[string]store.Omnisave)
 	if err := saveStore.EachOmnisave(func(record store.Omnisave) error {
-		if record.DeletedAt == nil {
+		if !deletedSaves[record.ID] {
 			lineages[record.ID] = record
 		}
 		return nil
@@ -471,6 +695,9 @@ func recoverFromStore(t *testing.T, root string) map[string]recoveredSave {
 	history := make(map[string][]store.Revision)
 	byID := make(map[string]store.Revision)
 	if err := saveStore.EachRevision(func(manifest store.Revision) error {
+		if deletedSaves[manifest.Omnisave.ID] || deletedRevisions[manifest.ID] {
+			return nil
+		}
 		history[manifest.Omnisave.ID] = append(history[manifest.Omnisave.ID], manifest)
 		byID[manifest.ID] = manifest
 		return nil

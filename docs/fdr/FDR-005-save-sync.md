@@ -382,8 +382,9 @@ are immutable ([ADR-012](../adr/ADR-012-portable-save-store.md)). Restricting
 deletion to unneeded tips makes it impossible to remove anything a surviving
 path still passes through, so cleaning up abandoned branches — divergence
 forks jumped away from, mid-session commits — can never orphan history. The
-deletion is tombstoned in the store before it is performed, so a crash or a
-restored backup cannot resurrect it.
+deletion is recorded by a committed immutable marker before it is acknowledged,
+so a crash or a restored backup cannot resurrect it
+([ADR-014](../adr/ADR-014-durable-proof-before-forgetting.md)).
 **Tradeoff:** Pruning a dead branch takes one deletion per revision, tip
 first. A Device that last synced at a deleted revision loses its baseline and
 re-answers with a divergence prompt if its content has moved; nothing is lost
@@ -397,7 +398,9 @@ either way, but the server cannot warn which baselines a deletion strands.
   — the server event stream that could someday wake watch instead of
   polling; [ADR-012](../adr/ADR-012-portable-save-store.md) — where a
   committed revision comes to rest, and why the content a sync-down replaces
-  is recoverable from the store alone.
+  is recoverable from the store alone;
+  [ADR-014](../adr/ADR-014-durable-proof-before-forgetting.md) — the durable
+  proof required before revision content can be forgotten.
 - **FDRs:** [FDR-003](FDR-003-automatic-save-binding.md) — the binding
   pass whose automatic half sync re-runs and whose lineage philosophy
   divergence inherits; [FDR-004](FDR-004-sync-to-device.md) — joining a
