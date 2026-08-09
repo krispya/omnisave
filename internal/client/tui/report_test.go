@@ -169,12 +169,14 @@ func TestTrackReportSpeaksSyncExceptions(t *testing.T) {
 	report.Diverged("Chrono Trigger", "New Game+")
 	report.Stale("Stardew Valley", "Farm run")
 	report.CurrentMoved("Project Zomboid", "Save 2")
+	report.PullDeferred("Slay the Spire 2", "Main")
 
 	rendered := strings.Join(report.render(), "\n")
 	for _, sentence := range []string{
 		"Save diverged from New Game+, run omnisave track to resolve",
 		"Save matches a revision of Farm run that is not current, run omnisave track to resolve",
 		"Save 2 moved on the server; the next sync pass will reconcile",
+		"Main · waiting for game to close",
 	} {
 		if !strings.Contains(rendered, sentence) {
 			t.Fatalf("expected %q in the report, got:\n%s", sentence, rendered)

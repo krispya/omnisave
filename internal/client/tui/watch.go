@@ -196,9 +196,10 @@ func (m watchModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// The pass's events leave the view for the terminal's scrollback,
 		// in order, above the block that stays.
-		commands := make([]tea.Cmd, 0, len(result.Events)+1)
-		for _, event := range result.Events {
-			commands = append(commands, tea.Println(EventLine(event)))
+		lines := eventScrollbackLines(result.Events)
+		commands := make([]tea.Cmd, 0, len(lines)+1)
+		for _, line := range lines {
+			commands = append(commands, tea.Println(line))
 		}
 		// Results land immediately; the spinner finishes its rotation.
 		if remaining := spinnerMinimum - result.At.Sub(m.syncStarted); remaining > 0 {
@@ -216,6 +217,19 @@ func (m watchModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// eventScrollbackLines leaves one blank line between a non-empty event batch
+// and the live watch block that Bubble Tea redraws beneath it.
+func eventScrollbackLines(events []Event) []string {
+	if len(events) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(events)+1)
+	for _, event := range events {
+		lines = append(lines, EventLine(event))
+	}
+	return append(lines, "")
 }
 
 func (m watchModel) View() string {

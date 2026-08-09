@@ -181,7 +181,7 @@ func (r *TrackReport) CurrentMoved(title, omnisaveName string) {
 // memory, so the sync waits for it to close.
 func (r *TrackReport) PullDeferred(title, omnisaveName string) {
 	r.mark(title, mutedStyle.Render("○"))
-	r.event(title, omnisaveName+" moved on the server; syncing down waits for the game to close")
+	r.event(title, omnisaveName+" · waiting for game to close")
 }
 
 // Diverged records a save with new progress on both sides, waiting for an

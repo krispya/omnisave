@@ -60,7 +60,7 @@ path, syncing-down built the read path; sync makes both routine.
   re-checked against the baseline; any change — the game just wrote —
   aborts untouched and the next pass reconsiders.
 - Syncing down also waits for the game: a pull whose game is being played
-  is deferred — "syncing down waits for the game to close" — and watch
+  is deferred — "Save 1 · waiting for game to close" — and watch
   applies it within about a poll interval of the game exiting
   (decision 13).
 - Commits are gated: nothing commits when the bytes did not change,
@@ -322,8 +322,8 @@ no branch names, branch deletion, or merges.
 **Decision:** Before the automatic pull applies, the pass checks whether
 the bound game is being played, using the same adapter-owned detection
 that powers presence — one process sweep serves both. A playing game
-defers the pull: the save reports "syncing down waits for the game to
-close", and watch — whose presence sweeps tighten to the poll interval
+defers the pull: the save reports "Save 1 · waiting for game to close",
+and watch — whose presence sweeps tighten to the poll interval
 while a pull waits — applies it within about a poll interval of the game
 exiting, once the detection stop grace confirms the exit is real. The
 games whose pulls wait are recorded per game at the deferral itself, and
