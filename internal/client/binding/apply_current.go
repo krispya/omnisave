@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
@@ -68,7 +69,14 @@ func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, 
 		return err
 	}
 	temporaryRoots := make(map[string]string)
+	// A failed rollback means the backups in the staging directories are the
+	// only copy of the user's original save; preserving them turns a cleanup
+	// into data loss, so cleanup skips them and the error names where they are.
+	preserveTemporary := false
 	defer func() {
+		if preserveTemporary {
+			return
+		}
 		for _, temporary := range temporaryRoots {
 			_ = os.RemoveAll(temporary)
 		}
@@ -121,19 +129,32 @@ func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, 
 	}
 
 	backups := make([]backupFile, 0, len(layout.currentPath))
+	var applied []string
+	failRollback := func(operation error) error {
+		rollback := rollbackApplied(applied, backups)
+		if rollback != nil {
+			preserveTemporary = true
+			preserved := make([]string, 0, len(temporaryRoots))
+			for _, temporary := range temporaryRoots {
+				preserved = append(preserved, temporary)
+			}
+			sort.Strings(preserved)
+			rollback = fmt.Errorf("%w (original save files kept under %s)", rollback, strings.Join(preserved, ", "))
+		}
+		return joinRollback(operation, rollback)
+	}
 	for original, root := range layout.currentPath {
 		temporary := temporaryRoots[root]
 		backup := filepath.Join(temporary, fmt.Sprintf("backup-%d", len(backups)))
 		if err := os.Rename(original, backup); err != nil {
-			return joinRollback(fmt.Errorf("back up local save: %w", err), restoreBackups(backups))
+			return failRollback(fmt.Errorf("back up local save: %w", err))
 		}
 		backups = append(backups, backupFile{original: original, backup: backup})
 	}
 
-	var applied []string
 	for _, file := range staged {
 		if err := os.MkdirAll(filepath.Dir(file.target), 0o700); err != nil {
-			return joinRollback(fmt.Errorf("prepare local save directory: %w", err), rollbackApplied(applied, backups))
+			return failRollback(fmt.Errorf("prepare local save directory: %w", err))
 		}
 		if file.fresh {
 			// A path new to this device was only checked absent before the
@@ -146,10 +167,10 @@ func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, 
 				if os.IsExist(err) {
 					operation = fmt.Errorf("applying the current revision would overwrite an untracked local file")
 				}
-				return joinRollback(operation, rollbackApplied(applied, backups))
+				return failRollback(operation)
 			}
 		} else if err := os.Rename(file.stage, file.target); err != nil {
-			return joinRollback(fmt.Errorf("replace local save file: %w", err), rollbackApplied(applied, backups))
+			return failRollback(fmt.Errorf("replace local save file: %w", err))
 		}
 		applied = append(applied, file.target)
 	}
@@ -499,10 +520,17 @@ func downloadArtifact(ctx context.Context, source ArtifactSource, artifact omnis
 	}
 	digest := sha256.New()
 	size, copyErr := io.Copy(io.MultiWriter(file, digest), payload)
+	// Staged bytes become the live save by rename or link, which makes the
+	// name durable before the data unless the data is flushed first; without
+	// this a power loss just after an apply leaves a truncated save file.
+	syncErr := file.Sync()
 	closeFileErr := file.Close()
 	closePayloadErr := payload.Close()
 	if copyErr != nil {
 		return fmt.Errorf("download current artifact: %w", copyErr)
+	}
+	if syncErr != nil {
+		return fmt.Errorf("stage current artifact: %w", syncErr)
 	}
 	if closeFileErr != nil {
 		return fmt.Errorf("stage current artifact: %w", closeFileErr)
