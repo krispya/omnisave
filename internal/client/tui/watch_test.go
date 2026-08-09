@@ -69,6 +69,24 @@ func TestWatchViewShowsTheTableTallyAndFooter(t *testing.T) {
 	}
 }
 
+func TestEventScrollbackLeavesSpaceBeforeTheWatchView(t *testing.T) {
+	at := time.Date(2026, 8, 9, 0, 23, 0, 0, time.Local)
+	lines := eventScrollbackLines([]Event{
+		{Glyph: "○", Title: "Slay the Spire 2", Sentence: "waiting for game to close", At: at},
+		{Glyph: "✓", Title: "Slay the Spire 2", Sentence: "synced with Main", At: at},
+	})
+
+	if len(lines) != 3 || lines[2] != "" {
+		t.Fatalf("expected one blank line after the event batch, got %q", lines)
+	}
+	if strings.Contains(lines[0], "\n") || strings.Contains(lines[1], "\n") {
+		t.Fatalf("expected events to stay adjacent, got %q", lines)
+	}
+	if idle := eventScrollbackLines(nil); len(idle) != 0 {
+		t.Fatalf("expected an idle pass not to add a separator, got %q", idle)
+	}
+}
+
 func TestWatchSpinnerFinishesAFullRotationOnFastPasses(t *testing.T) {
 	model := newTestWatchModel(make(chan WatchRequest, 1))
 	started := time.Now()
