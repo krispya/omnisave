@@ -26,6 +26,11 @@ type Client struct {
 	baseURL    string
 	token      string
 	httpClient *http.Client
+	// transferClient carries artifact bodies. API calls ride a client whose
+	// overall timeout keeps a dead server from hanging a pass, but that same
+	// timeout would abort a large save transfer mid-flight, so transfers get
+	// a client bounded at the dial and response-header stages instead.
+	transferClient *http.Client
 }
 
 // ResolveGame maps local identity evidence to a server-owned catalog Game.
@@ -100,10 +105,14 @@ func New(baseURL, token string, httpClient *http.Client) (*Client, error) {
 	if strings.TrimSpace(token) == "" {
 		return nil, fmt.Errorf("Omnisave API token is required")
 	}
+	transferClient := httpClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 15 * time.Second}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.ResponseHeaderTimeout = 30 * time.Second
+		transferClient = &http.Client{Transport: transport}
 	}
-	return &Client{baseURL: baseURL, token: token, httpClient: httpClient}, nil
+	return &Client{baseURL: baseURL, token: token, httpClient: httpClient, transferClient: transferClient}, nil
 }
 
 // RegisterDevice reports this installation's self-minted identity to the server.
@@ -263,7 +272,7 @@ func (c *Client) UploadArtifact(ctx context.Context, artifact omnisave.Artifact,
 	}
 	request.Header.Set("Content-Type", format)
 	activity.Report(ctx, "uploading")
-	response, err := c.httpClient.Do(request)
+	response, err := c.transferClient.Do(request)
 	if err != nil {
 		return fmt.Errorf("contact Omnisave server: %w", err)
 	}
@@ -285,7 +294,7 @@ func (c *Client) OpenArtifact(ctx context.Context, sha256 string) (io.ReadCloser
 	}
 	request.Header.Set("Authorization", "Bearer "+c.token)
 	activity.Report(ctx, "downloading")
-	response, err := c.httpClient.Do(request)
+	response, err := c.transferClient.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("contact Omnisave server: %w", err)
 	}

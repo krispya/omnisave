@@ -160,13 +160,31 @@ func (s *Store) Save(state State) error {
 		temporary.Close()
 		return fmt.Errorf("write tracking state: %w", err)
 	}
+	// The state carries sync baselines already committed on the server; a
+	// power loss that truncates it would make every binding look diverged,
+	// so the bytes are flushed before the rename makes them the state.
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return fmt.Errorf("flush tracking state: %w", err)
+	}
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close tracking state: %w", err)
 	}
 	if err := os.Rename(temporaryPath, s.path); err != nil {
 		return fmt.Errorf("replace tracking state: %w", err)
 	}
+	syncDirectory(directory)
 	return nil
+}
+
+// syncDirectory makes a rename in a directory durable. Best-effort: directory
+// fsync is not supported everywhere (notably Windows), and the rename is
+// atomic with or without it.
+func syncDirectory(path string) {
+	if directory, err := os.Open(path); err == nil {
+		_ = directory.Sync()
+		_ = directory.Close()
+	}
 }
 
 // NewState creates an initialized empty tracking state.
