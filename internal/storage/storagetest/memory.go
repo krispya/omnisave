@@ -164,6 +164,13 @@ func (r *MemoryRepository) deleteOmnisave(id string) error {
 			r.revisions[creator] = kept
 		}
 	}
+	r.pruneUnusedBlobs()
+	return nil
+}
+
+// pruneUnusedBlobs drops content no surviving revision or media references,
+// assuming the lock is held.
+func (r *MemoryRepository) pruneUnusedBlobs() {
 	usedArtifacts := make(map[string]bool)
 	for _, revision := range r.allRevisions() {
 		for _, file := range revision.Files {
@@ -178,7 +185,6 @@ func (r *MemoryRepository) deleteOmnisave(id string) error {
 			delete(r.blobs, hash)
 		}
 	}
-	return nil
 }
 
 func (r *MemoryRepository) ForkOmnisave(_ context.Context, save omnisave.Omnisave) error {
@@ -288,6 +294,46 @@ func (r *MemoryRepository) UpdateRevisionDisplayName(_ context.Context, saveID, 
 		}
 	}
 	return storage.ErrNotFound
+}
+
+// DeleteRevision mirrors the SQL repository: only a node the graph no longer
+// needs may go, and the refusal names the first reason that still holds.
+func (r *MemoryRepository) DeleteRevision(_ context.Context, saveID, revisionID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.saves[saveID]; !ok {
+		return storage.ErrNotFound
+	}
+	if _, err := r.findRevision(saveID, revisionID); err != nil {
+		return err
+	}
+	for _, save := range r.saves {
+		if save.CurrentRevisionID != nil && *save.CurrentRevisionID == revisionID {
+			return &storage.RevisionInUse{Reason: storage.RevisionInUseCurrent}
+		}
+	}
+	for _, revision := range r.allRevisions() {
+		if revision.ParentID != nil && *revision.ParentID == revisionID {
+			return &storage.RevisionInUse{Reason: storage.RevisionInUseChildren}
+		}
+	}
+	for _, save := range r.saves {
+		if save.ForkedFrom != nil && save.ForkedFrom.RevisionID == revisionID {
+			return &storage.RevisionInUse{Reason: storage.RevisionInUseForkOrigin}
+		}
+	}
+	for creator, revisions := range r.revisions {
+		kept := slices.DeleteFunc(revisions, func(revision omnisave.Revision) bool {
+			return revision.ID == revisionID
+		})
+		if len(kept) == 0 {
+			delete(r.revisions, creator)
+		} else {
+			r.revisions[creator] = kept
+		}
+	}
+	r.pruneUnusedBlobs()
+	return nil
 }
 
 func (r *MemoryRepository) allRevisions() []omnisave.Revision {

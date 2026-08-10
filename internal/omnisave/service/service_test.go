@@ -455,6 +455,116 @@ func TestRejectInvalidChangesAndReportMissingArtifacts(t *testing.T) {
 	}
 }
 
+func TestDeleteRevisionPrunesOnlyUnneededTips(t *testing.T) {
+	ctx := context.Background()
+	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := storeBlob(t, ctx, saves, "kept content")
+	pruned := storeBlob(t, ctx, saves, "pruned content")
+	first, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: kept}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &first.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: pruned}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reason := func(err error) string {
+		t.Helper()
+		var inUse *omnisave.RevisionInUse
+		if !errors.As(err, &inUse) {
+			t.Fatalf("expected a revision-in-use refusal, got %v", err)
+		}
+		return inUse.Reason
+	}
+	if got := reason(saves.DeleteRevision(ctx, save.ID, second.ID)); got != omnisave.RevisionInUseCurrent {
+		t.Fatalf("deleting the current revision should refuse as current, got %q", got)
+	}
+	if got := reason(saves.DeleteRevision(ctx, save.ID, first.ID)); got != omnisave.RevisionInUseChildren {
+		t.Fatalf("deleting a parent should refuse for its children, got %q", got)
+	}
+	if err := saves.DeleteRevision(ctx, save.ID, ""); !errors.Is(err, omnisave.ErrInvalid) {
+		t.Fatalf("an empty revision id should be invalid, got %v", err)
+	}
+	if err := saves.DeleteRevision(ctx, save.ID, "does-not-exist"); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("an unknown revision should be not found, got %v", err)
+	}
+
+	if _, err := saves.Restore(ctx, save.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &second.ID,
+		RevisionID:                first.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saves.DeleteRevision(ctx, save.ID, second.ID); err != nil {
+		t.Fatalf("an unneeded tip should delete, got %v", err)
+	}
+	history, err := saves.ListRevisions(ctx, save.ID)
+	if err != nil || len(history) != 1 || history[0].ID != first.ID {
+		t.Fatalf("expected only the kept revision: history=%+v err=%v", history, err)
+	}
+	if _, err := saves.StatArtifact(ctx, pruned.SHA256); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("content only the deleted tip referenced should be gone, got %v", err)
+	}
+	if _, err := saves.StatArtifact(ctx, kept.SHA256); err != nil {
+		t.Fatalf("content the kept revision references should remain: %v", err)
+	}
+}
+
+func TestDeleteRevisionRefusesAForkOrigin(t *testing.T) {
+	ctx := context.Background()
+	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := storeBlob(t, ctx, saves, "contents")
+	first, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &first.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "other.dat", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saves.Restore(ctx, save.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &second.ID,
+		RevisionID:                first.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fork, err := saves.Fork(ctx, save.ID, omnisave.ForkOmnisave{RevisionID: second.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saves.Restore(ctx, fork.Omnisave.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &second.ID,
+		RevisionID:                first.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = saves.DeleteRevision(ctx, save.ID, second.ID)
+	var inUse *omnisave.RevisionInUse
+	if !errors.As(err, &inUse) || inUse.Reason != omnisave.RevisionInUseForkOrigin {
+		t.Fatalf("deleting a fork's origin should refuse as fork origin, got %v", err)
+	}
+}
+
 func storeBlob(t *testing.T, ctx context.Context, saves omnisave.Service, contents string) omnisave.Artifact {
 	t.Helper()
 	sum := sha256.Sum256([]byte(contents))

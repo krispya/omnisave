@@ -8,6 +8,7 @@ import (
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/storage"
+	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
 const selectGame = `SELECT id, title, sort_title, platform, platform_company, publisher, description,
@@ -72,13 +73,21 @@ func (r *Repository) ListGames(ctx context.Context) ([]catalog.Game, error) {
 }
 
 func (r *Repository) SaveGame(ctx context.Context, game catalog.Game, rom *catalog.GameROM) error {
+	r.mutate.Lock()
+	defer r.mutate.Unlock()
+	if err := r.requireStoreReady(); err != nil {
+		return err
+	}
+	if r.store.HasDeletion(store.DeletionGame, game.ID) {
+		return storage.ErrConflict
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	if err := saveGameMetadata(ctx, tx, game); err != nil {
-		return err
+		return translateUniqueViolation(err)
 	}
 	for _, identifier := range game.Identifiers {
 		if err := claimIdentity(ctx, tx, "game_identifiers", game.ID,
@@ -97,18 +106,13 @@ func (r *Repository) SaveGame(ctx context.Context, game catalog.Game, rom *catal
 			return err
 		}
 	}
+	if err := r.enqueueGameProjection(ctx, tx, game.ID); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	// Read the game back rather than recording the argument: identity claims
-	// merge with what other evidence has already established, so the stored
-	// game can carry identifiers this call never mentioned.
-	if stored, err := r.GetGame(ctx, game.ID); err != nil {
-		r.noteStoreLag("game "+game.ID, err)
-	} else {
-		r.noteStoreLag("game "+game.ID, r.recordGame(*stored))
-	}
-	return nil
+	return r.projectStore(ctx)
 }
 
 func claimIdentity(ctx context.Context, tx *sql.Tx, table, gameID string, columns []string, values []any) error {
@@ -190,6 +194,11 @@ func saveGameMetadata(ctx context.Context, executor contextExecutor, game catalo
 // DeleteGame removes a game, its saves with their revision history, and any
 // artifacts left unreferenced. Media and identity rows cascade via foreign keys.
 func (r *Repository) DeleteGame(ctx context.Context, id string) error {
+	r.mutate.Lock()
+	defer r.mutate.Unlock()
+	if err := r.requireStoreReady(); err != nil {
+		return err
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -254,45 +263,64 @@ func (r *Repository) DeleteGame(ctx context.Context, id string) error {
 		return err
 	}
 	if count == 0 {
+		// Idempotent with respect to a committed marker, like the save and
+		// revision deletions it cascades to.
+		if r.store.HasDeletion(store.DeletionGame, id) {
+			return nil
+		}
 		return storage.ErrNotFound
 	}
 
-	var unreferenced []string
-	for _, hash := range hashes {
-		var used bool
-		if err := tx.QueryRowContext(ctx,
-			`SELECT
-				EXISTS(SELECT 1 FROM revision_files WHERE artifact_sha256 = ?) OR
-				EXISTS(SELECT 1 FROM game_media WHERE sha256 = ?)`, hash, hash,
-		).Scan(&used); err != nil {
+	deletedAt := time.Now().UTC()
+	if err := enqueueDeletion(ctx, tx, store.Deletion{
+		TargetKind: store.DeletionGame,
+		TargetID:   id,
+		DeletedAt:  deletedAt,
+	}); err != nil {
+		return err
+	}
+	for _, omnisaveID := range saveIDs {
+		if err := enqueueDeletion(ctx, tx, store.Deletion{
+			TargetKind: store.DeletionOmnisave,
+			TargetID:   omnisaveID,
+			DeletedAt:  deletedAt,
+		}); err != nil {
 			return err
 		}
-		if !used {
-			unreferenced = append(unreferenced, hash)
-		}
 	}
-	deletedAt := time.Now().UTC()
-	for _, omnisaveID := range saveIDs {
-		if err := r.tombstoneOmnisave(omnisaveID, deletedAt); err != nil {
+	for _, revisionID := range revisionIDs {
+		if err := enqueueDeletion(ctx, tx, store.Deletion{
+			TargetKind: store.DeletionRevision,
+			TargetID:   revisionID,
+			DeletedAt:  deletedAt,
+		}); err != nil {
 			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-
+	if err := r.projectStore(ctx); err != nil {
+		return err
+	}
 	r.noteStoreLag("deletion of game "+id, r.dropRevisions(revisionIDs))
 	r.noteStoreLag("deletion of game "+id, r.store.RemoveGame(id))
-	for _, hash := range unreferenced {
-		if err := r.removeArtifact(hash); err != nil {
-			return err
-		}
-	}
+	r.reclaimArtifacts(ctx, hashes)
 	return nil
 }
 
 func (r *Repository) SaveGameMedia(ctx context.Context, media catalog.GameMedia) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO game_media(
+	r.mutate.Lock()
+	defer r.mutate.Unlock()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := r.requireAvailableArtifacts(ctx, tx, map[string]int64{media.SHA256: media.Size}); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO game_media(
 		id, game_id, kind, position, format, sha256, size, provider, provider_id, attribution
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(game_id, kind, position) DO UPDATE SET
@@ -301,12 +329,35 @@ func (r *Repository) SaveGameMedia(ctx context.Context, media catalog.GameMedia)
 		media.ID, media.GameID, media.Kind, media.Position, media.Format, media.SHA256,
 		media.Size, media.Provider, media.ProviderID, media.Attribution,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *Repository) ClearGameMedia(ctx context.Context, gameID string) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM game_media WHERE game_id = ?`, gameID)
-	return err
+	r.mutate.Lock()
+	defer r.mutate.Unlock()
+	if err := r.requireStoreReady(); err != nil {
+		return err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	hashes, err := queryIDs(ctx, tx, `SELECT DISTINCT sha256 FROM game_media WHERE game_id = ?`, gameID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM game_media WHERE game_id = ?`, gameID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	r.reclaimArtifacts(ctx, hashes)
+	return nil
 }
 
 func (r *Repository) GetGameMedia(ctx context.Context, gameID, mediaID string) (*catalog.GameMedia, error) {
@@ -334,7 +385,11 @@ func (r *Repository) withGameDetails(ctx context.Context, game *catalog.Game) (*
 }
 
 func (r *Repository) listGameIdentifiers(ctx context.Context, gameID string) ([]catalog.GameIdentifier, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT namespace, value FROM game_identifiers
+	return listGameIdentifiersFrom(ctx, r.db, gameID)
+}
+
+func listGameIdentifiersFrom(ctx context.Context, queryer storeQueryer, gameID string) ([]catalog.GameIdentifier, error) {
+	rows, err := queryer.QueryContext(ctx, `SELECT namespace, value FROM game_identifiers
 		WHERE game_id = ? ORDER BY namespace, value`, gameID)
 	if err != nil {
 		return nil, err
@@ -352,7 +407,11 @@ func (r *Repository) listGameIdentifiers(ctx context.Context, gameID string) ([]
 }
 
 func (r *Repository) listGameFingerprints(ctx context.Context, gameID string) ([]catalog.GameFingerprint, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT platform, algorithm, value FROM game_fingerprints
+	return listGameFingerprintsFrom(ctx, r.db, gameID)
+}
+
+func listGameFingerprintsFrom(ctx context.Context, queryer storeQueryer, gameID string) ([]catalog.GameFingerprint, error) {
+	rows, err := queryer.QueryContext(ctx, `SELECT platform, algorithm, value FROM game_fingerprints
 		WHERE game_id = ? ORDER BY platform, algorithm, value`, gameID)
 	if err != nil {
 		return nil, err

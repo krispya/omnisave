@@ -24,15 +24,15 @@ User-facing concepts. If a user might say the word, it goes here.
 
 **Game**. One server-owned canonical record in the Library, with its own UUID. Identifiers and fingerprints accumulate on a Game over time as clients and providers contribute evidence (see _Evidence_, Backend).
 
-**Omnisave**. One independently named and synchronized game save on the server. It owns a revision tree and one global _Current Revision_; restoring moves that pointer, while forking creates another omnisave when progress must synchronize independently. In everyday use it is just "save"; an adapter-native save on disk is always a _Local Save_. An omnisave always carries a display name. The server assigns one when creation omits it ("Save N," while forks inherit the source name plus " (fork)"). A name can be changed but never cleared (see [FDR-003](fdr/FDR-003-automatic-save-binding.md) and [FDR-005](fdr/FDR-005-save-sync.md)).
+**Omnisave**. One independently named and synchronized game save on the server. It owns a revision tree and one global _Current Revision_. Restoring moves that pointer. Forking creates another omnisave when progress must synchronize independently. In everyday use it is just "save." An adapter-native save on disk is always a _Local Save_. An omnisave always carries a display name. The server assigns one when creation omits it ("Save N," while forks inherit the source name plus " (fork)"). A name can be changed but never cleared (see [FDR-003](fdr/FDR-003-automatic-save-binding.md) and [FDR-005](fdr/FDR-005-save-sync.md)).
 
-**Revision**. A content-immutable save snapshot with at most one parent. A revision may have a mutable display name shared by every fork that shares the node; naming changes no content or history. Revisions form unnamed branches naturally when one node has several children, and Omnisave does not support merges.
+**Revision**. A content-immutable save snapshot with at most one parent. A revision may have a mutable display name shared by every fork that shares the node. Naming changes no content or history. Revisions form unnamed branches naturally when one node has several children, and Omnisave does not support merges.
 
-**Current Revision**. The one revision an omnisave presently represents and every bound Device synchronizes toward. Restoring another node moves this global pointer without changing either revision; the next commit becomes a child of the selected node. A **tip** is any revision without children and need not be current.
+**Current Revision**. The one revision an omnisave presently represents and every bound Device synchronizes toward. Restoring another node moves this global pointer without changing either revision. The next commit becomes a child of the selected node. A **tip** is any revision without children and need not be current.
 
 **Restore**. Make any revision in an omnisave's tree current without creating or changing a revision. Moving to an ancestor is a **rewind**, moving to a descendant is a **fast-forward**, and moving between sibling branches is a **jump**.
 
-**Fork**. A new omnisave started at an existing revision. It shares that node, its name, and its ancestor path, then synchronizes independently; later revisions belong only to the omnisave that creates them. Forks, rather than branches, are named and bound to Devices.
+**Fork**. A new omnisave started at an existing revision. It shares that node, its name, and its ancestor path, then synchronizes independently. Later revisions belong only to the omnisave that creates them. Forks, rather than branches, are named and bound to Devices.
 
 **Device**. One self-identified machine running the Client, e.g. a Steam Deck or a desktop. A device mints a stable ID and a human-readable name on first run, kept in local tracking state and reported to the server. Identity belongs to the client installation, so wiping local state makes a new Device. A Device hosts Targets (see _Target_, Backend), but it is not one itself. See [FDR-002](fdr/FDR-002-game-lifecycle.md).
 
@@ -74,7 +74,17 @@ Infrastructure jargon. If only contributors say the word, it goes here.
 
 **Repository**. The server's persistence boundary: Omnisave records, Game records, and artifact storage behind one interface (`internal/storage`), implemented on SQLite.
 
+**Portable Store**. The tool-independent directory of gzip objects, JSON manifests and records, and immutable Deletion Markers from which save history can regrow without the server database. See [ADR-012](adr/ADR-012-portable-save-store.md).
+
+**Store Outbox**. SQLite's ordered queue of self-contained Portable Store projections, committed in the same transaction as the state they describe and replayed before recovery. See [ADR-014](adr/ADR-014-durable-proof-before-forgetting.md).
+
+**Deletion Marker**. An immutable Portable Store record proving that deletion of one Game, omnisave, or revision committed. Recovery and reclamation never infer that fact from absence. See [ADR-014](adr/ADR-014-durable-proof-before-forgetting.md).
+
+**Deletion Ledger**. SQLite's online record of deleted identifiers, committed with the logical delete so concurrent processes cannot reuse an identifier before its Deletion Marker reaches the Portable Store. See [ADR-014](adr/ADR-014-durable-proof-before-forgetting.md).
+
 **Artifact**. Content-addressed immutable bytes keyed by SHA-256, with a format and size. Revisions reference artifacts through **revision files**, which map a canonical save path to an artifact, so identical content is stored once and never rewritten.
+
+**Artifact Registry**. SQLite's record of Artifacts whose bytes have been verified and may safely be referenced. A direct check of the Portable Store cannot prevent bytes from being reclaimed between the check and the database commit. The registry lets SQLite serialize reference creation with reclamation and close that race. See [ADR-014](adr/ADR-014-durable-proof-before-forgetting.md).
 
 **Current Revision Conflict**. Rejection of a commit or restore whose expected Current Revision is no longer the omnisave's actual Current Revision. It provides optimistic concurrency for save history. The error carries the actual revision so a client can reconcile without a stale Device silently reactivating an old branch.
 

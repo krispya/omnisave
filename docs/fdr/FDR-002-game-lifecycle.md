@@ -1,7 +1,7 @@
 # FDR-002: Game Lifecycle
 
 **Status:** Active
-**Last reviewed:** 2026-07-18
+**Last reviewed:** 2026-08-09
 
 ## Overview
 
@@ -38,8 +38,9 @@ from registration and tracking alone.
 - Deleting all of a game's Omnisaves leaves the game and its provenance in
   the Library.
 - Deleting the game removes everything — its saves, revision history,
-  unshared artifacts, and provenance. This is the lifecycle's only act of
-  forgetting.
+  unshared artifacts, and provenance — and records immutable game, save, and
+  revision deletion markers so restoring an older portable copy cannot undo
+  it. This is the lifecycle's only act of forgetting.
 - Game reads include provenance so any game view can present it without a
   separate request.
 - An open view refreshes automatically when games, saves, revisions, or
@@ -154,8 +155,10 @@ deleted with the intent of reseeding it also requires that re-track first.
   server-side provenance; [ADR-002](../adr/ADR-002-sse-view-invalidation.md) —
   how clients learn that server-owned views changed;
   [ADR-012](../adr/ADR-012-portable-save-store.md) — why deleting a game
-  tombstones its saves in the store rather than only erasing them, so a
-  restore does not undo the deletion.
+  durably marks the game and its saves rather than only erasing them, so a
+  restore does not undo the deletion;
+  [ADR-014](../adr/ADR-014-durable-proof-before-forgetting.md) — why committed
+  markers must exist before deleted content can be reclaimed.
 - **FDRs:** [FDR-001](FDR-001-game-identity-resolution.md) — how track-time
   resolution chooses or creates the canonical Game;
   [FDR-003](FDR-003-automatic-save-binding.md) — the binding pass that

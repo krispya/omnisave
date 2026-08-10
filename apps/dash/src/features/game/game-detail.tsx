@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import { Button } from '../../components/button.js';
-import { updateRevisionDisplayName, type Omnisave, type Revision } from '../../lib/omnisave-api.js';
+import {
+  deleteRevision,
+  updateRevisionDisplayName,
+  type Omnisave,
+  type Revision,
+} from '../../lib/omnisave-api.js';
+import { DeleteRevisionDialog } from '../omnisave/delete-revision-dialog.js';
 import { GameArtwork, GameMediaImage } from './game-artwork.js';
 import { playingOn, type GameSummary } from './game-summary.js';
 import { GameDetailsDialog } from './details-dialog.js';
@@ -61,6 +67,12 @@ export function GameDetail({
   const [revisionAction, setRevisionAction] = useState<RevisionAction>();
   const [revisionActionBusy, setRevisionActionBusy] = useState(false);
   const [revisionActionError, setRevisionActionError] = useState('');
+  const [deleteRevisionTarget, setDeleteRevisionTarget] = useState<{
+    save: Omnisave;
+    revision: Revision;
+  }>();
+  const [deletingRevision, setDeletingRevision] = useState(false);
+  const [deleteRevisionError, setDeleteRevisionError] = useState('');
   const history = useSaveRevisions(token, selectedSave);
   // A conflicting restore reloads the library under the open dialog, so the action
   // is re-read from the fresh game every render: a retry then sends the reloaded
@@ -121,6 +133,28 @@ export function GameDetail({
   function requestFork(save: Omnisave, revision: Revision) {
     setRevisionActionError('');
     setRevisionAction({ kind: 'fork', save, revision });
+  }
+
+  function requestDeleteRevision(save: Omnisave, revision: Revision) {
+    setDeleteRevisionError('');
+    setDeleteRevisionTarget({ save, revision });
+  }
+
+  async function confirmDeleteRevision() {
+    if (!deleteRevisionTarget) return;
+    setDeletingRevision(true);
+    setDeleteRevisionError('');
+    try {
+      await deleteRevision(token, deleteRevisionTarget.save.id, deleteRevisionTarget.revision.id);
+      history.removeRevision(deleteRevisionTarget.revision.id);
+      setDeleteRevisionTarget(undefined);
+    } catch (error) {
+      setDeleteRevisionError(
+        error instanceof Error ? error.message : 'Could not delete this revision.'
+      );
+    } finally {
+      setDeletingRevision(false);
+    }
   }
 
   async function confirmRestore() {
@@ -235,6 +269,7 @@ export function GameDetail({
             onOpenSave={openSaveAtRevision}
             onRequestRestore={requestRestore}
             onRequestFork={requestFork}
+            onRequestDeleteRevision={requestDeleteRevision}
           />
         )}
       </section>
@@ -262,6 +297,19 @@ export function GameDetail({
       ) : null}
 
       {detailsOpen ? <GameDetailsDialog game={game} onClose={() => setDetailsOpen(false)} /> : null}
+      {deleteRevisionTarget ? (
+        <DeleteRevisionDialog
+          name={
+            deleteRevisionTarget.revision.display_name || deleteRevisionTarget.revision.id.slice(0, 8)
+          }
+          deleting={deletingRevision}
+          error={deleteRevisionError}
+          onCancel={() => {
+            if (!deletingRevision) setDeleteRevisionTarget(undefined);
+          }}
+          onConfirm={() => void confirmDeleteRevision()}
+        />
+      ) : null}
       {activeRevisionAction ? (
         <RevisionActionDialog
           // Remounting on a new target resets the dialog's prefilled name.

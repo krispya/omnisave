@@ -383,6 +383,121 @@ var migrations = []string{
 		AND omnisaves.forked_from_revision_id IS NOT NULL
 		AND omnisaves.forked_from_revision_id <> revisions.id
 	);`,
+
+	// Durable artifact capabilities and the transactional portable-store
+	// outbox (ADR-014). References can name only content whose object has been
+	// published, and queued store work commits atomically with the rows it
+	// projects.
+	`ALTER TABLE artifacts ADD COLUMN available INTEGER NOT NULL DEFAULT 1
+		CHECK (available IN (0, 1));
+
+	INSERT INTO artifacts(sha256, size, available)
+	SELECT artifact_sha256, MAX(artifact_size), 1 FROM revision_files
+	GROUP BY artifact_sha256
+	ON CONFLICT(sha256) DO UPDATE SET size = excluded.size;
+	INSERT INTO artifacts(sha256, size, available)
+	SELECT sha256, MAX(size), 1 FROM game_media GROUP BY sha256
+	ON CONFLICT(sha256) DO UPDATE SET size = excluded.size;
+
+	CREATE TABLE revision_files_v3 (
+		revision_id     TEXT NOT NULL REFERENCES revisions(id) ON DELETE CASCADE,
+		path            TEXT NOT NULL,
+		artifact_format TEXT NOT NULL,
+		artifact_sha256 TEXT NOT NULL REFERENCES artifacts(sha256) ON DELETE RESTRICT,
+		artifact_size   INTEGER NOT NULL,
+		PRIMARY KEY (revision_id, path)
+	);
+	INSERT INTO revision_files_v3 SELECT * FROM revision_files;
+	DROP TABLE revision_files;
+	ALTER TABLE revision_files_v3 RENAME TO revision_files;
+	CREATE INDEX revision_files_by_artifact ON revision_files(artifact_sha256);
+
+	CREATE TABLE game_media_v2 (
+		id           TEXT PRIMARY KEY,
+		game_id      TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		kind         TEXT NOT NULL,
+		position     INTEGER NOT NULL,
+		format       TEXT NOT NULL,
+		sha256       TEXT NOT NULL REFERENCES artifacts(sha256) ON DELETE RESTRICT,
+		size         INTEGER NOT NULL,
+		provider     TEXT NOT NULL,
+		provider_id  TEXT NOT NULL,
+		attribution  TEXT NOT NULL,
+		UNIQUE(game_id, kind, position)
+	);
+	INSERT INTO game_media_v2 SELECT * FROM game_media;
+	DROP TABLE game_media;
+	ALTER TABLE game_media_v2 RENAME TO game_media;
+	CREATE INDEX game_media_by_artifact ON game_media(sha256);
+
+	CREATE TRIGGER revision_files_require_available
+	BEFORE INSERT ON revision_files
+	WHEN NOT EXISTS (
+		SELECT 1 FROM artifacts
+		WHERE sha256 = NEW.artifact_sha256 AND size = NEW.artifact_size AND available = 1
+	)
+	BEGIN
+		SELECT RAISE(ABORT, 'artifact unavailable');
+	END;
+
+	CREATE TRIGGER game_media_require_available_insert
+	BEFORE INSERT ON game_media
+	WHEN NOT EXISTS (
+		SELECT 1 FROM artifacts
+		WHERE sha256 = NEW.sha256 AND size = NEW.size AND available = 1
+	)
+	BEGIN
+		SELECT RAISE(ABORT, 'artifact unavailable');
+	END;
+
+	CREATE TRIGGER game_media_require_available_update
+	BEFORE UPDATE OF sha256, size ON game_media
+	WHEN NOT EXISTS (
+		SELECT 1 FROM artifacts
+		WHERE sha256 = NEW.sha256 AND size = NEW.size AND available = 1
+	)
+	BEGIN
+		SELECT RAISE(ABORT, 'artifact unavailable');
+	END;
+
+	CREATE TABLE store_outbox (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		kind       TEXT NOT NULL,
+		target_id  TEXT NOT NULL,
+		payload    TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL
+	);
+
+	CREATE TABLE deletion_ledger (
+		target_kind TEXT NOT NULL CHECK (target_kind IN ('game', 'omnisave', 'revision')),
+		target_id   TEXT NOT NULL,
+		deleted_at  TEXT NOT NULL,
+		PRIMARY KEY (target_kind, target_id)
+	);
+
+	CREATE TRIGGER games_reject_deleted_identifier
+	BEFORE INSERT ON games
+	WHEN EXISTS (SELECT 1 FROM deletion_ledger
+		WHERE target_kind = 'game' AND target_id = NEW.id)
+	BEGIN
+		SELECT RAISE(ABORT, 'deleted game identifier');
+	END;
+
+	CREATE TRIGGER omnisaves_reject_deleted_identifier
+	BEFORE INSERT ON omnisaves
+	WHEN EXISTS (SELECT 1 FROM deletion_ledger
+		WHERE target_kind = 'omnisave' AND target_id = NEW.id)
+	BEGIN
+		SELECT RAISE(ABORT, 'deleted omnisave identifier');
+	END;
+
+	CREATE TRIGGER revisions_reject_deleted_identifier
+	BEFORE INSERT ON revisions
+	WHEN EXISTS (SELECT 1 FROM deletion_ledger
+		WHERE target_kind = 'revision' AND target_id = NEW.id)
+	BEGIN
+		SELECT RAISE(ABORT, 'deleted revision identifier');
+	END;`,
 }
 
 func migrate(db *sql.DB) error {
