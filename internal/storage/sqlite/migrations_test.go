@@ -11,7 +11,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/storage"
 )
 
-// The final migration turns head_revision_id into the movable Current
+// The shared-ancestry migration turns head_revision_id into the movable Current
 // Revision, and adopts forks made before shared ancestry: such a fork owns a
 // copied root revision — parent none — alongside its recorded fork point, so
 // under membership-by-ancestry its graph would show two roots. The migration
@@ -32,7 +32,7 @@ func TestMigrationGraftsLegacyCopiedRootForksOntoTheirForkPoint(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)`); err != nil {
 		t.Fatal(err)
 	}
-	for index, migration := range migrations[:len(migrations)-1] {
+	for index, migration := range migrations[:len(migrations)-2] {
 		if _, err := db.Exec(migration); err != nil {
 			t.Fatalf("apply migration %d: %v", index+1, err)
 		}

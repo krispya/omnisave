@@ -451,6 +451,64 @@ func TestRestoreRefusalsNameTheStateTheyJudged(t *testing.T) {
 	}
 }
 
+func TestDeleteRevisionRefusalsNameTheReason(t *testing.T) {
+	handler := newHandler(t, storagetest.NewMemoryRepository())
+
+	response := request(t, handler, http.MethodPost, "/api/v1/omnisaves", "application/json",
+		bytes.NewBufferString(`{"game_id":"pokemon-emerald-usa"}`))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create returned %d: %s", response.Code, response.Body.String())
+	}
+	var save omnisave.Omnisave
+	decodeResponse(t, response, &save)
+	first := commitTestRevision(t, handler, save.ID, nil, "first")
+	second := commitTestRevision(t, handler, save.ID, &first.ID, "second")
+
+	deleteRevision := func(saveID, revisionID string) *httptest.ResponseRecorder {
+		return request(t, handler, http.MethodDelete,
+			"/api/v1/omnisaves/"+saveID+"/revisions/"+revisionID, "", nil)
+	}
+
+	response = deleteRevision(save.ID, second.ID)
+	if response.Code != http.StatusConflict ||
+		!strings.Contains(response.Body.String(), `"error":"revision_in_use"`) ||
+		!strings.Contains(response.Body.String(), `"reason":"current"`) {
+		t.Fatalf("deleting the current revision returned %d: %s", response.Code, response.Body.String())
+	}
+	response = deleteRevision(save.ID, first.ID)
+	if response.Code != http.StatusConflict ||
+		!strings.Contains(response.Body.String(), `"reason":"children"`) {
+		t.Fatalf("deleting a parent returned %d: %s", response.Code, response.Body.String())
+	}
+	response = deleteRevision(save.ID, "does-not-exist")
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("deleting an unknown revision returned %d: %s", response.Code, response.Body.String())
+	}
+
+	restoreBody, err := json.Marshal(omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &second.ID,
+		RevisionID:                first.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = request(t, handler, http.MethodPut,
+		"/api/v1/omnisaves/"+save.ID+"/current-revision", "application/json", bytes.NewReader(restoreBody))
+	if response.Code != http.StatusOK {
+		t.Fatalf("restore returned %d: %s", response.Code, response.Body.String())
+	}
+	response = deleteRevision(save.ID, second.ID)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("deleting an unneeded tip returned %d: %s", response.Code, response.Body.String())
+	}
+	response = request(t, handler, http.MethodGet, "/api/v1/omnisaves/"+save.ID+"/revisions", "", nil)
+	var history []omnisave.Revision
+	decodeResponse(t, response, &history)
+	if len(history) != 1 || history[0].ID != first.ID {
+		t.Fatalf("unexpected history after deletion: %v", history)
+	}
+}
+
 func TestAuthenticationTakesTheOwnerTokenAndIssuedCredentialsOnly(t *testing.T) {
 	credentials := accessservice.New(storagetest.NewMemoryRepository(), "secret")
 	protected := httpapi.Authenticate(credentials, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

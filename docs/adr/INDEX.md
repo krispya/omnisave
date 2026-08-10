@@ -26,3 +26,4 @@ what the system does.
 | [ADR-011](ADR-011-owner-provider-credentials.md)        | Let the owner hold provider credentials                        | 2026-07-26 |
 | [ADR-012](ADR-012-portable-save-store.md)               | Keep saves in a portable store                                 | 2026-07-27 |
 | [ADR-013](ADR-013-server-announced-presence-expiry.md)  | The server is the only clock for presence                      | 2026-08-08 |
+| [ADR-014](ADR-014-durable-proof-before-forgetting.md)   | Require durable proof before forgetting data                   | 2026-08-09 |

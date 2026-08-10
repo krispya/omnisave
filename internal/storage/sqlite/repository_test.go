@@ -19,6 +19,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/storage"
 	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
 	"github.com/krisbaumgartner/omnisave/internal/storage/storagetest"
+	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
 func TestRecordsSurviveRepositoryRestart(t *testing.T) {
@@ -517,8 +518,11 @@ func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 	if _, err := saves.Get(ctx, survivor.ID); err != nil {
 		t.Fatalf("the other game's save should remain: %v", err)
 	}
-	if err := repository.DeleteGame(ctx, game.ID); !errors.Is(err, storage.ErrNotFound) {
-		t.Fatalf("deleting a missing game should report not found, got %v", err)
+	if err := repository.DeleteGame(ctx, game.ID); err != nil {
+		t.Fatalf("repeating a committed game deletion should be idempotent, got %v", err)
+	}
+	if err := repository.DeleteGame(ctx, "never-existed"); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("deleting a game that never existed should report not found, got %v", err)
 	}
 }
 
@@ -896,6 +900,161 @@ func TestArtifactsRestCompressedButKeepTheirIdentity(t *testing.T) {
 	restored, err := io.ReadAll(payload)
 	if err != nil || string(restored) != contents {
 		t.Fatalf("expected the exact content back, got %d bytes (%v)", len(restored), err)
+	}
+}
+
+func TestDeleteRevisionPrunesAnUnneededTip(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repository, err := sqlite.Open(
+		filepath.Join(directory, "omnisave.db"),
+		filepath.Join(directory, "store"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves := omnisaveservice.New(repository)
+
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := storeOmnisaveArtifact(t, ctx, saves, "shared contents")
+	unique := storeOmnisaveArtifact(t, ctx, saves, "tip-only contents")
+	first, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: shared}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &first.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "extra.dat", Artifact: unique}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saves.Restore(ctx, save.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &second.ID,
+		RevisionID:                first.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := saves.DeleteRevision(ctx, save.ID, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	history, err := saves.ListRevisions(ctx, save.ID)
+	if err != nil || len(history) != 1 || history[0].ID != first.ID {
+		t.Fatalf("expected only the kept revision: history=%+v err=%v", history, err)
+	}
+	if _, err := saves.OpenArtifact(ctx, unique.SHA256); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("content only the deleted tip referenced should be gone, got %v", err)
+	}
+	payload, err := saves.OpenArtifact(ctx, shared.SHA256)
+	if err != nil {
+		t.Fatalf("content the kept revision references should remain: %v", err)
+	}
+	payload.Close()
+
+	if repository.Store().HasRevision(second.ID) {
+		t.Fatal("the deleted revision's manifest should be removed from the store")
+	}
+	marker, err := repository.Store().GetDeletion(store.DeletionRevision, second.ID)
+	if err != nil || marker.TargetID != second.ID {
+		t.Fatalf("expected an immutable deletion marker, got %+v (%v)", marker, err)
+	}
+	if err := saves.DeleteRevision(ctx, save.ID, second.ID); err != nil {
+		t.Fatalf("repeating a committed revision deletion should be idempotent, got %v", err)
+	}
+	if err := saves.DeleteRevision(ctx, "does-not-exist", second.ID); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("a deleted revision under a missing save should stay not found, got %v", err)
+	}
+}
+
+func TestDeleteRevisionRefusesWhatTheGraphStillNeeds(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repository, err := sqlite.Open(
+		filepath.Join(directory, "omnisave.db"),
+		filepath.Join(directory, "store"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves := omnisaveservice.New(repository)
+
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := storeOmnisaveArtifact(t, ctx, saves, "contents")
+	first, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &first.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "other.dat", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	refusalReason := func(err error) string {
+		t.Helper()
+		var inUse *omnisave.RevisionInUse
+		if !errors.As(err, &inUse) {
+			t.Fatalf("expected a revision-in-use refusal, got %v", err)
+		}
+		return inUse.Reason
+	}
+
+	if reason := refusalReason(saves.DeleteRevision(ctx, save.ID, second.ID)); reason != omnisave.RevisionInUseCurrent {
+		t.Fatalf("deleting the current revision should refuse as current, got %q", reason)
+	}
+	if reason := refusalReason(saves.DeleteRevision(ctx, save.ID, first.ID)); reason != omnisave.RevisionInUseChildren {
+		t.Fatalf("deleting a parent should refuse for its children, got %q", reason)
+	}
+
+	// A fork origin neither current anywhere nor built upon still anchors the
+	// fork's ancestry, so it refuses as the fork's origin.
+	if _, err := saves.Restore(ctx, save.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &second.ID,
+		RevisionID:                first.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fork, err := saves.Fork(ctx, save.ID, omnisave.ForkOmnisave{RevisionID: second.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saves.Restore(ctx, fork.Omnisave.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &second.ID,
+		RevisionID:                first.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if reason := refusalReason(saves.DeleteRevision(ctx, save.ID, second.ID)); reason != omnisave.RevisionInUseForkOrigin {
+		t.Fatalf("deleting a fork's origin should refuse as fork origin, got %q", reason)
+	}
+
+	if err := saves.DeleteRevision(ctx, save.ID, "does-not-exist"); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("an unknown revision should be not found, got %v", err)
+	}
+	if err := saves.DeleteRevision(ctx, "does-not-exist", second.ID); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("an unknown save should be not found, got %v", err)
+	}
+	other, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saves.DeleteRevision(ctx, other.ID, second.ID); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("a revision outside the save's membership should be not found, got %v", err)
 	}
 }
 

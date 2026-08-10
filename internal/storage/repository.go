@@ -15,6 +15,16 @@ import (
 var ErrNotFound = errors.New("storage: not found")
 var ErrConflict = errors.New("storage: conflict")
 var ErrArtifactMismatch = errors.New("storage: artifact mismatch")
+var ErrArtifactUnavailable = errors.New("storage: artifact unavailable")
+
+// ArtifactsUnavailable reports content that could not be proven available in
+// the same transaction that attempted to reference it.
+type ArtifactsUnavailable struct {
+	SHA256 []string
+}
+
+func (e *ArtifactsUnavailable) Error() string { return ErrArtifactUnavailable.Error() }
+func (e *ArtifactsUnavailable) Unwrap() error { return ErrArtifactUnavailable }
 
 // CurrentRevisionConflict carries the actual current revision observed atomically.
 type CurrentRevisionConflict struct {
@@ -23,6 +33,23 @@ type CurrentRevisionConflict struct {
 
 func (e *CurrentRevisionConflict) Error() string { return ErrConflict.Error() }
 func (e *CurrentRevisionConflict) Unwrap() error { return ErrConflict }
+
+// Reasons a revision deletion is refused. Only a revision the graph no longer
+// needs may go: nothing may build on it, point at it as current, or fork from it.
+const (
+	RevisionInUseCurrent    = "current"
+	RevisionInUseChildren   = "children"
+	RevisionInUseForkOrigin = "fork_origin"
+)
+
+// RevisionInUse reports a revision deletion refused because the node is still
+// needed, and names why.
+type RevisionInUse struct {
+	Reason string
+}
+
+func (e *RevisionInUse) Error() string { return ErrConflict.Error() + ": revision in use: " + e.Reason }
+func (e *RevisionInUse) Unwrap() error { return ErrConflict }
 
 // OmnisaveRepository persists save records without applying application rules.
 type OmnisaveRepository interface {
@@ -38,6 +65,11 @@ type OmnisaveRepository interface {
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*omnisave.Revision, error)
 	ListRevisions(ctx context.Context, omnisaveID string) ([]omnisave.Revision, error)
 	UpdateRevisionDisplayName(ctx context.Context, omnisaveID, revisionID, displayName string) error
+	// DeleteRevision removes one revision reachable through the named save.
+	// Only a node the graph no longer needs may go — no children, not any
+	// save's current revision, not any fork's origin — and RevisionInUse
+	// reports which of those still holds.
+	DeleteRevision(ctx context.Context, omnisaveID, revisionID string) error
 
 	StoreArtifact(ctx context.Context, artifact Artifact, payload io.Reader) error
 	OpenArtifact(ctx context.Context, sha256 string) (io.ReadCloser, error)

@@ -1,7 +1,7 @@
 # FDR-005: Save Sync
 
 **Status:** Experimental
-**Last reviewed:** 2026-08-08
+**Last reviewed:** 2026-08-09
 
 ## Overview
 
@@ -102,6 +102,16 @@ path, syncing-down built the read path; sync makes both routine.
   whose current revision is that same immutable node. The fork shares the
   node's label and ancestor path, creates no copied root revision, and owns
   only the revisions later committed through it.
+- A revision nothing needs can be deleted in the Dash: a tip that is not
+  current, has no later revisions building on it, and is not where a fork
+  began. Anything else is refused with the reason. Deleting removes the
+  snapshot and any content only it references; labels, history order, and
+  the Current Revision do not move (decision 14).
+- A Device whose sync baseline named a deleted revision is not broken:
+  content matching the Current Revision rebinds silently on the next pass,
+  and anything else resolves as a divergence with the usual fork-or-jump
+  answer (decision 4). The server does not know Device baselines, so
+  deletion cannot warn about them.
 - Failures leave both sides valid: an interrupted upload leaves the Current Revision
   where it was; an interrupted download leaves the local save untouched.
 - `omnisave` with no command is the whole app, and it skips whatever
@@ -315,7 +325,8 @@ literal, keeps revision names consistent across forks, and avoids an invented
 duplicate at every fork point.
 **Tradeoff:** Revision retention crosses Omnisave deletion boundaries: shared
 ancestors must remain until no surviving Omnisave graph needs them. There are
-no branch names, branch deletion, or merges.
+no branch names or merges; a dead branch is removed by deleting its revisions
+tip-first (decision 14).
 
 ### 13. A pull never lands under a running game
 
@@ -358,6 +369,27 @@ lineage, and decision 4's fork-or-jump answers — are answers the user
 just gave about this save, so they apply under a running game and leave
 the same in-memory overwrite to the re-check.
 
+### 14. Deleting a revision prunes only what nothing needs
+
+**Decision:** A revision can be deleted only when it has no children, is no
+save's current revision, and is no fork's origin. The server refuses anything
+else and names the reason. There is no reparenting and no pointer moving; the
+Dash offers the action only on tips it can see are unneeded.
+**Why:** Deletion should clean the graph, not rewrite it. Moving a current
+pointer would rewind every bound Device behind the owner's back, and a child
+cannot be reparented because its manifest records its parent and manifests
+are immutable ([ADR-012](../adr/ADR-012-portable-save-store.md)). Restricting
+deletion to unneeded tips makes it impossible to remove anything a surviving
+path still passes through, so cleaning up abandoned branches — divergence
+forks jumped away from, mid-session commits — can never orphan history. The
+deletion is recorded by a committed immutable marker before it is acknowledged,
+so a crash or a restored backup cannot resurrect it
+([ADR-014](../adr/ADR-014-durable-proof-before-forgetting.md)).
+**Tradeoff:** Pruning a dead branch takes one deletion per revision, tip
+first. A Device that last synced at a deleted revision loses its baseline and
+re-answers with a divergence prompt if its content has moved; nothing is lost
+either way, but the server cannot warn which baselines a deletion strands.
+
 ## Related
 
 - **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — heads move
@@ -366,7 +398,9 @@ the same in-memory overwrite to the re-check.
   — the server event stream that could someday wake watch instead of
   polling; [ADR-012](../adr/ADR-012-portable-save-store.md) — where a
   committed revision comes to rest, and why the content a sync-down replaces
-  is recoverable from the store alone.
+  is recoverable from the store alone;
+  [ADR-014](../adr/ADR-014-durable-proof-before-forgetting.md) — the durable
+  proof required before revision content can be forgotten.
 - **FDRs:** [FDR-003](FDR-003-automatic-save-binding.md) — the binding
   pass whose automatic half sync re-runs and whose lineage philosophy
   divergence inherits; [FDR-004](FDR-004-sync-to-device.md) — joining a
