@@ -124,21 +124,52 @@ def _mid_run(doc):
         parts.append("%d/%d HP" % (hp, max_hp))
     return ", ".join(parts)
 
-def _file_named(snapshot, filename):
+def _within(path, profile):
+    return path.startswith(profile) or ("/" + profile) in path
+
+def _file_named(snapshot, filename, profile):
     for path in snapshot.paths():
+        if profile and not _within(path, profile):
+            continue
         if path == filename or path.endswith("/" + filename):
             return path
     return None
 
+def _active_profile(snapshot):
+    """The profile directory the game last had open, as a path segment.
+
+    A revision carries the whole cloud save tree, so every profile is present
+    at once and none of them is distinguishable by recency — profile.save is
+    the game's own record of which one is live. When it is missing or
+    unreadable there is nothing to scope by, and the single-profile tree that
+    is the common case needs no scoping anyway.
+    """
+    pointer = _file_named(snapshot, "profile.save", None)
+    if not pointer:
+        return None
+    doc = snapshot.json(pointer)
+    if type(doc) != "dict":
+        return None
+    profile_id = doc.get("last_profile_id")
+    if type(profile_id) != "int":
+        return None
+    return "profile%d/" % profile_id
+
 def label(snapshot):
-    current = _file_named(snapshot, "current_run.save")
+    # Only the live profile describes what the player just did: an idle one
+    # keeps its own current_run.save and history, which would otherwise
+    # decide both the branch below and the run picked out of it.
+    profile = _active_profile(snapshot)
+    current = _file_named(snapshot, "current_run.save", profile)
     if current:
         doc = snapshot.json(current)
         if type(doc) == "dict":
             return _mid_run(doc)
-    # History files are named by epoch start time, so the lexicographic
-    # maximum is the run that just ended.
     runs = snapshot.paths("**/history/*.run")
+    if profile:
+        runs = [path for path in runs if _within(path, profile)]
+    # Within one profile the paths differ only in the epoch start time, so
+    # the lexicographic maximum is the run that just ended.
     if runs:
         doc = snapshot.json(runs[-1])
         if type(doc) == "dict":

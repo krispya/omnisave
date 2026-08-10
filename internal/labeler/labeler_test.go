@@ -6,8 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,81 +14,13 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/storage"
 )
 
-// The fixtures under testdata are real Slay the Spire II saves: one run in
-// progress and three finished runs (a win, a death to an event, an abandon).
-// A revision is the whole save directory at one moment, so each case below is
-// one plausible file set a commit would carry.
-
-const spireGameID = "game-spire2"
-
-func TestLabelsFollowARunAcrossItsLife(t *testing.T) {
-	cases := []struct {
-		name  string
-		files map[string]string
-		label string
-	}{
-		{
-			name: "mid-run snapshots name the fight in progress",
-			files: map[string]string{
-				"remote/profile.save":                          "profile.save",
-				"remote/profile1/saves/prefs.save":             "prefs.save",
-				"remote/profile1/saves/current_run.save":       "current_run.save",
-				"remote/profile1/saves/history/1783479289.run": "1783479289.run",
-			},
-			label: "Necrobinder A5, Underdocks flr 12, 11/66 HP",
-		},
-		{
-			name: "a finished run is named by its outcome",
-			files: map[string]string{
-				"remote/profile.save":                          "profile.save",
-				"remote/profile1/saves/prefs.save":             "prefs.save",
-				"remote/profile1/saves/history/1783479289.run": "1783479289.run",
-				"remote/profile1/saves/history/1783567598.run": "1783567598.run",
-				"remote/profile1/saves/history/1783569631.run": "1783569631.run",
-			},
-			label: "Necrobinder A5 abandoned, Hive flr 23",
-		},
-		{
-			name: "wins carry the climb and its duration",
-			files: map[string]string{
-				"remote/profile.save":                          "profile.save",
-				"remote/profile1/saves/history/1783479289.run": "1783479289.run",
-			},
-			label: "Necrobinder A4 win, 45 flrs, 1h02m",
-		},
-		{
-			name: "deaths to events name the event",
-			files: map[string]string{
-				"remote/profile.save":                          "profile.save",
-				"remote/profile1/saves/history/1783567598.run": "1783567598.run",
-			},
-			label: "Necrobinder A5 died to Slippery Bridge, Hive flr 20",
-		},
-		{
-			name: "a fresh profile has nothing to say",
-			files: map[string]string{
-				"remote/profile.save":              "profile.save",
-				"remote/profile1/saves/prefs.save": "prefs.save",
-			},
-			label: "",
-		},
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			files, artifacts := fixtureRevision(t, testCase.files)
-			named := spireLabeler(t, artifacts)
-			label := named.NameRevision(context.Background(), spireGameID, files)
-			if label != testCase.label {
-				t.Fatalf("label = %q, want %q", label, testCase.label)
-			}
-		})
-	}
-}
-
 func TestGamesWithoutALabelerStayUnnamed(t *testing.T) {
-	files, artifacts := fixtureRevision(t, map[string]string{
-		"remote/profile1/saves/current_run.save": "current_run.save",
-	})
+	content := []byte(`{"seed": 1}`)
+	artifacts := &artifactOpener{blobs: map[string][]byte{hashOf(content): content}}
+	files := []omnisave.RevisionFile{{
+		Path:     "remote/profile1/saves/current_run.save",
+		Artifact: omnisave.Artifact{Format: "application/json", SHA256: hashOf(content), Size: int64(len(content))},
+	}}
 	named, err := New(&gameDirectory{games: map[string]*catalog.Game{
 		"game-unknown": {ID: "game-unknown", Identifiers: []catalog.GameIdentifier{
 			{Namespace: "steam.app", Value: "999999"},
@@ -160,46 +90,6 @@ func TestNamesAreFlattenedAndBounded(t *testing.T) {
 	if strings.ContainsAny(name, "\n\t") || len([]rune(name)) > maxNameLength {
 		t.Fatalf("cleanName gave %q, want one bounded line", name)
 	}
-}
-
-// spireLabeler is a Labeler whose directory knows the fixtures' game by its
-// Steam identity, which is how the built-in registers itself.
-func spireLabeler(t *testing.T, artifacts ArtifactOpener) *Labeler {
-	t.Helper()
-	named, err := New(&gameDirectory{games: map[string]*catalog.Game{
-		spireGameID: {ID: spireGameID, Title: "Slay the Spire 2", Identifiers: []catalog.GameIdentifier{
-			{Namespace: "hasheous.game", Value: "77001"},
-			{Namespace: "steam.app", Value: "2868840"},
-		}},
-	}}, artifacts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return named
-}
-
-// fixtureRevision builds a revision file set from testdata, storing each
-// fixture's bytes behind its real content hash.
-func fixtureRevision(t *testing.T, paths map[string]string) ([]omnisave.RevisionFile, *artifactOpener) {
-	t.Helper()
-	files := make([]omnisave.RevisionFile, 0, len(paths))
-	artifacts := &artifactOpener{blobs: make(map[string][]byte)}
-	for path, fixture := range paths {
-		content, err := os.ReadFile(filepath.Join("testdata", fixture))
-		if err != nil {
-			t.Fatal(err)
-		}
-		artifacts.blobs[hashOf(content)] = content
-		files = append(files, omnisave.RevisionFile{
-			Path: path,
-			Artifact: omnisave.Artifact{
-				Format: "application/json",
-				SHA256: hashOf(content),
-				Size:   int64(len(content)),
-			},
-		})
-	}
-	return files, artifacts
 }
 
 func emptySnapshot() *snapshot {

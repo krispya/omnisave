@@ -12,6 +12,7 @@ require (
 	github.com/libp2p/zeroconf/v2 v2.2.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/shirou/gopsutil/v4 v4.26.7
+	go.starlark.net v0.0.0-20260708150628-5395d018f003
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.46.1
 )
@@ -54,7 +55,6 @@ require (
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	go.starlark.net v0.0.0-20260708150628-5395d018f003 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
