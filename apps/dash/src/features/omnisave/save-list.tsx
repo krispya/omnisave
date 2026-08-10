@@ -27,6 +27,7 @@ type SaveListProps = {
   onOpenSave: (save: Omnisave, revisionID?: string) => void;
   onRequestRestore: (save: Omnisave, revision: Revision) => void;
   onRequestFork: (save: Omnisave, revision: Revision) => void;
+  onRequestDeleteRevision: (save: Omnisave, revision: Revision) => void;
 };
 
 function SaveFileIcon() {
@@ -83,6 +84,7 @@ export function SaveList({
   onOpenSave,
   onRequestRestore,
   onRequestFork,
+  onRequestDeleteRevision,
 }: SaveListProps) {
   return (
     <div className="space-y-3">
@@ -185,6 +187,7 @@ export function SaveList({
                   onOpenSave={onOpenSave}
                   onRequestRestore={(revision) => onRequestRestore(save, revision)}
                   onRequestFork={(revision) => onRequestFork(save, revision)}
+                  onRequestDelete={(revision) => onRequestDeleteRevision(save, revision)}
                 />
               </div>
             ) : null}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // PutObject stores content under its SHA-256, compressed. The hash is verified
@@ -109,6 +110,83 @@ func (s *Store) RemoveObject(hash string) error {
 		return nil
 	}
 	if err := os.Remove(s.objectPath(hash)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// QuarantineObject atomically moves an object out of the readable namespace
+// while its database removal transaction is open. A crash is safe because the
+// next Store.Open restores every quarantine before recovery infers anything.
+func (s *Store) QuarantineObject(hash string) (bool, error) {
+	if !ValidHash(hash) {
+		return false, ErrNotFound
+	}
+	source := s.objectPath(hash)
+	target := s.quarantinedObjectPath(hash)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return false, err
+	}
+	if err := os.Rename(source, target); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// RestoreQuarantinedObject rolls back a staged removal after a transaction
+// failure. If a concurrent upload already restored the content-addressed
+// object, the duplicate quarantine can simply be removed.
+func (s *Store) RestoreQuarantinedObject(hash string) error {
+	if !ValidHash(hash) {
+		return ErrNotFound
+	}
+	return s.restoreQuarantinedObject(hash)
+}
+
+// FinalizeQuarantinedObject completes a committed removal. Failure is only a
+// leak: Store.Open restores the object and a later complete sweep retries it.
+func (s *Store) FinalizeQuarantinedObject(hash string) error {
+	if !ValidHash(hash) {
+		return ErrNotFound
+	}
+	if err := os.Remove(s.quarantinedObjectPath(hash)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) restoreQuarantinedObjects() error {
+	root := filepath.Join(s.root, reclaimingDir)
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".gz" {
+			return nil
+		}
+		hash := strings.TrimSuffix(entry.Name(), ".gz")
+		if !ValidHash(hash) {
+			return nil
+		}
+		return s.restoreQuarantinedObject(hash)
+	})
+}
+
+func (s *Store) restoreQuarantinedObject(hash string) error {
+	target := s.objectPath(hash)
+	quarantined := s.quarantinedObjectPath(hash)
+	if _, err := os.Stat(target); err == nil {
+		return s.FinalizeQuarantinedObject(hash)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(quarantined, target); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil

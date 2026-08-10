@@ -251,6 +251,10 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 				ActualCurrentRevisionID:   cloneString(conflict.ActualCurrentRevisionID),
 			}
 		}
+		var unavailable *storage.ArtifactsUnavailable
+		if errors.As(err, &unavailable) {
+			return nil, &omnisave.MissingArtifacts{SHA256: unavailable.SHA256}
+		}
 		return nil, translateError(err)
 	}
 	return &revision, nil
@@ -278,6 +282,18 @@ func (s *service) UpdateRevision(ctx context.Context, saveID, revisionID string,
 		return nil, translateError(err)
 	}
 	return s.GetRevision(ctx, saveID, revisionID)
+}
+
+func (s *service) DeleteRevision(ctx context.Context, saveID, revisionID string) error {
+	if revisionID == "" {
+		return omnisave.ErrInvalid
+	}
+	err := s.repository.DeleteRevision(ctx, saveID, revisionID)
+	var inUse *storage.RevisionInUse
+	if errors.As(err, &inUse) {
+		return &omnisave.RevisionInUse{Reason: inUse.Reason}
+	}
+	return translateError(err)
 }
 
 func (s *service) StoreArtifact(ctx context.Context, artifact omnisave.Artifact, payload io.Reader) error {

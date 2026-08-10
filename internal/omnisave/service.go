@@ -30,6 +30,25 @@ type MissingArtifacts struct {
 func (e *MissingArtifacts) Error() string { return ErrArtifactMissing.Error() }
 func (e *MissingArtifacts) Unwrap() error { return ErrArtifactMissing }
 
+var ErrRevisionInUse = errors.New("omnisave: revision in use")
+
+// Reasons deleting a revision is refused: the node is a save's current
+// revision, has children building on it, or is where a fork began.
+const (
+	RevisionInUseCurrent    = "current"
+	RevisionInUseChildren   = "children"
+	RevisionInUseForkOrigin = "fork_origin"
+)
+
+// RevisionInUse reports a revision deletion refused because the graph still
+// needs the node, and names why.
+type RevisionInUse struct {
+	Reason string
+}
+
+func (e *RevisionInUse) Error() string { return ErrRevisionInUse.Error() + ": " + e.Reason }
+func (e *RevisionInUse) Unwrap() error { return ErrRevisionInUse }
+
 // Service is the application boundary for working with Omnisave records.
 type Service interface {
 	Create(ctx context.Context, input CreateOmnisave) (*Omnisave, error)
@@ -44,6 +63,7 @@ type Service interface {
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*Revision, error)
 	ListRevisions(ctx context.Context, omnisaveID string) ([]Revision, error)
 	UpdateRevision(ctx context.Context, omnisaveID, revisionID string, input UpdateRevision) (*Revision, error)
+	DeleteRevision(ctx context.Context, omnisaveID, revisionID string) error
 
 	StoreArtifact(ctx context.Context, artifact Artifact, payload io.Reader) error
 	StatArtifact(ctx context.Context, sha256 string) (int64, error)

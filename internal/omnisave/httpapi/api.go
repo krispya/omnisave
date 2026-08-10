@@ -97,6 +97,7 @@ func (api *API) guardedRoutes() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions", api.listRevisions)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/{revisionID}", api.getRevision)
 	mux.HandleFunc("PATCH /api/v1/omnisaves/{id}/revisions/{revisionID}", api.updateRevision)
+	mux.HandleFunc("DELETE /api/v1/omnisaves/{id}/revisions/{revisionID}", api.deleteRevision)
 	mux.HandleFunc("POST /api/v1/omnisaves/{id}/forks", api.fork)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/archive", api.archive)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/{revisionID}/archive", api.archiveRevision)
@@ -266,6 +267,15 @@ func (a *API) updateRevision(w http.ResponseWriter, r *http.Request) {
 	}
 	a.publishLibraryChanged()
 	writeJSON(w, http.StatusOK, revision)
+}
+
+func (a *API) deleteRevision(w http.ResponseWriter, r *http.Request) {
+	if err := a.saves.DeleteRevision(r.Context(), r.PathValue("id"), r.PathValue("revisionID")); err != nil {
+		writeError(w, err)
+		return
+	}
+	a.publishLibraryChanged()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) fork(w http.ResponseWriter, r *http.Request) {
@@ -759,6 +769,15 @@ func writeError(w http.ResponseWriter, err error) {
 			"status":                       http.StatusConflict,
 			"expected_current_revision_id": conflict.ExpectedCurrentRevisionID,
 			"actual_current_revision_id":   conflict.ActualCurrentRevisionID,
+		})
+		return
+	}
+	var inUse *omnisave.RevisionInUse
+	if errors.As(err, &inUse) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":  "revision_in_use",
+			"status": http.StatusConflict,
+			"reason": inUse.Reason,
 		})
 		return
 	}

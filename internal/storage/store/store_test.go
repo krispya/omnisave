@@ -99,6 +99,28 @@ func TestIdenticalContentIsStoredOnce(t *testing.T) {
 	}
 }
 
+func TestOpeningRestoresAnObjectWhoseRemovalWasInterrupted(t *testing.T) {
+	root := t.TempDir()
+	saveStore := openStore(t, root)
+	contents := "content quarantined before its transaction committed"
+	hash := hashOf(contents)
+	if _, err := saveStore.PutObject(hash, strings.NewReader(contents)); err != nil {
+		t.Fatal(err)
+	}
+	quarantined, err := saveStore.QuarantineObject(hash)
+	if err != nil || !quarantined {
+		t.Fatalf("expected the object staged for removal: %v", err)
+	}
+	if saveStore.HasObject(hash) {
+		t.Fatal("a quarantined object must not remain readable during removal")
+	}
+
+	reopened := openStore(t, root)
+	if got := readObject(t, reopened, hash); got != contents {
+		t.Fatalf("expected startup to restore the interrupted removal, got %q", got)
+	}
+}
+
 func TestRecordsRoundTripThroughTheDirectory(t *testing.T) {
 	root := t.TempDir()
 	saveStore := openStore(t, root)
@@ -132,6 +154,42 @@ func TestRecordsRoundTripThroughTheDirectory(t *testing.T) {
 	}
 	if len(read.Files) != 1 || read.Files[0].Path != "saves/chrono.srm" {
 		t.Fatalf("expected the file list to survive, got %+v", read.Files)
+	}
+}
+
+func TestDeletionMarkersAreImmutableAndDiscoverable(t *testing.T) {
+	root := t.TempDir()
+	saveStore := openStore(t, root)
+	first := store.Deletion{
+		TargetKind: store.DeletionRevision,
+		TargetID:   "revision-1",
+		DeletedAt:  time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC),
+	}
+	if err := saveStore.PutDeletion(first); err != nil {
+		t.Fatal(err)
+	}
+	changed := first
+	changed.DeletedAt = changed.DeletedAt.Add(time.Hour)
+	if err := saveStore.PutDeletion(changed); err != nil {
+		t.Fatal(err)
+	}
+
+	read, err := saveStore.GetDeletion(store.DeletionRevision, first.TargetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !read.DeletedAt.Equal(first.DeletedAt) {
+		t.Fatalf("an existing committed marker was overwritten: %s", read.DeletedAt)
+	}
+	var ids []string
+	if err := saveStore.EachDeletionID(store.DeletionRevision, func(id string) error {
+		ids = append(ids, id)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != first.TargetID {
+		t.Fatalf("expected the marker namespace to expose its identifier, got %v", ids)
 	}
 }
 

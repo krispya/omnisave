@@ -15,6 +15,7 @@ export type SaveHistory = {
   loading: boolean;
   error: string;
   replaceRevision: (revision: Revision) => void;
+  removeRevision: (revisionID: string) => void;
 };
 
 type Snapshot = {
@@ -60,6 +61,21 @@ function replaceInCaches(revision: Revision) {
     shown.set(
       id,
       revisions.map((candidate) => (candidate.id === revision.id ? revision : candidate))
+    );
+  }
+}
+
+// A deletion must reach every cached history the same way a rename does: the
+// history key does not change — deleting never moves the current pointer — so
+// a stale cache would resurrect the revision for the rest of the session.
+function dropFromCaches(revisionID: string) {
+  for (const [id, key] of shownKeys) {
+    const revisions = histories.get(key) ?? shown.get(id);
+    if (!revisions?.some((candidate) => candidate.id === revisionID)) continue;
+    histories.delete(key);
+    shown.set(
+      id,
+      revisions.filter((candidate) => candidate.id !== revisionID)
     );
   }
 }
@@ -126,10 +142,20 @@ export function useSaveRevisions(token: string, save?: Omnisave): SaveHistory {
     record(key, revisions);
     setSnapshot({ key, revisions, error: '' });
   }
+  function removeRevision(revisionID: string) {
+    if (!key) return;
+    dropFromCaches(revisionID);
+    const revisions = current.revisions?.filter((candidate) => candidate.id !== revisionID);
+    if (!revisions) return;
+    histories.delete(key);
+    record(key, revisions);
+    setSnapshot({ key, revisions, error: '' });
+  }
   return {
     revisions: current.revisions ?? [],
     loading: Boolean(key) && current.revisions === undefined && !current.error,
     error: current.error,
     replaceRevision,
+    removeRevision,
   };
 }

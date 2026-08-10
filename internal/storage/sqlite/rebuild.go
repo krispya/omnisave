@@ -25,112 +25,99 @@ import (
 // identifier, so a healthy open discovers it is missing nothing at the cost of
 // a directory listing, and reads only the records it is about to import.
 //
-// Damage stops nothing here. An unreadable record is logged and skipped, and a
-// manifest whose lineage record was lost is imported through the identity it
-// carries itself — which is what the denormalized identity in manifests is
-// for. The one asymmetry: a tombstoned lineage is never imported, because the
-// tombstone records its owner throwing it away, and honoring that is the
-// difference between recovery and resurrection.
+// Before this pass, inspectStore reads every reachability record. If that walk
+// is incomplete, valid deletion facts are still honored but no absence-based
+// import or reclamation is attempted.
 
 // rebuild imports into the database what the store holds and the database
 // lacks. It runs on open, before reconcile, so the two passes together leave
 // database and store agreeing whichever of them survived.
-func (r *Repository) rebuild(ctx context.Context) error {
-	var imported struct{ games, saves, revisions, damaged, missingObjects int }
-	note := func(what string, err error) {
-		imported.damaged++
-		log.Printf("save store: could not read %s during rebuild: %v", what, err)
+func (r *Repository) rebuild(ctx context.Context, inventory recoveryInventory) (bool, error) {
+	var imported struct{ games, saves, revisions, missingObjects int }
+	if err := r.applyDeletionMarkers(ctx, inventory); err != nil {
+		return false, err
+	}
+	if !inventory.deletionsComplete {
+		log.Printf("save store: deletion inventory is incomplete; absence-based imports and reclamation are disabled")
+		return false, nil
 	}
 
 	knownGames, err := tableIDs(ctx, r.db, "games")
 	if err != nil {
-		return err
+		return false, err
 	}
 	knownSaves, err := tableIDs(ctx, r.db, "omnisaves")
 	if err != nil {
-		return err
+		return false, err
 	}
 	knownRevisions, err := tableIDs(ctx, r.db, "revisions")
 	if err != nil {
-		return err
+		return false, err
 	}
 	revisionNames := make(map[string]map[string]string)
 	storeCurrents := make(map[string]*string)
-	// Saves this rebuild imports take the Current Revision the store recorded
-	// for them; saves the database already held keep the database's pointer —
-	// the database is the live authority on what it already knows.
+	// Saves absent from the database need a legacy fallback when their portable
+	// record predates the explicit Current Revision field.
 	importedSaves := make(map[string]bool)
 
 	// Games first: they reference nothing, and the lineages imported after
 	// them read better with their titles already in place.
-	if err := r.store.EachGameID(func(id string) error {
-		if knownGames[id] {
-			return nil
+	for _, id := range sortedKeys(inventory.games) {
+		if _, deleted := inventory.deletedGames[id]; deleted {
+			continue
 		}
-		record, err := r.store.GetGame(id)
-		if err != nil {
-			note("game "+id, err)
-			return nil
+		record := inventory.games[id]
+		if err := r.importGame(ctx, record, knownGames[id]); err != nil {
+			return false, err
 		}
-		if err := r.importGame(ctx, record); err != nil {
-			return err
+		if !knownGames[id] {
+			imported.games++
 		}
 		knownGames[id] = true
-		imported.games++
-		return nil
-	}); err != nil {
-		return err
 	}
 
-	// Lineage records: import live ones the database lacks, and remember the
-	// tombstoned ones so their manifests — leftovers of a deletion a crash
-	// interrupted — are not imported behind the owner's back.
-	tombstoned := make(map[string]bool)
-	if err := r.store.EachOmnisaveID(func(id string) error {
-		record, err := r.store.GetOmnisave(id)
-		if err != nil {
-			note("save "+id, err)
-			return nil
+	// Portable lineage records are the acknowledged mutable state. The outbox
+	// is replayed before this pass, so applying them to existing rows also
+	// repairs a database restored from an older backup.
+	for _, id := range sortedKeys(inventory.saves) {
+		if _, deleted := inventory.deletedSaves[id]; deleted {
+			continue
 		}
+		record := inventory.saves[id]
 		revisionNames[id] = record.RevisionNames
 		storeCurrents[id] = record.CurrentRevisionID
 		if knownSaves[id] {
-			return nil
-		}
-		if record.DeletedAt != nil {
-			tombstoned[id] = true
-			return nil
+			r.noteRecordRowDivergence(ctx, record)
 		}
 		if err := r.importOmnisave(ctx, record); err != nil {
-			return err
+			return false, err
+		}
+		if !knownSaves[id] {
+			importedSaves[id] = true
+			imported.saves++
 		}
 		knownSaves[id] = true
-		importedSaves[id] = true
-		imported.saves++
-		return nil
-	}); err != nil {
-		return err
 	}
 
-	// Manifests the database lacks, grouped by lineage. Only these are read.
+	// Manifests the database lacks, grouped by lineage. Immutable deletion
+	// markers override stale manifests from a restored store backup.
 	arrivals := make(map[string][]store.Revision)
-	if err := r.store.EachRevisionID(func(id string) error {
+	for _, id := range sortedKeys(inventory.revisions) {
+		manifest := inventory.revisions[id]
 		if knownRevisions[id] {
-			return nil
+			continue
 		}
-		manifest, err := r.store.GetRevision(id)
-		if err != nil {
-			note("revision "+id, err)
-			return nil
+		if _, deleted := inventory.deletedRevisions[id]; deleted {
+			continue
+		}
+		if _, deleted := inventory.deletedSaves[manifest.Omnisave.ID]; deleted {
+			continue
 		}
 		arrivals[manifest.Omnisave.ID] = append(arrivals[manifest.Omnisave.ID], manifest)
-		return nil
-	}); err != nil {
-		return err
 	}
 
 	for omnisaveID, manifests := range arrivals {
-		if !knownSaves[omnisaveID] && !tombstoned[omnisaveID] {
+		if !knownSaves[omnisaveID] {
 			// No lineage record and no row: the record was lost. The manifests
 			// carry the lineage's identity themselves, so the save is
 			// reconstructed from them rather than abandoned with them.
@@ -138,7 +125,7 @@ func (r *Repository) rebuild(ctx context.Context) error {
 			log.Printf("save store: reconstructing save %s (%q) from its manifests; its record was lost",
 				record.ID, record.DisplayName)
 			if err := r.importOmnisave(ctx, record); err != nil {
-				return err
+				return false, err
 			}
 			knownSaves[omnisaveID] = true
 			importedSaves[omnisaveID] = true
@@ -149,7 +136,7 @@ func (r *Repository) rebuild(ctx context.Context) error {
 		// regardless of which other record was lost.
 		if game, found := gameFromManifests(manifests, knownGames); found {
 			if err := r.importGame(ctx, game); err != nil {
-				return err
+				return false, err
 			}
 			knownGames[game.ID] = true
 			imported.games++
@@ -157,7 +144,7 @@ func (r *Repository) rebuild(ctx context.Context) error {
 	}
 	count, missing, err := r.importRevisions(ctx, arrivals, knownRevisions, revisionNames, importedSaves, storeCurrents)
 	if err != nil {
-		return err
+		return false, err
 	}
 	imported.revisions += count
 	imported.missingObjects += missing
@@ -169,16 +156,96 @@ func (r *Repository) rebuild(ctx context.Context) error {
 	if imported.missingObjects > 0 {
 		log.Printf("save store: %d file(s) named by imported manifests have no object in the store; those snapshots are incomplete here and their other files remain recoverable", imported.missingObjects)
 	}
-	if imported.damaged > 0 {
-		log.Printf("save store: %d record(s) could not be read and were skipped; the store may be damaged", imported.damaged)
+	return inventory.complete, nil
+}
+
+// applyDeletionMarkers is monotonic repair: every row it removes has a valid,
+// immutable marker proving that the logical delete committed. It is therefore
+// safe even when the rest of the store inventory is damaged.
+func (r *Repository) applyDeletionMarkers(ctx context.Context, inventory recoveryInventory) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	return nil
+	defer tx.Rollback()
+	for id, marker := range inventory.deletedSaves {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO deletion_ledger(target_kind, target_id, deleted_at)
+			VALUES (?, ?, ?) ON CONFLICT(target_kind, target_id) DO NOTHING`, marker.TargetKind,
+			marker.TargetID, marker.DeletedAt.Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM omnisaves WHERE id = ?`, id); err != nil {
+			return err
+		}
+	}
+	for id, marker := range inventory.deletedRevisions {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO deletion_ledger(target_kind, target_id, deleted_at)
+			VALUES (?, ?, ?) ON CONFLICT(target_kind, target_id) DO NOTHING`, marker.TargetKind,
+			marker.TargetID, marker.DeletedAt.Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM revisions WHERE id = ?`, id); err != nil {
+			return err
+		}
+	}
+	for id, marker := range inventory.deletedGames {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO deletion_ledger(target_kind, target_id, deleted_at)
+			VALUES (?, ?, ?) ON CONFLICT(target_kind, target_id) DO NOTHING`, marker.TargetKind,
+			marker.TargetID, marker.DeletedAt.Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM games WHERE id = ?`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// noteRecordRowDivergence says loudly when a portable record is about to
+// overwrite a row that disagrees with it. The record wins — the outbox keeps
+// it the acknowledged state, and the two agree at rest — so a disagreement
+// means a legacy store that lagged, or an older store backup restored beside
+// a newer database, and rolling a name or Current Revision back silently
+// would be indistinguishable from data loss to its owner.
+func (r *Repository) noteRecordRowDivergence(ctx context.Context, record store.Omnisave) {
+	var displayName string
+	var current sql.NullString
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT display_name, current_revision_id FROM omnisaves WHERE id = ?`, record.ID,
+	).Scan(&displayName, &current); err != nil {
+		return
+	}
+	if displayName != record.DisplayName {
+		log.Printf("save store: record for save %s carries the name %q over the database's %q; the portable record is the acknowledged state",
+			record.ID, record.DisplayName, displayName)
+	}
+	if !sameNullableString(current, record.CurrentRevisionID) {
+		recorded := "none"
+		if record.CurrentRevisionID != nil {
+			recorded = *record.CurrentRevisionID
+		}
+		held := "none"
+		if current.Valid {
+			held = current.String
+		}
+		log.Printf("save store: record for save %s moves the current revision from %s to %s; the portable record is the acknowledged state",
+			record.ID, held, recorded)
+	}
+}
+
+func sortedKeys[T any](values map[string]T) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // importGame writes a store game record through the same path a provider
 // lookup would take, so identity claims merge instead of colliding.
-func (r *Repository) importGame(ctx context.Context, record store.Game) error {
-	return r.SaveGame(ctx, catalog.Game{
+func (r *Repository) importGame(ctx context.Context, record store.Game, exists ...bool) error {
+	game := catalog.Game{
 		ID:              record.ID,
 		Title:           record.Title,
 		SortTitle:       record.SortTitle,
@@ -187,7 +254,36 @@ func (r *Repository) importGame(ctx context.Context, record store.Game) error {
 		Publisher:       record.Publisher,
 		Identifiers:     record.Identifiers,
 		Fingerprints:    record.Fingerprints,
-	}, nil)
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if len(exists) > 0 && exists[0] {
+		_, err = tx.ExecContext(ctx, `UPDATE games SET title = ?, sort_title = ?, platform = ?,
+			platform_company = ?, publisher = ? WHERE id = ?`, game.Title, game.SortTitle,
+			game.Platform, game.PlatformCompany, game.Publisher, game.ID)
+	} else {
+		err = saveGameMetadata(ctx, tx, game)
+	}
+	if err != nil {
+		return err
+	}
+	for _, identifier := range game.Identifiers {
+		if err := claimIdentity(ctx, tx, "game_identifiers", game.ID,
+			[]string{"namespace", "value"}, []any{identifier.Namespace, identifier.Value}); err != nil {
+			return err
+		}
+	}
+	for _, fingerprint := range game.Fingerprints {
+		if err := claimIdentity(ctx, tx, "game_fingerprints", game.ID,
+			[]string{"platform", "algorithm", "value"},
+			[]any{fingerprint.Platform, fingerprint.Algorithm, fingerprint.Value}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (r *Repository) importOmnisave(ctx context.Context, record store.Omnisave) error {
@@ -198,7 +294,13 @@ func (r *Repository) importOmnisave(ctx context.Context, record store.Omnisave) 
 	_, err = r.db.ExecContext(ctx, `INSERT INTO omnisaves(
 		id, game_id, display_name, current_revision_id,
 		forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		game_id = excluded.game_id, display_name = excluded.display_name,
+		current_revision_id = excluded.current_revision_id,
+		forked_from_omnisave_id = excluded.forked_from_omnisave_id,
+		forked_from_revision_id = excluded.forked_from_revision_id,
+		created_at = excluded.created_at, metadata = excluded.metadata`,
 		record.ID, record.GameID, record.DisplayName, record.CurrentRevisionID,
 		forkOmnisaveID(record.ForkedFrom), forkRevisionID(record.ForkedFrom),
 		record.CreatedAt.Format(time.RFC3339Nano), string(metadata))
@@ -259,17 +361,28 @@ func (r *Repository) importRevisions(
 			return 0, 0, err
 		}
 		for _, file := range manifest.Files {
+			available := r.store.HasObject(file.SHA256)
+			// Recovery preserves manifests even when a partial copy omitted an
+			// object. Publish the row briefly so the reference trigger can check
+			// descriptor agreement, then mark the capability unavailable before
+			// commit when the bytes are absent.
+			if _, err := tx.ExecContext(ctx, `INSERT INTO artifacts(sha256, size, available)
+				VALUES (?, ?, 1)
+				ON CONFLICT(sha256) DO UPDATE SET size = excluded.size, available = 1`,
+				file.SHA256, file.Size); err != nil {
+				return 0, 0, err
+			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO revision_files(
 				revision_id, path, artifact_format, artifact_sha256, artifact_size
 			) VALUES (?, ?, ?, ?, ?)`, manifest.ID, file.Path, file.Format, file.SHA256, file.Size); err != nil {
 				return 0, 0, err
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO artifacts(sha256, size)
-				VALUES (?, ?)`, file.SHA256, file.Size); err != nil {
-				return 0, 0, err
-			}
-			if !r.store.HasObject(file.SHA256) {
+			if !available {
 				missingObjects++
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE artifacts SET available = 0 WHERE sha256 = ?`, file.SHA256); err != nil {
+					return 0, 0, err
+				}
 			}
 		}
 		knownRevisions[manifest.ID] = true

@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
+	"github.com/krisbaumgartner/omnisave/internal/storage"
 	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
 	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
@@ -54,6 +56,92 @@ func TestDeclaredSizeIsNeverTakenOnFaith(t *testing.T) {
 	}
 }
 
+// Service-layer preflight is advisory: an object can disappear after HEAD and
+// before the revision transaction. The repository re-proves availability at
+// the reference-creating boundary, so no row can acknowledge missing bytes.
+func TestRevisionCommitRequiresArtifactAvailabilityAtThePersistenceBoundary(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repository, err := sqlite.Open(
+		filepath.Join(directory, "omnisave.db"),
+		filepath.Join(directory, "store"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves := omnisaveservice.New(repository)
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Only save"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := storeOmnisaveArtifact(t, ctx, saves, "bytes present during preflight")
+	if err := repository.Store().RemoveObject(artifact.SHA256); err != nil {
+		t.Fatal(err)
+	}
+
+	err = repository.CommitRevision(ctx, nil, omnisave.Revision{
+		ID:         "revision-with-missing-bytes",
+		OmnisaveID: save.ID,
+		CreatedAt:  time.Now().UTC(),
+		Files: []omnisave.RevisionFile{{
+			Path: "save.dat", Artifact: artifact,
+		}},
+	})
+	var unavailable *storage.ArtifactsUnavailable
+	if !errors.As(err, &unavailable) || len(unavailable.SHA256) != 1 || unavailable.SHA256[0] != artifact.SHA256 {
+		t.Fatalf("expected the persistence boundary to reject the missing object, got %v", err)
+	}
+	history, err := repository.ListRevisions(ctx, save.ID)
+	if err != nil || len(history) != 0 {
+		t.Fatalf("an unavailable artifact must not leave a revision row: %+v (%v)", history, err)
+	}
+}
+
+// A portable marker may lag its committed delete when the store is down. The
+// SQLite ledger closes that cross-process window: another repository cannot
+// reuse the identifier merely because it has not observed the marker yet.
+func TestDeletedIdentifiersCannotBeReusedBeforeOutboxProjection(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "omnisave.db")
+	storeDir := filepath.Join(directory, "store")
+	first, err := sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		first.Close()
+		t.Fatal(err)
+	}
+	game := catalog.Game{ID: "never-reused", Title: "Original"}
+	if err := first.SaveGame(ctx, game, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	markerNamespace := filepath.Join(storeDir, "deletions", store.DeletionGame)
+	if err := os.RemoveAll(markerNamespace); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerNamespace, []byte("store unavailable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.DeleteGame(ctx, game.ID); err == nil {
+		t.Fatal("expected deletion to remain unacknowledged while its marker cannot be written")
+	}
+	game.Title = "Accidental reuse"
+	if err := second.SaveGame(ctx, game, nil); !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("expected the committed deletion ledger to reject reuse, got %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A store restored without its database has no size index at all, so an honest
 // upload of content already present has to be confirmed against the object
 // rather than rejected for lack of a row.
@@ -89,8 +177,8 @@ func TestDeduplicatedUploadIsConfirmedAgainstTheStore(t *testing.T) {
 	}
 }
 
-// Reconciling writes what the database holds, and a deleted save is exactly
-// what it no longer holds. The tombstone must survive that pass.
+// Reconciling writes what the database holds, but an immutable deletion marker
+// remains the durable proof that a missing save was deliberately removed.
 func TestReconcilingDoesNotResurrectADeletedSave(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
@@ -127,22 +215,15 @@ func TestReconcilingDoesNotResurrectADeletedSave(t *testing.T) {
 	}
 	defer repository.Close()
 
-	record, err := repository.Store().GetOmnisave(save.ID)
-	if err != nil {
-		t.Fatalf("expected the deleted save's record to remain: %v", err)
-	}
-	if record.DeletedAt == nil {
-		t.Fatal("reconciling resurrected a deleted save")
+	marker, err := repository.Store().GetDeletion(store.DeletionOmnisave, save.ID)
+	if err != nil || marker.TargetID != save.ID {
+		t.Fatalf("expected the committed deletion marker to remain: %+v (%v)", marker, err)
 	}
 }
 
-// Deletion tombstones the store before the database commits, so the store is
-// never behind the database on a deletion. That ordering is only safe because
-// the reverse — a tombstone for a delete that then failed — heals itself: the
-// row is still there, and reconciling rewrites the record from it.
-//
-// This constructs the state that ordering produces on a crash, which no
-// successful call can reach: a live save carrying a tombstone.
+// Version 3 could leave a pre-commit tombstone beside a live row. Migration
+// treats that ambiguous legacy state conservatively: the live data wins,
+// because the old tombstone cannot prove its transaction committed.
 func TestATombstoneForASaveThatWasNotDeletedIsCleared(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
@@ -259,6 +340,11 @@ func TestOneUnwritableRecordDoesNotStopTheServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	orphanContent := "unreferenced content retained while reachability is unknown"
+	orphanHash := sha256Hex(orphanContent)
+	if _, err := repository.Store().PutObject(orphanHash, strings.NewReader(orphanContent)); err != nil {
+		t.Fatal(err)
+	}
 	if err := repository.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -281,6 +367,12 @@ func TestOneUnwritableRecordDoesNotStopTheServer(t *testing.T) {
 
 	if _, err := omnisaveservice.New(repository).Get(ctx, save.ID); err != nil {
 		t.Fatalf("expected the save to still be served: %v", err)
+	}
+	if !repository.Store().HasObject(orphanHash) {
+		t.Fatal("incomplete recovery must retain even apparently unreferenced content")
+	}
+	if err := repository.UpdateOmnisaveDisplayName(ctx, save.ID, "unsafe rewrite"); err == nil {
+		t.Fatal("durable mutations must stop until the portable inventory is complete")
 	}
 }
 
