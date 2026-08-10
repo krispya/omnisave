@@ -159,6 +159,13 @@ func (r *Repository) inspectStore() recoveryInventory {
 		}
 	}
 	for id, record := range inventory.saves {
+		// A committed deletion marker is positive proof that this lineage record
+		// is no longer live. Its manifests may already have been reclaimed, so
+		// validating the stale Current Revision or fork origin would mistake
+		// successful cleanup for store damage and lock unrelated saves read-only.
+		if _, deleted := inventory.deletedSaves[id]; deleted {
+			continue
+		}
 		if record.CurrentRevisionID != nil {
 			if _, deleted := inventory.deletedRevisions[*record.CurrentRevisionID]; deleted {
 				record.CurrentRevisionID = nil
