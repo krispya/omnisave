@@ -288,6 +288,9 @@ func (r *MemoryRepository) UpdateRevisionDisplayName(_ context.Context, saveID, 
 		for index := range revisions {
 			if revisions[index].ID == revisionID {
 				revisions[index].DisplayName = displayName
+				// Renaming is the human path, so it stamps the name manual,
+				// matching the SQL repository.
+				revisions[index].NameSource = omnisave.NameSourceManual
 				r.revisions[creator] = revisions
 				return nil
 			}

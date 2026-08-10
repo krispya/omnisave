@@ -23,18 +23,29 @@ type ForkOrigin struct {
 	RevisionID string `json:"revision_id"`
 }
 
+// NameSource values record who set a revision's DisplayName. The rule they
+// exist for: automation may replace a labeler-derived name or fill an empty
+// one, but a manually chosen name is never overwritten.
+const (
+	NameSourceLabeler = "labeler"
+	NameSourceManual  = "manual"
+)
+
 // Revision is a content-immutable node in a game's single-parent history.
 // OmnisaveID records which Omnisave created it; forks may share the node as
 // ancestry. DisplayName is shared presentation metadata and may be changed
 // without changing the snapshot or its identity.
 type Revision struct {
-	ID          string            `json:"id"`
-	OmnisaveID  string            `json:"omnisave_id"`
-	DisplayName string            `json:"display_name"`
-	ParentID    *string           `json:"parent_id"`
-	CreatedAt   time.Time         `json:"created_at"`
-	Files       []RevisionFile    `json:"files"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	ID          string  `json:"id"`
+	OmnisaveID  string  `json:"omnisave_id"`
+	DisplayName string  `json:"display_name"`
+	ParentID    *string `json:"parent_id"`
+	// NameSource is NameSourceLabeler or NameSourceManual when DisplayName is
+	// set, and empty while the revision is unnamed.
+	NameSource string            `json:"name_source,omitempty"`
+	CreatedAt  time.Time         `json:"created_at"`
+	Files      []RevisionFile    `json:"files"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
 // RevisionFile maps a canonical save path to immutable content.

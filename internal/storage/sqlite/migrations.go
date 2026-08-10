@@ -498,6 +498,13 @@ var migrations = []string{
 	BEGIN
 		SELECT RAISE(ABORT, 'deleted revision identifier');
 	END;`,
+
+	// name_source records who set display_name — 'labeler' for a name a game's
+	// labeler derived at commit, 'manual' for a person's choice — so that
+	// automation can later replace its own names without touching anyone's.
+	// Every name that exists today predates labelers and is therefore manual.
+	`ALTER TABLE revisions ADD COLUMN name_source TEXT NOT NULL DEFAULT '';
+	UPDATE revisions SET name_source = 'manual' WHERE display_name <> '';`,
 }
 
 func migrate(db *sql.DB) error {
