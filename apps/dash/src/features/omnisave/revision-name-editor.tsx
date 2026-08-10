@@ -70,7 +70,7 @@ export function RevisionNameEditor({ revision, fallbackName, onSave }: RevisionN
       <button
         type="button"
         onClick={startEditing}
-        className="pointer-events-auto relative z-10 max-w-48 truncate rounded font-mono text-xs text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-text"
+        className="pointer-events-auto relative z-10 min-w-0 flex-1 truncate rounded text-left font-mono text-xs text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-text"
         title={`Name revision ${fallbackName}`}
       >
         {displayName}
@@ -79,7 +79,7 @@ export function RevisionNameEditor({ revision, fallbackName, onSave }: RevisionN
   }
 
   return (
-    <div className="pointer-events-auto relative z-20 min-w-0 max-w-48">
+    <div className="pointer-events-auto relative z-20 min-w-0 flex-1">
       <input
         ref={input}
         autoFocus
@@ -95,7 +95,7 @@ export function RevisionNameEditor({ revision, fallbackName, onSave }: RevisionN
         maxLength={100}
         aria-label={`Name for revision ${fallbackName}`}
         aria-invalid={Boolean(error)}
-        className={`h-6 w-48 max-w-full rounded border-0 px-1.5 font-mono text-xs text-text outline-none disabled:opacity-60 ${
+        className={`h-6 w-full rounded border-0 px-1.5 font-mono text-xs text-text outline-none disabled:opacity-60 ${
           error ? 'bg-danger/20' : 'bg-bg'
         }`}
       />
