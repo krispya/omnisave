@@ -37,10 +37,14 @@ uses.
 Every transaction affecting portable state records a self-contained snapshot
 or deletion fact in the same commit. Replay never has to query rows a later
 transaction may have changed or removed. The outbox writes manifests, mutable
-records, and deletion markers in commit order. A request affecting durable save
-state is successful only after its required store work is durable. A failed
-store write remains queued rather than becoming an untracked, best-effort side
-effect; the committed result is discoverable, but it was not acknowledged.
+records, and deletion markers in commit order. A drainer acquires SQLite's
+writer position before selecting the oldest action and holds it through the
+durable store write and queue removal. This makes projection order
+database-wide. Two processes cannot select the same action or let an older
+mutable record overwrite a newer one. A request affecting durable save state is
+successful only after its required store work is durable. A failed store write
+remains queued rather than becoming an untracked, best-effort side effect. The
+committed result is discoverable, but it was not acknowledged.
 
 **Deletion is an immutable committed fact.** A deleting transaction removes
 the logical rows, records their identifiers in SQLite's Deletion Ledger, and
@@ -58,12 +62,12 @@ complete result can authorize a sweep. Any unreadable record, manifest, or
 deletion marker leaves recovery useful but degraded: readable data is served,
 while reclamation is skipped. Unknown always means retain.
 
-Degradation must be escapable by the passes that only add. Reconcile runs even
-against an incomplete inventory, because writing what the database holds and
-the store lacks can only repair, and the inventory is retaken after it — a gap
-the database can rewrite heals in the same open. Only damage that no additive
-pass can rewrite keeps mutations disabled, and that state asks for repair, not
-for a restart.
+Degradation must be escapable by non-destructive repair. Reconcile runs even
+against an incomplete inventory. It snapshots the database into the same
+ordered outbox used by live mutations and never deletes portable data. The
+inventory is retaken afterward, so a gap the database can rewrite heals in the
+same open. Only damage that this repair cannot replace keeps mutations
+disabled, and that state asks for repair, not for a restart.
 
 Process-local locks may serialize implementation work, but they are not a
 correctness boundary. Schema constraints, durable outbox rows, immutable
@@ -85,6 +89,9 @@ More difficult:
 
 - Artifact publication and reclamation require schema constraints and short
   database transactions spanning local filesystem renames or removals.
+- Outbox projection holds SQLite's writer position across a local store write
+  and directory sync. Other mutations wait so portable records cannot be
+  reordered across processes.
 - Store format migrations must convert legacy tombstones into immutable
   markers.
 - A store that cannot accept queued work makes the corresponding request

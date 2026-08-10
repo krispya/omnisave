@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -28,13 +29,13 @@ type Repository struct {
 	// failure. Open replays the queue before exposing the repository again.
 	storeErr error
 	// mutate serializes every mutation together with its store side effects,
-	// so no request observes another halfway through: projections stay ordered,
-	// and content reclamation cannot
-	// decide against a reference a concurrent commit is creating. Everything
-	// under it is a quick local operation — the one streaming write, an
-	// artifact upload, stays outside and takes the lock only to record what
-	// it stored. Reads never take it: the database serializes its own
-	// queries, and store files are immutable or replaced atomically.
+	// so no request through this Repository observes another halfway through.
+	// SQLite immediate transactions carry cross-process projection and
+	// reclamation ordering. Everything under this lock is a quick local
+	// operation. The one streaming write, an artifact upload, stays outside and
+	// takes the lock only to publish what it stored. Reads never take it because
+	// the database serializes its own queries, and store files are immutable or
+	// replaced atomically.
 	mutate sync.Mutex
 }
 
@@ -58,7 +59,7 @@ func Open(databasePath, storeDir string) (*Repository, error) {
 		return nil, err
 	}
 
-	db, err := sql.Open("sqlite", databasePath)
+	db, err := sql.Open("sqlite", sqliteDSN(databasePath))
 	if err != nil {
 		return nil, err
 	}
@@ -91,11 +92,11 @@ func Open(databasePath, storeDir string) (*Repository, error) {
 		db.Close()
 		return nil, err
 	}
-	// Reconcile only adds — it writes what the database holds and the store
-	// lacks — so it runs even when the inventory is incomplete. The gap is
-	// often a manifest the database can simply rewrite, and a repair pass
-	// gated on the health it is meant to restore would make the degraded
-	// state permanent.
+	// Reconcile is non-destructive and writes database snapshots through the
+	// ordered outbox, so it runs even when the inventory is incomplete. The gap
+	// is often a manifest the database can simply rewrite, and a repair pass
+	// gated on the health it is meant to restore would make the degraded state
+	// permanent.
 	reconciled, err := repository.reconcile(context.Background())
 	if err != nil {
 		db.Close()
@@ -121,6 +122,18 @@ func Open(databasePath, storeDir string) (*Repository, error) {
 		log.Printf("save store: opened in read-only recovery mode; durable mutations require a complete inventory")
 	}
 	return repository, nil
+}
+
+// sqliteDSN makes SQLite choose a writer before a transaction reads the state
+// it intends to change. This is required by protocols, such as outbox draining
+// and artifact reclamation, that must have one database-wide order across
+// Repository instances rather than relying on the process-local mutation lock.
+func sqliteDSN(databasePath string) string {
+	parameters := url.Values{
+		"_pragma": {"busy_timeout(5000)"},
+		"_txlock": {"immediate"},
+	}
+	return databasePath + "?" + parameters.Encode()
 }
 
 // Store is the portable save store this repository writes through.

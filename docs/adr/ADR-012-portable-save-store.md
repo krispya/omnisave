@@ -79,11 +79,14 @@ child's manifest names its parent, and manifests are never rewritten.
 
 **SQLite commits before the store records the result.** The same transaction
 that accepts a change enqueues its portable-store projection. The ordered
-outbox then writes manifests, mutable records, or immutable deletion markers;
-a durable-save request is not successful until that work rests in the store.
-A database failure therefore creates no deletion marker, while a store failure
-leaves replayable work rather than an untracked gap. This is the proof protocol
-defined by [ADR-014](ADR-014-durable-proof-before-forgetting.md).
+outbox then writes manifests, mutable records, or immutable deletion markers.
+Each projection holds SQLite's writer position from selecting the oldest action
+through its durable store write and queue removal, so separate processes cannot
+apply mutable records out of order. A durable-save request is not successful
+until that work rests in the store. A database failure therefore creates no
+deletion marker, while a store failure leaves replayable work rather than an
+untracked gap. This is the proof protocol defined by
+[ADR-014](ADR-014-durable-proof-before-forgetting.md).
 
 **Content is reclaimed only with proof.** Relational references can name only
 available artifacts and prevent their registry rows from being removed.
@@ -116,11 +119,11 @@ More difficult:
 - **Repair is load-bearing, and runs both ways.** Opening first replays the
   transactional outbox, then inventories the portable store. Valid deletion
   markers remove stale rows from an older database; complete portable records
-  restore acknowledged mutable state and missing history; reconcile fills only
-  records absent from a healthy store. The sweep that follows is the one pass
-  that infers garbage, and its API requires the completeness proof produced by
-  that inventory. These passes have to be tested as the correctness mechanism
-  they are.
+  restore acknowledged mutable state and missing history; reconcile snapshots
+  the resulting database through the ordered outbox without deleting portable
+  data. The sweep that follows is the one pass that infers garbage, and its API
+  requires the completeness proof produced by that inventory. These passes
+  have to be tested as the correctness mechanism they are.
 - Rebuild trusts identity wherever it finds it. A lineage whose record was lost
   is reconstructed from the identity its manifests carry — with the caveat that
   a rename after the last commit lived only in the lost record. Immutable
@@ -128,16 +131,19 @@ More difficult:
   resurrect what its owner threw away.
 - A failed store write remains in SQLite's transactional outbox and fails the
   request until the portable projection is durable. Retrying the outbox is safe
-  because every operation is ordered and idempotent. An open that cannot replay
-  the queue serves reads and defers recovery rather than running rebuild
-  against a store the queue is still ahead of; durable mutations wait for an
-  open that lands the queued work.
+  because every operation is ordered and idempotent. SQLite serializes drainers
+  across processes, including the filesystem write, because idempotence alone
+  would not prevent an older mutable record from landing last. An open that
+  cannot replay the queue serves reads and defers recovery rather than running
+  rebuild against a store the queue is still ahead of. Durable mutations wait
+  for an open that lands the queued work.
 - An unreadable record leaves reads available from the database and disables
   imports, durable mutations, and reclamation until the inventory is complete.
-  Reconcile still runs — it only adds — so a gap the database can rewrite, such
-  as a lost manifest for a revision it still holds, is repaired and the
-  inventory retaken in the same open; only damage the database cannot rewrite
-  keeps the server read-only. Unknown state is retained rather than rewritten.
+  Reconcile still runs because it never deletes portable data, so a gap the
+  database can rewrite, such as a lost manifest for a revision it still holds,
+  is repaired and the inventory retaken in the same open. Only damage the
+  database cannot rewrite keeps the server read-only. Unknown state is retained
+  rather than deleted.
 - Portable records are the acknowledged mutable state: a record that disagrees
   with a row the database already holds overwrites it, and says so in the log.
   The two agree at rest — the outbox is the only writer — so a disagreement
