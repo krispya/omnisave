@@ -17,6 +17,8 @@ ordinary text and gzip tools, and no version of Omnisave has to run.
     revisions/        one JSON manifest per saved snapshot
     omnisaves/        one JSON record per save lineage
     games/            one JSON record per game
+    deletions/        one JSON marker per committed deletion, by kind
+    reclaiming/       objects staged for removal; treat as already deleted
 
 The JSON files are plain text on purpose. Open them in any editor.
 
@@ -33,9 +35,17 @@ The JSON files are plain text on purpose. Open them in any editor.
        grep -rl '"game_id": "<game id>"' omnisaves/
 
    Each match is one save lineage. Its "display_name" is what it was called.
-   A record with a "deleted_at" was deliberately deleted. Any revision named
-   in a record's "deleted_revisions" list was deleted on its own — a manifest
-   for one of those is a leftover, not a save to recover.
+   A deletion leaves a marker rather than erasing what it deleted, so check
+   `deletions/` before recovering:
+
+       grep -rl '"target_id": "<omnisave id>"' deletions/omnisave/
+
+   A match means that save was deliberately deleted. Markers under
+   `deletions/revision/` name single snapshots deleted on their own — a
+   manifest for one of those is a leftover, not a save to recover. A store
+   from an older server may instead carry "deleted_at" or
+   "deleted_revisions" fields on the lineage record itself; they mean the
+   same thing.
 
 3. Find the newest snapshot of that lineage. Search `revisions/` for the
    lineage's identifier:
