@@ -477,9 +477,9 @@ func (r *Repository) CommitRevision(ctx context.Context, expectedCurrentRevision
 	}
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO revisions(
-		id, game_id, omnisave_id, parent_id, created_at, metadata
-	) SELECT ?, game_id, ?, ?, ?, ? FROM omnisaves WHERE id = ?`,
-		revision.ID, revision.OmnisaveID, revision.ParentID,
+		id, game_id, omnisave_id, display_name, name_source, parent_id, created_at, metadata
+	) SELECT ?, game_id, ?, ?, ?, ?, ?, ? FROM omnisaves WHERE id = ?`,
+		revision.ID, revision.OmnisaveID, revision.DisplayName, revision.NameSource, revision.ParentID,
 		revision.CreatedAt.Format(time.RFC3339Nano), string(metadata), revision.OmnisaveID)
 	if err != nil {
 		return translateUniqueViolation(err)
@@ -529,7 +529,7 @@ func (r *Repository) GetRevision(ctx context.Context, saveID, revisionID string)
 		UNION SELECT revisions.parent_id FROM revisions JOIN members ON revisions.id = members.id
 			WHERE revisions.parent_id IS NOT NULL
 	) SELECT
-		id, omnisave_id, display_name, parent_id, created_at, metadata
+		id, omnisave_id, display_name, name_source, parent_id, created_at, metadata
 		FROM revisions WHERE id = ? AND id IN (SELECT id FROM members)`, saveID, saveID, saveID, revisionID))
 	if err != nil {
 		return nil, translateNotFound(err)
@@ -549,7 +549,7 @@ func (r *Repository) ListRevisions(ctx context.Context, saveID string) ([]omnisa
 		UNION SELECT revisions.parent_id FROM revisions JOIN members ON revisions.id = members.id
 			WHERE revisions.parent_id IS NOT NULL
 	) SELECT
-		id, omnisave_id, display_name, parent_id, created_at, metadata
+		id, omnisave_id, display_name, name_source, parent_id, created_at, metadata
 		FROM revisions WHERE id IN (SELECT id FROM members) ORDER BY created_at, id`, saveID, saveID, saveID)
 	if err != nil {
 		return nil, err
@@ -580,6 +580,9 @@ func (r *Repository) ListRevisions(ctx context.Context, saveID string) ([]omnisa
 	return revisions, nil
 }
 
+// UpdateRevisionDisplayName renames a revision on behalf of a person, which is
+// the only path that renames after commit, so it also stamps the name manual:
+// automation may replace its own names but never one somebody chose.
 func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revisionID, displayName string) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
@@ -594,8 +597,8 @@ func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revi
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE revisions SET display_name = ? WHERE id = ?`,
-		displayName, revisionID)
+	result, err := tx.ExecContext(ctx, `UPDATE revisions SET display_name = ?, name_source = ? WHERE id = ?`,
+		displayName, omnisave.NameSourceManual, revisionID)
 	if err != nil {
 		return err
 	}
@@ -920,7 +923,8 @@ func scanRevision(row scanner) (*omnisave.Revision, error) {
 	var createdAt, metadata string
 	var parent sql.NullString
 	if err := row.Scan(
-		&revision.ID, &revision.OmnisaveID, &revision.DisplayName, &parent, &createdAt, &metadata,
+		&revision.ID, &revision.OmnisaveID, &revision.DisplayName, &revision.NameSource,
+		&parent, &createdAt, &metadata,
 	); err != nil {
 		return nil, err
 	}
