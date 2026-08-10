@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -536,6 +537,56 @@ func TestAMissingManifestIsRepairedAndMutationsResume(t *testing.T) {
 	displayName := "Renamed after repair"
 	if _, err := saves.Update(ctx, save.ID, omnisave.UpdateOmnisave{DisplayName: &displayName}); err != nil {
 		t.Fatalf("the repaired server should accept mutations, got %v", err)
+	}
+}
+
+// A deleted save's portable record can outlive its manifests: the immutable
+// deletion marker, rather than absence, is what keeps the save deleted. That
+// expected leftover must not make the rest of the server read-only on restart.
+func TestADeletedSaveRecordDoesNotBlockLaterMutations(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "omnisave.db")
+	storeDir := filepath.Join(directory, "store")
+
+	repository, err := sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := omnisaveservice.New(repository)
+	deleted, err := saves.Create(ctx, omnisave.CreateOmnisave{
+		GameID: "game-1", DisplayName: "Discarded run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := storeOmnisaveArtifact(t, ctx, saves, "discarded content")
+	if _, err := saves.CommitRevision(ctx, deleted.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saves.Delete(ctx, deleted.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err = sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves = omnisaveservice.New(repository)
+
+	if _, err := saves.Get(ctx, deleted.ID); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("the deletion marker did not keep the discarded save deleted: %v", err)
+	}
+	if _, err := saves.Create(ctx, omnisave.CreateOmnisave{
+		GameID: "game-1", DisplayName: "New run",
+	}); err != nil {
+		t.Fatalf("a deleted save's stale record blocked an unrelated mutation: %v", err)
 	}
 }
 
