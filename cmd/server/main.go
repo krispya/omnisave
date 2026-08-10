@@ -23,6 +23,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/catalog/igdb"
 	catalogservice "github.com/krisbaumgartner/omnisave/internal/catalog/service"
 	"github.com/krisbaumgartner/omnisave/internal/discovery"
+	"github.com/krisbaumgartner/omnisave/internal/labeler"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave/httpapi"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
 	"github.com/krisbaumgartner/omnisave/internal/settings"
@@ -76,7 +77,11 @@ func runServer(ctx context.Context, config serverConfig) error {
 	}
 	defer repository.Close()
 
-	saves := omnisaveservice.New(repository)
+	revisionNamer, err := labeler.New(repository, repository)
+	if err != nil {
+		return fmt.Errorf("load labelers: %w", err)
+	}
+	saves := omnisaveservice.NewWithNamer(repository, revisionNamer)
 	hasheousProvider := hasheous.New(config.Hasheous.BaseURL, &http.Client{Timeout: hasheousTimeout})
 	// IGDB is registered whether or not it has credentials yet: the owner can
 	// supply them later, and the catalog skips a provider that cannot answer

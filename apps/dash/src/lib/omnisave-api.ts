@@ -18,6 +18,8 @@ export type Revision = {
   omnisave_id: string;
   display_name: string;
   parent_id: string | null;
+  /** Who set display_name: the game's labeler or a person. Absent while unnamed. */
+  name_source?: 'labeler' | 'manual';
   created_at: string;
   files: Array<{
     path: string;

@@ -87,9 +87,13 @@ type Omnisave struct {
 	// It is not derivable once restoring can select any node in the tree.
 	CurrentRevisionID *string `json:"current_revision_id,omitempty"`
 	// RevisionNames keeps mutable labels out of immutable snapshot manifests.
-	RevisionNames map[string]string    `json:"revision_names,omitempty"`
-	ForkedFrom    *omnisave.ForkOrigin `json:"forked_from,omitempty"`
-	CreatedAt     time.Time            `json:"created_at"`
+	RevisionNames map[string]string `json:"revision_names,omitempty"`
+	// RevisionNameSources mirrors RevisionNames with each name's origin —
+	// omnisave.NameSourceLabeler or NameSourceManual — so a rebuilt database
+	// still knows which names automation may replace.
+	RevisionNameSources map[string]string    `json:"revision_name_sources,omitempty"`
+	ForkedFrom          *omnisave.ForkOrigin `json:"forked_from,omitempty"`
+	CreatedAt           time.Time            `json:"created_at"`
 	// DeletedAt and DeletedRevisions are version-3 compatibility fields. Open
 	// migrates them to immutable deletion markers before recovery.
 	DeletedAt        *time.Time        `json:"deleted_at,omitempty"`
