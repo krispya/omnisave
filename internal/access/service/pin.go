@@ -97,14 +97,7 @@ func (s *service) SetPIN(ctx context.Context, pin string) error {
 	})
 }
 
-// SignIn exchanges the owner's PIN for a credential of the caller's own, so a
-// browser ends up holding the same revocable thing a claim or the owner token
-// would have given it.
-//
-// Every refusal here is counted, per source address and across the server,
-// because a four-digit PIN is only as safe as the refusals around it. The
-// address is best-effort — behind a proxy every caller shares one — which is
-// why the whole-server counter exists rather than the per-address one alone.
+// SignIn exchanges the owner PIN for a credential and rate-limits failures per source and server.
 func (s *service) SignIn(ctx context.Context, input access.SignIn) (*access.IssuedCredential, error) {
 	stored, err := s.repository.GetOwnerPIN(ctx)
 	if errors.Is(err, storage.ErrNotFound) {

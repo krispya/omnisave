@@ -205,11 +205,7 @@ func (r *Repository) DeleteGame(ctx context.Context, id string) error {
 	}
 	defer tx.Rollback()
 
-	// Deleting a game deletes every save of it, so the store records the same
-	// deletion for each lineage, and drops the manifest of every node in the
-	// game's graph — including nodes whose creator save was already deleted
-	// but which a surviving fork had retained until now. Both have to be read
-	// before the cascade.
+	// Capture all lineage and graph identifiers before the database cascade.
 	saveIDs, err := omnisaveIDsOfGame(ctx, tx, id)
 	if err != nil {
 		return err

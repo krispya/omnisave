@@ -6,15 +6,7 @@ import (
 	"sync"
 )
 
-// Reloadable is a provider whose credentials the owner can change while the
-// server runs (ADR-011).
-//
-// The catalog is built once, so a provider configured later has to be the same
-// object that was registered at startup. This is that object: it holds a
-// delegate that can be replaced, and reports itself unavailable while it has
-// none. Resolution and search already skip an unavailable provider — a
-// provider that cannot answer today is a case they have always tolerated — so
-// an unconfigured one costs nothing and needs no special handling anywhere.
+// Reloadable keeps a stable provider identity while its configured delegate changes.
 type Reloadable struct {
 	name string
 

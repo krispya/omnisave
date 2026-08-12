@@ -11,18 +11,7 @@ type PairingDialogProps = {
   onDismiss: () => void;
 };
 
-/**
- * The devices asking to connect.
- *
- * It opens by itself when a request arrives, because the thing on the other
- * end is a person standing at a device with a code on its screen, and the
- * request expires in minutes. The menu's "Asking to connect" item opens the
- * same dialog deliberately — which is when it can be empty, and says so
- * rather than opening onto nothing.
- *
- * The code is what the owner matches against that screen — the name and
- * address in a request are supplied by whoever sent it (FDR-006).
- */
+/** Lists pending pairing requests and the codes shown on requesting Devices. */
 export function PairingDialog({
   requests,
   busyID,

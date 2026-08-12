@@ -44,20 +44,11 @@ const (
 	streamRefused
 )
 
-// ServerEvents subscribes to the server's change feed and delivers event
-// types until ctx ends, when the channel closes. A dropped stream reconnects
-// with backoff. Every connection opens with the server's checkpoint event,
-// which covers whatever an outage swallowed; a checkpoint whose event ID the
-// feed already delivered is suppressed, so a reconnect that missed nothing
-// costs nothing. A stream the server refuses outright closes the channel —
-// every pass fails the same way, and the passes are where the user sees it —
-// leaving the periodic pull as the consumer's only rhythm.
+// ServerEvents delivers change types, reconnecting dropped streams with backoff.
+// Checkpoints cover missed changes and are suppressed when already delivered.
 func (c *Client) ServerEvents(ctx context.Context) <-chan string {
 	events := make(chan string)
-	// The stream stays open indefinitely, so it cannot ride a client whose
-	// Timeout bounds whole requests; ctx is what ends it. The copy keeps
-	// every other field — the transport and any future policy — as
-	// configured.
+	// The event stream uses context cancellation instead of the API request timeout.
 	stream := *c.httpClient
 	stream.Timeout = 0
 	go func() {

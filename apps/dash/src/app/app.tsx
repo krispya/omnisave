@@ -51,11 +51,7 @@ import { navigate, useRoute } from '../lib/route.js';
 import { useServerEvents, type ServerEventStatus } from '../lib/use-server-events.js';
 import { ConnectionBanner, NavigationBar, NavigationRail, TopBar } from './navigation-chrome.js';
 
-/**
- * The Dash holds a credential of its own, traded for the owner token once and
- * revocable like any device's (ADR-007). The owner's secret is never stored
- * here — only what this browser was issued in exchange for it.
- */
+/** The browser stores only its issued credential, never the owner token. */
 const credentialStorageKey = 'omnisave.credential';
 
 type StoredCredential = { id: string; token: string };
@@ -112,8 +108,7 @@ type LibrarySnapshot = {
   catalog: CatalogGame[] | null;
   saves: Omnisave[];
   error: string;
-  // Set when the server refused this browser's credential. It is not an error
-  // to show — it means this browser has to sign in again.
+  // A rejected credential returns the browser to sign-in.
   unauthorized?: boolean;
 };
 
@@ -224,7 +219,7 @@ function LibraryDashboard({
 
   useEffect(() => onSnapshot(snapshot), [onSnapshot, snapshot]);
 
-  // The selected save owns the history and revision-action error currently shown.
+  // History and revision-action errors belong to the selected save.
   useEffect(() => setRevisionError(''), [selectedSaveID]);
 
   // A link can name a game that is gone, and a save can be deleted while it is open.
@@ -454,7 +449,7 @@ export function App() {
   const [answering, setAnswering] = useState('');
   const [pairingError, setPairingError] = useState('');
   const [dismissed, setDismissed] = useState<string[]>([]);
-  // Open deliberately, from the menu — unlike the interrupt, it can be empty.
+  // Manual opening may show an empty request list.
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [resource, setResource] = useState<LibraryResource | null>(() =>
     token ? initialLibraryResource(token) : null
@@ -490,8 +485,7 @@ export function App() {
     [installResource]
   );
 
-  // A credential the server no longer accepts is not an error to display. Drop
-  // it and go back to the way in, which is where someone can do something.
+  // Discard rejected credentials and return to sign-in.
   const forgetCredential = useCallback(() => {
     activeResource.current?.abort();
     activeResource.current = null;
@@ -503,8 +497,7 @@ export function App() {
 
   const rememberSnapshot = useCallback(
     (snapshot: LibrarySnapshot) => {
-      // The library load answers before the event stream does, so this is
-      // usually what notices a revoked or stale credential first.
+      // Library requests may detect a rejected credential before the event stream.
       if (snapshot.unauthorized) {
         forgetCredential();
         return;
@@ -523,23 +516,16 @@ export function App() {
     try {
       setPending(await listPairingRequests(token));
     } catch {
-      // A request nobody can read is not worth interrupting anyone about; the
-      // stream will bring the next one.
+      // Ignore unreadable requests and wait for the next event.
     }
   }, [token]);
 
-  // One stream for the whole shell. The Library refreshes on its own changes,
-  // and a device asking to connect reaches the owner wherever they are —
-  // pending requests expire in minutes, so waiting for someone to open the
-  // top bar's "Asking to connect" would mean missing most of them.
+  // One shell stream refreshes the Library and surfaces expiring pairing requests.
   const refreshAll = useCallback(async () => {
     await Promise.all([resource ? reloadLibrary() : Promise.resolve(), refreshPending()]);
   }, [refreshPending, reloadLibrary, resource]);
 
-  // devices.changed is presence: only playing flags moved, so fetch the light
-  // playing picture and stitch it into the loaded library instead of
-  // re-downloading everything. Anything the light path cannot serve — no
-  // library yet, or a failed fetch — falls back to the full reload.
+  // Presence events update playing flags; failures fall back to a full reload.
   const refreshPresence = useCallback(async () => {
     if (!token || !latestSnapshot.current?.catalog) {
       await refreshAll();
@@ -594,12 +580,10 @@ export function App() {
     return () => controller.abort();
   }, [token]);
 
-  // Only corrections close a game on the reader's behalf — a stale link, a disconnect —
-  // so this replaces rather than pushes. The visible way back is a link.
+  // Correct stale or inaccessible game routes without adding browser history.
   const closeGame = useCallback(() => navigate({ name: 'library' }, { replace: true }), []);
 
-  // Both ways in end the same way: this browser holds a credential of its own,
-  // and whatever proved it was entitled to one is not kept.
+  // Store the issued browser credential and discard the proof used to obtain it.
   async function establish(issue: () => Promise<IssuedCredential>) {
     if (connecting) return;
     setConnecting(true);
@@ -614,8 +598,7 @@ export function App() {
       void installResource(createLibraryResource(next.token), false);
     } catch (issueError) {
       setConnectError(issueError instanceof Error ? issueError.message : 'Could not connect.');
-      // A server claimed out from under this browser should stop offering to
-      // claim it and start asking for the PIN.
+      // Switch to PIN sign-in if another browser claimed the server first.
       serverAccess()
         .then(setAccess)
         .catch(() => undefined);
@@ -637,19 +620,15 @@ export function App() {
   }
 
   function disconnect() {
-    // The credential stays valid on the server; forgetting it here is not
-    // revoking it, which is a deliberate act in the server settings.
+    // Signing out forgets the local credential without revoking it.
     forgetCredential();
     closeGame();
   }
 
-  // Dismissing sets this request aside without answering it; the next one to
-  // arrive still interrupts.
+  // Dismissal leaves the request pending; a later request may interrupt again.
   const unanswered = pending.filter((request) => !dismissed.includes(request.id));
 
-  // Connected is the ordinary case and goes unsaid. A rejected credential is
-  // not reported either — the shell has already dropped it by the time this
-  // renders, so what shows is the way back in rather than a complaint about it.
+  // Only transient connection failures need a status message.
   const connectionLost = Boolean(token) && eventStatus === 'retrying';
 
   return (

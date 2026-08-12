@@ -9,11 +9,7 @@ var platformCompanies = []string{
 	"Commodore", "Coleco", "Mattel", "Philips", "Sinclair", "Magnavox", "GCE", "Fairchild",
 }
 
-// SplitPlatform separates a provider's platform name into the hardware company
-// and the platform's own name. The company prefix is dropped from the name only
-// when it is a duplication — the remainder still names the company, as in
-// "Nintendo Super Nintendo Entertainment System" — so self-branded names like
-// "Nintendo Entertainment System" or "Sega Saturn" stay whole.
+// SplitPlatform separates a provider platform into company and non-duplicated name.
 func SplitPlatform(raw string) (company, name string) {
 	name = strings.Join(strings.Fields(raw), " ")
 	if before, after, found := strings.Cut(name, " - "); found {

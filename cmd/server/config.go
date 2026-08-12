@@ -20,25 +20,16 @@ const ownerTokenFile = "owner-token"
 type serverConfig struct {
 	ListenAddr string
 	Token      string
-	// TokenPath is where a generated owner token lives, and is empty when the
-	// deployment supplied one. TokenGenerated is true only on the start that
-	// minted it — the one start that has to tell the operator what it is.
+	// TokenPath stores a generated owner token. TokenGenerated identifies the minting start.
 	TokenPath      string
 	TokenGenerated bool
-	// Name is what this server calls itself when it announces on the local
-	// network (ADR-009). Two servers on one network are told apart by it, so
-	// it defaults to the host's own name rather than to "Omnisave".
+	// Name identifies the server in local discovery.
 	Name string
-	// StoreDir is the portable save store: one directory holding everything
-	// needed to recover the saves in it. DBPath is an index over it, and lives
-	// outside it because it carries credentials and the owner PIN, which have
-	// no business travelling with a directory meant to be copied and shared.
+	// StoreDir is portable save data. DBPath is its local index and contains private state.
 	StoreDir string
 	DBPath   string
 	WebDir   string
-	// SettingsPins are owner settings the deployment has taken over. An
-	// operator who pins one keeps a fleet identical; an owner who pins
-	// nothing edits them in the Dash (ADR-008).
+	// SettingsPins contains owner settings controlled by the deployment.
 	SettingsPins map[string]string
 	Hasheous     struct {
 		BaseURL string
@@ -78,9 +69,7 @@ func loadConfig() (serverConfig, error) {
 	}
 	config.Token = token
 	if config.Token == "" {
-		// Nothing was configured, so the server mints its own rather than
-		// refusing to start (ADR-010). The environment still wins: this only
-		// runs when neither token variable is set.
+		// Mint a token only when the environment supplies none.
 		config.Token, config.TokenPath, config.TokenGenerated, err = ownerToken(config.DBPath)
 		if err != nil {
 			return serverConfig{}, err
@@ -113,9 +102,7 @@ func defaultConfig() serverConfig {
 	return config
 }
 
-// defaultServerName is the host's own name, which is what an owner already
-// calls the machine. A container with a hexadecimal host name gets the plain
-// product name instead, since a random string helps nobody choose.
+// defaultServerName returns the host name, or the product name for generated container names.
 func defaultServerName() string {
 	host, err := os.Hostname()
 	if err != nil {
@@ -160,13 +147,7 @@ func setFromEnvironment(destination *string, name string) {
 	}
 }
 
-// ownerToken reads the token the server generated for itself, minting one on
-// the first start that finds none (ADR-010).
-//
-// It lives beside the database rather than behind a variable of its own: it is
-// state this deployment owns, like the database and the artifacts, and it
-// belongs in the same place they get backed up from. It is never merged with
-// the environment — a deployment that sets a token never reaches this.
+// ownerToken reads or creates the deployment-owned token beside the database.
 func ownerToken(databasePath string) (token, path string, generated bool, err error) {
 	path = filepath.Join(filepath.Dir(databasePath), ownerTokenFile)
 	data, err := os.ReadFile(path)

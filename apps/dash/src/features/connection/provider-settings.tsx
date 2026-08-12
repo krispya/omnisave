@@ -11,14 +11,7 @@ type ProviderSettingsProps = {
   onDisconnect: () => void;
 };
 
-/**
- * The metadata providers this server can use, and what each one needs.
- *
- * IGDB needs credentials from the owner's own Twitch account (ADR-011), so it
- * reads as a thing to connect rather than as a pair of fields — connected or
- * not is the state worth seeing at a glance, and the credentials themselves
- * are a detail behind one click.
- */
+/** Lists metadata providers and opens their credential settings. */
 export function ProviderSettings({
   clientID,
   clientSecret,

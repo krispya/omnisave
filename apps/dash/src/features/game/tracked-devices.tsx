@@ -36,8 +36,7 @@ function provenanceRank(record: GameProvenance) {
 }
 
 function DeviceCard({ record }: { record: GameProvenance }) {
-  // The server is the only clock: it announces devices.changed when a report
-  // ages out, so a served playing flag is credible as long as we hold it.
+  // The server expires stale playing reports and announces the change.
   const untracked = Boolean(record.untracked_at);
   const playing = !untracked && record.playing === true;
   const status = record.untracked_at
@@ -97,9 +96,7 @@ export function TrackedDevices({ provenance }: { provenance: GameProvenance[] })
           No devices are tracking this game yet.
         </p>
       ) : (
-        // One row, paged rather than wrapped: beside the artwork the cards
-        // have little width to share, and wrapping would push the saves down
-        // for every extra device.
+        // Keep device cards in one paged row beside the artwork.
         <Carousel className="gap-3">
           {records.map((record) => (
             <DeviceCard key={record.device_id} record={record} />

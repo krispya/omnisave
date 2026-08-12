@@ -157,11 +157,7 @@ func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, 
 			return failRollback(fmt.Errorf("prepare local save directory: %w", err))
 		}
 		if file.fresh {
-			// A path new to this device was only checked absent before the
-			// downloads ran. Linking is an atomic no-replace operation on
-			// the same filesystem as the staging directory, so anything
-			// that appeared during that window wins and the apply
-			// aborts into the rollback instead of overwriting it.
+			// Link without replacement so a concurrently created target wins.
 			if err := os.Link(file.stage, file.target); err != nil {
 				operation := fmt.Errorf("place local save file: %w", err)
 				if os.IsExist(err) {
@@ -177,9 +173,7 @@ func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, 
 	return nil
 }
 
-// Materialize places a complete verified Current Revision into an empty native destination.
-// Target files are checked before and after download, and linked into place
-// without replacement so content appearing concurrently is never overwritten.
+// Materialize places a verified Current Revision without replacing concurrent content.
 func Materialize(ctx context.Context, source ArtifactSource, destination target.SaveDestination, current omnisave.Revision) (target.Save, error) {
 	planned, err := materializationPlan(destination, current)
 	if err != nil {

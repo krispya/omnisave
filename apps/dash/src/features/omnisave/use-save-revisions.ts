@@ -4,8 +4,7 @@ import { createPromiseCache } from '../cache/promise-cache.js';
 
 // Keyed by save and current revision, so commits and restores revalidate history.
 const histories = createPromiseCache<string, Revision[]>();
-// The last history shown for a save, so a moved current pointer revalidates in place rather than
-// dropping the log back to a loading state under the reader.
+// Retains the last history while a moved current pointer revalidates.
 const shown = new Map<string, Revision[]>();
 const shownKeys = new Map<string, string>();
 
@@ -50,9 +49,7 @@ function read(key: string): Snapshot {
   return { key, revisions: histories.get(key) ?? shown.get(saveID(key)), error: '' };
 }
 
-// Forks share revision nodes, so a rename made through one save must reach every
-// cached history containing the revision — sibling saves' keys don't change on a
-// rename, and their stale copies would otherwise survive the whole session.
+// Shared revisions must be renamed in every cached sibling history.
 function replaceInCaches(revision: Revision) {
   for (const [id, key] of shownKeys) {
     const revisions = histories.get(key) ?? shown.get(id);
@@ -65,9 +62,7 @@ function replaceInCaches(revision: Revision) {
   }
 }
 
-// A deletion must reach every cached history the same way a rename does: the
-// history key does not change — deleting never moves the current pointer — so
-// a stale cache would resurrect the revision for the rest of the session.
+// Remove deleted shared revisions from every cached sibling history.
 function dropFromCaches(revisionID: string) {
   for (const [id, key] of shownKeys) {
     const revisions = histories.get(key) ?? shown.get(id);
@@ -90,17 +85,12 @@ export function prefetchSaveRevisions(token: string, save: Omnisave) {
   );
 }
 
-/**
- * The revision history of one save. A history that is already cached is in state before
- * the first paint, so opening a save never shows another save's rows, an empty state, or
- * a loading step on the way to its own.
- */
+/** Loads one save's revision history and initializes synchronously from cache. */
 export function useSaveRevisions(token: string, save?: Omnisave): SaveHistory {
   const key = save ? historyKey(save) : '';
   const [snapshot, setSnapshot] = useState(() => read(key));
 
-  // Adjusting here rather than in an effect re-runs this render before anything paints,
-  // so the save that was open a moment ago never flashes inside the one just opened.
+  // Switch cached histories before paint when the selected save changes.
   if (snapshot.key !== key) setSnapshot(read(key));
 
   useEffect(() => {

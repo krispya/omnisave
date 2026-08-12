@@ -57,12 +57,7 @@ function chainSpan(chain: Chain): [number, number] {
   return [Math.min(...rows), chain.sprout ? chain.sprout.row : Math.max(...rows)];
 }
 
-/**
- * Splits one save's nodes into chains. A revision committed after a rewind gives
- * one parent two children inside the save; the newest child continues the parent's
- * chain and every other child starts a branch chain, so a chain is always a run
- * of consecutive commits that can share a vertical line.
- */
+/** Splits one save into consecutive commit chains that can share a vertical lane. */
 function buildChains(roots: GraphNode[], childrenByID: Map<string, GraphNode[]>): Chain[] {
   const chains: Chain[] = [];
   // The oldest root anchors the primary chain; roots are newest first.
@@ -101,11 +96,8 @@ function assignChainLanes(chains: Chain[], baseLane: number) {
 }
 
 /**
- * Lays every revision of a game's saves onto one graph. Revisions returned as
- * shared ancestry by several saves are deduplicated by identity; the creator
- * determines the lane and every save whose current pointer names the node is
- * recorded on it. Within a save, branches left behind by a rewind get their own
- * lanes, so every same-lane edge runs between consecutive commits.
+ * Lays a game's deduplicated revisions onto save lanes and rewind-branch lanes.
+ * Each same-lane edge connects consecutive commits.
  */
 export function buildRevisionGraph(
   saves: Omnisave[],
@@ -160,8 +152,7 @@ export function buildRevisionGraph(
   );
   for (const [row, node] of nodes.entries()) node.row = row;
 
-  // Group each save's own nodes into chains: roots have no parent in the save,
-  // and children lists inherit row order, newest first.
+  // Group each save's nodes into newest-first chains.
   const childrenByID = new Map<string, GraphNode[]>();
   const rootsBySave = new Map<string, GraphNode[]>();
   for (const node of nodes) {

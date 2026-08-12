@@ -41,11 +41,7 @@ type PassResult struct {
 	At       time.Time
 }
 
-// WatchDisplay is the live watch view (FDR-005): every tracked game on its
-// line, a footer that proves liveness, and s/q keys. Events scroll past
-// above the view as they happen, so the block itself never grows and an
-// idle watcher reads as one clean table. The watch loop feeds it passes; it
-// never prompts.
+// WatchDisplay renders tracked-game state and streams completed-pass events above it.
 type WatchDisplay struct {
 	program  *tea.Program
 	requests chan WatchRequest
@@ -106,10 +102,7 @@ func (d *WatchDisplay) Playing(titles []string) {
 	d.program.Send(watchPlayingMsg(titles))
 }
 
-// PassFinished settles the view with a pass's final table and prints its
-// events above it. The table swaps in whole only when a pass completes —
-// mid-pass the previous settled table stays put and the footer spinner is
-// the activity signal, so running a pass never reflows the layout.
+// PassFinished atomically replaces settled state and prints the pass's events.
 func (d *WatchDisplay) PassFinished(result PassResult) {
 	d.program.Send(watchPassFinishedMsg{result: result})
 }

@@ -35,27 +35,14 @@ type API struct {
 	presence *devicePresence
 }
 
-// Config assembles the API. Catalog is optional — a server without a catalog
-// provider serves saves alone — but Access and Settings are not, because they
-// are what decides who may reach any of it.
+// Config assembles the API; Catalog is optional, while Access and Settings are required.
 type Config struct {
 	Saves    omnisave.Service
 	Catalog  catalog.Service
 	Settings settings.Service
 }
 
-// New creates the whole /api/v1 surface, with every route that needs a
-// credential behind one that checks it. Authentication is a parameter rather
-// than a config field so there is no shape of this handler that serves the
-// API without it.
-//
-// Five endpoints are deliberately open: a client asking to pair, the same
-// client polling for the answer, the two that claim a server nobody owns yet,
-// and signing in with the owner PIN. Whoever calls them has no credential — getting one
-// is the point — so what protects them is not authentication but their expiry,
-// their single use, their rate limit, their refusal to mint anything without
-// an owner's approval (ADR-007), and, for claiming, a server that refuses
-// once it has an owner (ADR-010).
+// New creates the authenticated /api/v1 surface plus the credential-acquisition endpoints.
 func New(credentials access.Service, config Config) http.Handler {
 	api := &API{
 		saves:    config.Saves,
@@ -73,10 +60,7 @@ func New(credentials access.Service, config Config) http.Handler {
 	root.Handle("/api/v1/", Authenticate(credentials, api.guardedRoutes()))
 	root.HandleFunc("POST /api/v1/pairing/requests", api.requestPairing)
 	root.HandleFunc("POST /api/v1/pairing/collect", api.collectPairing)
-	// Claiming is open for the same reason pairing is: the browser doing it
-	// has no credential yet, and getting one is the point. What guards it is
-	// that a claimed server refuses forever, and that the request has to come
-	// from the local network (ADR-010).
+	// Claiming is unauthenticated but restricted to an unclaimed local server.
 	root.HandleFunc("GET /api/v1/claim", api.claimStatus)
 	root.HandleFunc("POST /api/v1/claim", api.claim)
 	root.HandleFunc("POST /api/v1/session", api.signIn)
@@ -573,10 +557,7 @@ func (a *API) registerDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, device)
 }
 
-// reportDeviceStatus receives which games a device is playing right now; an
-// empty list clears it. Presence, not provenance: the report lives in memory
-// with a short credibility window, so a device that vanishes mid-session
-// stops reading as "playing" on its own.
+// reportDeviceStatus replaces a Device's expiring in-memory playing report.
 func (a *API) reportDeviceStatus(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		PlayingGameIDs []string `json:"playing_game_ids"`

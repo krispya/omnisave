@@ -28,28 +28,11 @@ type Repository struct {
 	// storeErr stops later portable mutations after an outbox projection
 	// failure. Open replays the queue before exposing the repository again.
 	storeErr error
-	// mutate serializes every mutation together with its store side effects,
-	// so no request through this Repository observes another halfway through.
-	// SQLite immediate transactions carry cross-process projection and
-	// reclamation ordering. Everything under this lock is a quick local
-	// operation. The one streaming write, an artifact upload, stays outside and
-	// takes the lock only to publish what it stored. Reads never take it because
-	// the database serializes its own queries, and store files are immutable or
-	// replaced atomically.
+	// mutate serializes in-process mutations and their portable-store side effects.
 	mutate sync.Mutex
 }
 
-// Open opens the save store and the database over it, applies pending schema
-// migrations, and repairs each from the other: rebuild imports what the store
-// holds and the database lacks, then reconcile writes what the database holds
-// and the store lacks. Together they mean whichever of the two survived is
-// enough — a lost database grows back from the store, and a lost store grows
-// back from the database.
-//
-// The two are not peers. The store is the durable record — one directory that
-// recovers every save on its own — and the database is a fast index over it
-// that also holds deployment secrets, which is why it lives outside the store
-// rather than in it.
+// Open migrates SQLite, replays portable writes, and repairs database/store drift.
 func Open(databasePath, storeDir string) (*Repository, error) {
 	if err := os.MkdirAll(filepath.Dir(databasePath), 0755); err != nil {
 		return nil, err
@@ -74,11 +57,7 @@ func Open(databasePath, storeDir string) (*Repository, error) {
 	}
 	repository := &Repository{db: db, store: saveStore}
 	if err := repository.flushStoreOutbox(context.Background()); err != nil {
-		// The queue is ahead of the store, and rebuild treats store records
-		// as acknowledged state, so recovery must not run: importing records
-		// the queue is still ahead of would roll committed rows back. Reads
-		// serve from the database; durable mutations wait for an open that
-		// can land the queued work.
+		// Do not rebuild while committed outbox work is ahead of the store.
 		repository.storeErr = fmt.Errorf("replay portable store outbox: %w", err)
 		log.Printf("save store: %v; opened read-only with recovery deferred", repository.storeErr)
 		return repository, nil
@@ -92,11 +71,7 @@ func Open(databasePath, storeDir string) (*Repository, error) {
 		db.Close()
 		return nil, err
 	}
-	// Reconcile is non-destructive and writes database snapshots through the
-	// ordered outbox, so it runs even when the inventory is incomplete. The gap
-	// is often a manifest the database can simply rewrite, and a repair pass
-	// gated on the health it is meant to restore would make the degraded state
-	// permanent.
+	// Reconcile can restore missing records even when inventory is incomplete.
 	reconciled, err := repository.reconcile(context.Background())
 	if err != nil {
 		db.Close()
@@ -124,10 +99,7 @@ func Open(databasePath, storeDir string) (*Repository, error) {
 	return repository, nil
 }
 
-// sqliteDSN makes SQLite choose a writer before a transaction reads the state
-// it intends to change. This is required by protocols, such as outbox draining
-// and artifact reclamation, that must have one database-wide order across
-// Repository instances rather than relying on the process-local mutation lock.
+// sqliteDSN makes transactions acquire SQLite's database-wide writer order before reads.
 func sqliteDSN(databasePath string) string {
 	parameters := url.Values{
 		"_pragma": {"busy_timeout(5000)"},
@@ -628,12 +600,7 @@ func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revi
 	return r.projectStore(ctx)
 }
 
-// DeleteRevision removes one revision reachable through the named save. Only
-// a node the graph no longer needs may go: nothing builds on it, no save
-// points at it as current, and no fork began there. Anything else is refused
-// rather than repaired — moving a current pointer would rewind every bound
-// device behind the owner's back, and a child cannot be reparented because
-// its manifest, which records the parent, is immutable.
+// DeleteRevision removes a reachable leaf that is neither current nor a fork origin.
 func (r *Repository) DeleteRevision(ctx context.Context, saveID, revisionID string) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()

@@ -1,20 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon } from './icon.js';
 
-/**
- * A media-server carousel: one row that pages rather than merely scrolls.
- *
- * The scrollbar is hidden — the affordance is a paddle at whichever edge has
- * more content behind it, shown while the pointer is over the row and to
- * anything focusing it. A paddle turns a page, not a card: the row advances by
- * most of its visible width, and the small overlap is what tells the eye the
- * two pages are the same list. Touch and trackpads keep native scrolling —
- * the paddles are for the pointer that cannot swipe.
- *
- * Items provide their own width and `snap-start`; the row only spaces them.
- * The row bleeds one step past its box so an item's ring survives the
- * clipping a scroll container imposes.
- */
+/** A horizontally scrolling row with page controls and native touch scrolling. */
 export function Carousel({
   className = 'gap-4',
   children,
@@ -36,9 +23,7 @@ export function Carousel({
     );
   }, []);
 
-  // Content changes (a device untracked, a game stops playing) move the ends
-  // of the row, so every render re-measures; the state guard above keeps the
-  // re-measure from becoming a render loop.
+  // Re-measure after content changes move either end of the row.
   useEffect(() => {
     measure();
   });

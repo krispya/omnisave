@@ -7,11 +7,7 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
-// DivergedBindingChoice resolves a save whose local content moved while the
-// Current Revision advanced past the sync baseline — another device building
-// on this same line, so each side holds progress the other lacks (FDR-005,
-// decision 4). A Current Revision restored backwards or sideways branches
-// instead and never reaches this prompt. Neither choice destroys content.
+// DivergedBindingChoice preserves both sides by forking or preserving-then-jumping.
 type DivergedBindingChoice string
 
 const (

@@ -81,12 +81,7 @@ type CommitFile = {
 
 export type GameMedia = {
   id: string;
-  /**
-   * `cover` is the portrait box art; `artwork` and `screenshot` are the
-   * landscape images. Which provider supplies which varies — IGDB has artwork,
-   * Hasheous has screenshots — so anything wanting a wide image should take
-   * either rather than insisting on one.
-   */
+  /** Portrait covers and landscape artwork or screenshots. */
   kind: 'cover' | 'artwork' | 'screenshot';
   position: number;
   format: string;
@@ -154,12 +149,7 @@ export type ServerEvent = {
   data: string;
 };
 
-/**
- * The server does not recognize this browser's credential — it was revoked, or
- * it belongs to a server that no longer exists behind this address. Callers
- * treat it as "start over" rather than as an error to display, because there
- * is nothing the reader can do about it except sign in again.
- */
+/** Indicates that the browser must discard its credential and sign in again. */
 export class UnauthorizedError extends Error {
   constructor() {
     super('This browser is no longer signed in.');
@@ -516,20 +506,11 @@ export async function uploadArtifact(token: string, payload: Blob): Promise<Arti
   return { format, sha256, size: payload.size };
 }
 
-/**
- * Access: the credentials this server has issued and the pairing requests that
- * mint them. The Dash is not privileged here — it holds an issued credential
- * like any Device, and can be revoked like one (ADR-007).
- */
+/** Credentials issued by the server and the pairing requests that mint them. */
 
 export type PairingRequest = {
   id: string;
-  /**
-   * What the owner matches against the Device's screen. The name and identity
-   * in a request are minted by the client and the address is worth what its
-   * network path is worth, so this is the only part that ties a request to the
-   * Device that sent it.
-   */
+  /** Short code the owner matches against the requesting Device. */
   code: string;
   device_id: string;
   device_name: string;
@@ -570,10 +551,7 @@ export type OwnerSetting = {
   env_var: string;
 };
 
-/**
- * Whether this server has never been claimed, and can be claimed from here.
- * Asked without a credential, because a browser that has one never asks.
- */
+/** Reports whether an unauthenticated browser may claim the server. */
 export type ServerAccess = { claimable: boolean; pinSet: boolean };
 
 export async function serverAccess(signal?: AbortSignal): Promise<ServerAccess> {
@@ -601,7 +579,7 @@ export async function signIn(name: string, pin: string) {
   );
 }
 
-/** Changes the owner PIN. Only something already signed in may. */
+/** Changes the owner PIN for an authenticated caller. */
 export function setPIN(token: string, pin: string) {
   return request<void>('/api/v1/pin', token, {
     method: 'PUT',

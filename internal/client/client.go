@@ -136,12 +136,7 @@ func progress(report func(ScanProgress), event ScanProgress) {
 	}
 }
 
-// PlayingMatchers builds one detection matcher per scanned target whose
-// adapter can tell which of its games are being played (target.Activity).
-// Detection is the adapter's to define, so a target whose adapter offers
-// none simply contributes no matcher. Only tracked games are asked about:
-// presence is a courtesy shown for the library, not surveillance of
-// everything installed.
+// PlayingMatchers builds activity matchers for tracked games on supported targets.
 func (s *Scanner) PlayingMatchers(scans []TargetScan, tracked func(gameID string) bool) []running.Matcher {
 	adapters := make(map[string]target.Adapter, len(s.adapters))
 	for _, adapter := range s.adapters {

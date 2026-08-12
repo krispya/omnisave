@@ -12,16 +12,8 @@ import (
 	"strings"
 )
 
-// PutObject stores content under its SHA-256, compressed. The hash is verified
-// against the bytes as they are written and the object only appears at its
-// final name once it matches, so an object in the store is always the content
-// its name claims — a store that survived a crash mid-write holds no lie.
-//
-// Storing content the store already holds reads nothing and writes nothing,
-// which is what makes a revision that changes one file of twenty cost one
-// object rather than twenty. It reports whether the content was read, because
-// a caller measuring the payload as it streams past learns nothing about a
-// payload that was never drawn on, and must not mistake that for a measurement.
+// PutObject verifies and stores compressed content under its SHA-256.
+// It reports whether the input was read; existing objects leave it untouched.
 func (s *Store) PutObject(hash string, content io.Reader) (stored bool, err error) {
 	if !ValidHash(hash) {
 		return false, fmt.Errorf("%w: %q is not a SHA-256", ErrContentMismatch, hash)
@@ -101,10 +93,7 @@ func (s *Store) HasObject(hash string) bool {
 	return err == nil
 }
 
-// RemoveObject deletes content, and reports no error when it is already gone.
-// Callers are responsible for knowing nothing references it: the store keeps no
-// reference counts, because the manifests that constitute the references are
-// the very things a caller must consult to be sure.
+// RemoveObject deletes content. Callers must first prove it is unreferenced.
 func (s *Store) RemoveObject(hash string) error {
 	if !ValidHash(hash) {
 		return nil
@@ -192,10 +181,7 @@ func (s *Store) restoreQuarantinedObject(hash string) error {
 	return nil
 }
 
-// VerifyObject re-reads content and confirms it still hashes to its name,
-// returning the logical size. This is how bit rot is found on a medium a store
-// was copied to, and it is the only way to learn an object's uncompressed size
-// without an index.
+// VerifyObject confirms content still matches its name and returns its logical size.
 func (s *Store) VerifyObject(hash string) (int64, error) {
 	reader, err := s.OpenObject(hash)
 	if err != nil {

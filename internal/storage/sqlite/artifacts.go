@@ -141,14 +141,7 @@ func (r *Repository) requireAvailableArtifacts(
 	return &storage.ArtifactsUnavailable{SHA256: missing}
 }
 
-// reclaimArtifacts removes candidate content that nothing references any
-// longer. A deletion gathers candidates inside its transaction, but liveness
-// is decided here, at removal time, under the mutation lock: a commit or a
-// media save landing after that transaction would otherwise re-reference a
-// hash already condemned, and the removal would take content a surviving
-// revision names. Failures are logged, not returned — the deletion they
-// trail has durably happened, and the next open's sweep reclaims whatever
-// could not be removed now.
+// reclaimArtifacts rechecks liveness under the mutation lock before best-effort removal.
 func (r *Repository) reclaimArtifacts(ctx context.Context, candidates []string) {
 	for _, hash := range candidates {
 		tx, err := r.db.BeginTx(context.WithoutCancel(ctx), nil)

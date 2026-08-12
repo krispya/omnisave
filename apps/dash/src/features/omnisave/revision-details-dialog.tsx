@@ -14,7 +14,7 @@ function revisionName(revision: Revision) {
   return revision.display_name || revision.id.slice(0, 8);
 }
 
-// A debug-style dump of everything the dash knows about the revision.
+// Displays all revision metadata available to the Dash.
 export function RevisionDetailsDialog({
   save,
   revisions,

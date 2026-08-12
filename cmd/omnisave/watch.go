@@ -31,10 +31,7 @@ type watchSink interface {
 	Requests() <-chan tui.WatchRequest
 }
 
-// announcer turns each pass's standing state into the events worth writing
-// out. A pass reports conditions as well as changes — a saveless game says
-// so every pass — so a sentence is announced when it appears and forgotten
-// when it clears, which is what lets it announce again if it comes back.
+// announcer emits conditions when they appear and allows them to recur after clearing.
 type announcer struct {
 	sentences map[string]map[string]bool
 	synced    map[string]time.Time
@@ -49,9 +46,7 @@ func newAnnouncer() *announcer {
 	}
 }
 
-// announce returns what changed since the last snapshot. started is when
-// this pass began: a save whose sync predates it was already synced when
-// the pass found it, which is a baseline rather than news.
+// announce returns changes since the last snapshot, excluding syncs older than started.
 func (a *announcer) announce(snapshot tui.ReportSnapshot, started, at time.Time) []tui.Event {
 	return a.diff(snapshot, started, at, true)
 }
@@ -87,13 +82,7 @@ func (a *announcer) diff(snapshot tui.ReportSnapshot, started, at time.Time, emi
 		}
 		a.sentences[game.Title] = sentences
 
-		// A push or a pull leaves no sentence behind — the save simply
-		// synced — so the moment it happened is the event. A pass that
-		// already said something about this game said the more specific
-		// thing, so adding "synced with" writes the same news twice: a
-		// branched save reads as one line, not two. The cost is that a game
-		// whose other save spoke this pass loses its plain synced line; the
-		// live view still carries the standing state either way.
+		// Do not add a generic sync event when this pass emitted a more specific event.
 		known, seenBefore := a.synced[game.Title]
 		if game.SyncedAt.After(known) {
 			if emit && !spoken && (seenBefore || game.SyncedAt.After(started)) {
@@ -110,15 +99,7 @@ func (a *announcer) diff(snapshot tui.ReportSnapshot, started, at time.Time, emi
 	return events
 }
 
-// runWatch keeps saves synced continuously (FDR-005): a poll-based watcher
-// notices save writes, waits for a quiet interval so write bursts settle,
-// and runs the same headless pass sync uses. Server-side movement arrives
-// over the server's event stream — a Dash restore reaches this device in
-// seconds — with a periodic pass as the fallback when the stream is down.
-// Watch never prompts — a diverged save is reported as such and waits for
-// an interactive track run, while local progress beside a rewound Current
-// Revision branches and keeps flowing (FDR-005, decision 15). In a terminal
-// it shows a live view; piped or under a service manager it logs plainly.
+// runWatch continuously runs non-interactive sync passes after local or server changes.
 func runWatch(ctx context.Context, scanner *client.Scanner, arguments []string) error {
 	flags := flag.NewFlagSet("watch", flag.ContinueOnError)
 	statePath := flags.String("state", "", "path to local tracking state")
@@ -151,20 +132,13 @@ func runWatch(ctx context.Context, scanner *client.Scanner, arguments []string) 
 	return keepWatching(ctx, loop, url, settings, handoff{})
 }
 
-// handoff is what a finished run gives the watch loop: the table its
-// reconcile pass established and when that pass reached the server, so the
-// live view opens showing standing state and proving liveness rather than
-// waiting a poll to fill itself in.
+// handoff seeds the watch view from a completed reconciliation pass.
 type handoff struct {
 	snapshot tui.ReportSnapshot
 	at       time.Time
 }
 
-// watchSeed is what a finished run gives the watch loop about playing
-// games, so the loop opens where the run left off instead of re-deriving
-// it: the presence picture the run assembled, the detector whose process
-// cache the run's sweep already warmed, and the pulls the run held back
-// under a running game. A detached watch has none of it and starts cold.
+// watchSeed carries presence, the warmed detector, and deferred pulls into watch.
 type watchSeed struct {
 	detector *running.Detector
 	presence presenceWatch
@@ -184,9 +158,7 @@ func defaultWatchSettings() watchSettings {
 	return watchSettings{poll: 10 * time.Second, pull: 15 * time.Minute, floor: 5 * time.Minute}
 }
 
-// keepWatching runs the loop until the user quits or the service manager
-// stops the process. In a terminal the live block stays pinned at the
-// bottom while events scroll past above it; piped, the events are the log.
+// keepWatching runs until cancellation, using a live TTY view or plain event log.
 func keepWatching(
 	ctx context.Context,
 	loop watchLoop,
@@ -219,16 +191,10 @@ func keepWatching(
 	return err
 }
 
-// serverSettle is how long the loop lets server events coalesce before the
-// pass they trigger: a restore publishes movement more than once, and one
-// pass should answer the burst. The first event opens the window and later
-// events add nothing to it, so steady traffic cannot postpone the pass.
+// serverSettle coalesces a burst of server events without extending the first deadline.
 const serverSettle = 2 * time.Second
 
-// presenceReaffirm is how often watch re-affirms which games are being
-// played. It must stay comfortably inside the server's credibility window,
-// so a quiet session keeps reading as playing and a closed one clears
-// within about a minute.
+// presenceReaffirm stays within the server's presence-expiry window.
 const presenceReaffirm = time.Minute
 
 type watchLoop struct {
@@ -246,26 +212,15 @@ type watchLoop struct {
 	// movement subscribes to the server's change feed; nil leaves the
 	// periodic pull as the only way server-side movement is noticed.
 	movement func(context.Context) <-chan string
-	// watched seeds the loop with the files a preceding run already
-	// discovered, so a hand-off from track watches immediately instead of
-	// repeating the pass that run just finished.
+	// watched avoids repeating the handoff pass before polling begins.
 	watched []string
-	// presence seeds the loop with the presence picture that same run
-	// established, so playing games report immediately instead of waiting
-	// out the first pass.
+	// presence makes the handoff report available immediately.
 	presence presenceWatch
-	// deferred seeds the loop with the games whose pulls that run held
-	// back under a running game, so their exit is watched from the first
-	// sweep even though the opening pass is skipped.
+	// deferred keeps handoff pull gates active from the first sweep.
 	deferred []string
 }
 
-// newWatchLoop wires the loop the way every real caller needs it: timings
-// from settings, movement from the server's event stream. Keeping the
-// wiring in one place is what keeps the two callers from drifting; tests
-// build the struct directly to inject their own movement feed. The detector
-// comes from the caller so a run that already swept hands its warm one over
-// rather than making the loop re-read every process's executable path.
+// newWatchLoop wires configured timings, server events, and a reusable process detector.
 func newWatchLoop(scanner *client.Scanner, server *remote.Client, store *tracking.Store, detector *running.Detector, settings watchSettings, events *announcer) watchLoop {
 	return watchLoop{
 		scanner:  scanner,
@@ -297,34 +252,20 @@ func (l watchLoop) finish(sink watchSink, started time.Time, snapshot tui.Report
 // run polls until ctx ends. State reloads every pass so a concurrent track
 // run's changes are honored; a failed pass leaves work for the next one.
 func (l watchLoop) run(ctx context.Context, sink watchSink) {
-	// presence carries what the re-affirm ticker sweeps and reports between
-	// passes; a pass that produced a picture replaces it wholesale. A
-	// hand-off from track seeds it, the same way it seeds the watched files.
+	// presence is replaced only by a pass with a valid process sweep.
 	presence := l.presence
-	// deferred carries the games whose pulls a pass held back under a
-	// running game; their exit is what resolves those pulls, so it is the
-	// sweeps between passes that watch for it. Only a pass that reconciled
-	// replaces the list — one that did not must not erase the exit trigger.
+	// Only a reconciled pass may replace deferred pulls and their exit triggers.
 	deferred := l.deferred
-	// exitFired remembers that a standing deferral's exit already had its
-	// pass. Every other trigger fires once and leaves a failure to the pull
-	// ticker; the exit trigger does the same, or a pass that keeps failing
-	// would run at the poll interval for as long as it kept failing. A game
-	// seen playing again re-arms it, so a relaunch and a second quit land.
+	// exitFired prevents failed exit-triggered passes from retrying every poll.
 	exitFired := false
 	affirmPresence := func() (map[string]bool, bool) {
-		// A sweep earns its cost when there is a device to report to or a
-		// held pull waiting on an exit. With neither there is nothing to
-		// learn, so an unreported loop does not read the process table.
+		// Skip process sweeps when there is no presence or deferred pull to update.
 		if l.detector == nil || (presence.deviceID == "" && len(deferred) == 0) {
 			return nil, false
 		}
 		playing, err := playingNow(ctx, l.detector, presence.matchers)
 		if err != nil {
-			// A failed sweep skips the report: the server's picture holds
-			// through its credibility window, while an empty report would
-			// clear a game still being played. It answers nothing about
-			// exits either — a held pull keeps waiting.
+			// A failed sweep neither clears presence nor resolves deferred pulls.
 			return nil, false
 		}
 		if presence.deviceID != "" {
@@ -333,12 +274,7 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 		}
 		return playing, true
 	}
-	// Presence re-affirms on its own cadence: a game can run for an hour
-	// without writing its save, and the server's picture of "playing" must
-	// not age out just because no pass had a reason to run. A pass affirms
-	// too, so each one pushes the next re-affirm a full interval out.
-	// While a pull waits on a game's exit the cadence tightens to the poll
-	// interval, so the pull lands within a poll of the game closing.
+	// Reaffirm presence independently of save writes; poll faster while pulls await exit.
 	nextAffirm := func() time.Duration {
 		if len(deferred) > 0 && l.poll < presenceReaffirm {
 			return l.poll
@@ -357,14 +293,12 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 		}
 		report := &tui.TrackReport{}
 		outcome, files, played, err := syncPass(ctx, l.scanner, l.server, l.detector, &state, report, l.floor)
-		// A failed scan yields no picture; the presence already standing
-		// keeps re-affirming rather than being zeroed by the failure.
+		// Preserve the last valid presence after a failed scan.
 		if played.presence.deviceID != "" {
 			presence = played.presence
 		}
 		if played.swept {
-			// The pass's own sweep is the affirmation; sweeping again
-			// would double the cost of every pass for the same answer.
+			// Reuse the pass's process sweep as the affirmation.
 			if presence.deviceID != "" {
 				reportPlaying(ctx, l.server, presence, played.playing)
 				sink.Playing(playingGames(presence.titles, played.playing))
@@ -372,14 +306,7 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 		} else {
 			affirmPresence()
 		}
-		// Only a pass that reached the save comparison speaks for the
-		// standing list. A library sync that never reached the server skips
-		// that pass entirely (FDR-005, decision 13), so it knows nothing
-		// about which pulls are still held — and adopting its empty answer
-		// would drop the exit trigger for a pull that never applied. A pass
-		// that did reconcile is authoritative: whatever it still holds is
-		// held under a game its own sweep saw playing, so the exit trigger
-		// re-arms with it.
+		// Only a reconciled pass may replace or re-arm deferred pull state.
 		if err == nil && outcome.Synced {
 			deferred = played.waiting
 			exitFired = false
@@ -401,8 +328,7 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	if watched == nil {
 		watched = pass()
 	} else {
-		// A hand-off skipped the opening pass, so the run's presence picture
-		// goes live now instead of waiting out the first ticker interval.
+		// Publish handoff presence before the first ticker interval.
 		affirmPresence()
 	}
 	sink.Watching(len(watched))
@@ -423,9 +349,7 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	defer settleTimer.Stop()
 	settleArmed := false
 
-	// refresh is the one way a pass lands: every trigger shares it, so the
-	// bookkeeping cannot drift between them. A pass answers any movement
-	// still settling, so the settle timer is disarmed too.
+	// All triggers share refresh so pass bookkeeping has one update path.
 	refresh := func() {
 		settleTimer.Stop()
 		settleArmed = false
@@ -434,10 +358,7 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 		signature = statSignature(watched)
 		dirty = false
 	}
-	// stillWriting reports whether local save writes are still landing.
-	// While they are, a triggered pass waits — committing mid-burst is how
-	// a torn save reaches the server — and the poll path, which owns the
-	// quiet-interval rule, runs the deferred pass once the burst settles.
+	// Delay triggered passes until local writes have been quiet for one interval.
 	stillWriting := func() bool {
 		if next := statSignature(watched); next != signature {
 			signature = next
@@ -451,9 +372,7 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			return
 		case eventType, open := <-movement:
 			if !open {
-				// The feed is gone for good — a refused stream does not
-				// come back — leaving the periodic pull as the fallback
-				// it already is; the passes' own errors say why.
+				// Periodic passes remain the fallback after the event feed closes.
 				movement = nil
 				continue
 			}
@@ -485,18 +404,10 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 				continue
 			}
 			if exitFired {
-				// This exit already had its pass. It did not land the pull,
-				// or the list would be empty — so the pull waits for the
-				// pull ticker, the fallback every other trigger falls back
-				// to, instead of retrying a failing pass every poll.
+				// A failed exit pass retries on the normal pull ticker.
 				continue
 			}
-			// The game holding back a pull has closed — but the exit often
-			// lands amid the game's final save flush, and a pass mid-burst
-			// is how a torn save reaches the server. The quiet-interval
-			// rule holds here like everywhere: a burst still landing leaves
-			// the pass to the poll path, which runs it once the writes
-			// settle, and leaves this trigger armed until one does.
+			// Apply an exit-triggered pull only after the game's final writes settle.
 			if stillWriting() {
 				continue
 			}

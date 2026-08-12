@@ -1,9 +1,4 @@
-// Package running detects whether an installed game is being played right
-// now. The package owns the process mechanics — one shared sweep per check,
-// zombie filtering, and a stop grace that keeps a brief process flicker from
-// reading as "stopped playing" — while adapters own the meaning: each knows
-// what a running game looks like for its store on this platform, and answers
-// through a Matcher over the shared Snapshot.
+// Package running detects active games from shared, adapter-defined process matching.
 package running
 
 import (
@@ -149,11 +144,7 @@ func (d *Detector) Playing(ctx context.Context, matchers ...Matcher) (map[string
 	return playing, nil
 }
 
-// ResolveRoots returns roots with their symlink-resolved forms added:
-// process sweeps report fully resolved executable paths, while adapters may
-// know an install through a symlink — a linked Steam library, or macOS's
-// /var living under /private. Resolution costs a stat per path segment, so
-// callers resolve once per game, never per process.
+// ResolveRoots adds symlink-resolved forms for comparison with process paths.
 func ResolveRoots(roots []string) []string {
 	resolved := make([]string, 0, 2*len(roots))
 	for _, root := range roots {
@@ -168,11 +159,7 @@ func ResolveRoots(roots []string) []string {
 	return resolved
 }
 
-// UnderRoot reports whether a path lives at or below a root. The comparison
-// folds case where filesystems do, and only crosses whole path segments, so
-// a root never claims its similarly-named sibling. A root that is itself a
-// filesystem root — "/" or a bare drive — already ends in the separator and
-// claims everything beneath it.
+// UnderRoot compares whole path segments using platform-appropriate case rules.
 func UnderRoot(path, root string) bool {
 	if path == "" || root == "" {
 		return false

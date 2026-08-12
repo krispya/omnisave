@@ -74,9 +74,7 @@ export function GameDetail({
   const [deletingRevision, setDeletingRevision] = useState(false);
   const [deleteRevisionError, setDeleteRevisionError] = useState('');
   const history = useSaveRevisions(token, selectedSave);
-  // A conflicting restore reloads the library under the open dialog, so the action
-  // is re-read from the fresh game every render: a retry then sends the reloaded
-  // current pointer and the dialog's verb describes the move from where it is now.
+  // Re-derive the action after reloads so retries use the latest current pointer.
   const activeRevisionAction = revisionAction
     ? refreshRevisionAction(revisionAction, game.saves, history.revisions)
     : undefined;
@@ -107,8 +105,7 @@ export function GameDetail({
     history.replaceRevision(updated);
   }
 
-  // The open save is the selected one, so opening a save closes whichever was open and
-  // becomes what the revision fetch is pointed at.
+  // Selection controls both the open history and its revision fetch.
   function toggleSave(save: Omnisave) {
     setFocus(undefined);
     onSelectSave(save.id === selectedSave?.id ? undefined : save);

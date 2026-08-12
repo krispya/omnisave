@@ -13,13 +13,7 @@ type ProviderDialogProps = {
   onSave: (values: { clientID: string; clientSecret: string }) => void;
 };
 
-/**
- * Where IGDB credentials are typed.
- *
- * The secret field starts empty even when one is stored, because the server
- * never hands a stored secret back (ADR-011). On a connected provider, leaving
- * it empty means "keep the one you have".
- */
+/** Edits IGDB credentials without reading a stored secret back from the server. */
 export function ProviderDialog({
   configured,
   saving,

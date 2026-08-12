@@ -1,14 +1,4 @@
-/**
- * The glyphs the dash draws, as one small set rather than a dependency.
- *
- * Every icon is a solid 24×24 shape painted in `currentColor`, so a row's icon
- * takes its color from the row and a disabled control dims its icon along with
- * its text. Filled rather than outlined: at the sizes these are drawn, a solid
- * shape holds together where a hairline outline dissolves.
- *
- * Paths are filled even-odd, so an inner subpath — the hole in a gear, the dot
- * in a tag — reads as a hole rather than filling solid.
- */
+/** Solid 24×24 glyphs that inherit the surrounding text color. */
 
 export type IconName =
   | 'menu'
@@ -29,8 +19,7 @@ const paths: Record<IconName, string> = {
     'M14.7 6.7a1 1 0 0 1 0 1.42L10.82 12l3.88 3.88a1 1 0 1 1-1.42 1.42l-4.58-4.6a1 1 0 0 1 0-1.4l4.58-4.6a1 1 0 0 1 1.42 0Z',
   'chevron-right':
     'M9.3 6.7a1 1 0 0 0 0 1.42L13.18 12 9.3 15.88a1 1 0 1 0 1.42 1.42l4.58-4.6a1 1 0 0 0 0-1.4l-4.58-4.6a1 1 0 0 0-1.42 0Z',
-  // Four covers on a shelf. Two bars would have read as a pause button, which
-  // is the one thing a media app's menu must not accidentally say.
+  // Four covers on a shelf.
   library:
     'M4 3h5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm11 0h5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1ZM4 13h5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Zm11 0h5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z',
   settings:

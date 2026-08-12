@@ -8,18 +8,8 @@ const maximumRetryDelay = 30_000;
 const safetyRefreshInterval = 5 * 60_000;
 
 /**
- * Keeps a view current from the server's own event stream: it refreshes on the
- * event type it was asked for, and reconnects on its own when the stream drops.
- *
- * `eventTypes` is what lets one connection serve more than one watcher. The
- * shell listens for both the Library's changes and access changes, so a
- * pairing request can interrupt whatever the owner is doing without a second
- * stream open behind it.
- *
- * `onRefresh` receives the event types that provoked the refresh, so a caller
- * can answer a cheap event with a cheap fetch. An empty list means "refresh
- * everything": the safety interval, coming back online, and returning to a
- * visible tab all carry no event to blame.
+ * Refreshes a view from selected server events and reconnects a dropped stream.
+ * An empty refresh event list requests a full refresh.
  */
 export function useServerEvents({
   token,
@@ -41,8 +31,7 @@ export function useServerEvents({
     const controller = new AbortController();
     let refreshTimer: number | undefined;
     let refreshRunning = false;
-    // The event types accumulated since the last refresh; an empty set means
-    // "refresh everything" and subsumes any named event that joins it.
+    // An empty set requests a full refresh and subsumes named events.
     let queuedEvents: Set<string> | undefined;
     let lastEventID = '';
 

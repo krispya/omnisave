@@ -83,10 +83,7 @@ func runServer(ctx context.Context, config serverConfig) error {
 	}
 	saves := omnisaveservice.NewWithNamer(repository, revisionNamer)
 	hasheousProvider := hasheous.New(config.Hasheous.BaseURL, &http.Client{Timeout: hasheousTimeout})
-	// IGDB is registered whether or not it has credentials yet: the owner can
-	// supply them later, and the catalog skips a provider that cannot answer
-	// (ADR-011). Search prefers it because its titles and art are better;
-	// resolution asks Hasheous first because it answers from a hash.
+	// Register IGDB before credentials are configured so it can be enabled at runtime.
 	igdbProvider := catalog.NewReloadable(igdb.ProviderName)
 	games := catalogservice.NewWithProviders(repository, repository,
 		[]catalog.Provider{hasheousProvider, igdbProvider},
@@ -145,10 +142,7 @@ func runServer(ctx context.Context, config serverConfig) error {
 	return nil
 }
 
-// loadIGDB points the catalog's IGDB provider at whatever credentials the
-// owner currently has, or turns it off when they have none. Credentials that
-// do not work are the owner's to notice and fix, so a bad pair leaves the
-// provider off rather than stopping the server.
+// loadIGDB configures the catalog's IGDB provider or disables it when credentials fail.
 func loadIGDB(
 	ctx context.Context, provider *catalog.Reloadable, ownerSettings settings.Service,
 	options igdb.Config, client *http.Client,
@@ -169,13 +163,7 @@ func loadIGDB(
 	return nil
 }
 
-// reportOwnerToken tells the operator how to get in, on the one start where
-// they cannot already know.
-//
-// A generated token is printed once, on the start that minted it, because a
-// secret nobody can read is a server nobody can reach. Every later start
-// prints only where it lives, and a deployment that configured its own token
-// prints nothing at all (ADR-010).
+// reportOwnerToken reports a generated token once and its storage path on later starts.
 func reportOwnerToken(config serverConfig) {
 	switch {
 	case config.TokenGenerated:
@@ -187,10 +175,7 @@ func reportOwnerToken(config serverConfig) {
 	}
 }
 
-// reportUnclaimed says so while this server still belongs to nobody. An
-// unclaimed server can be claimed by anyone who reaches it from the local
-// network (ADR-010), which is the right trade for a home network and worth
-// saying out loud on every start until someone takes it.
+// reportUnclaimed warns while the server can still be claimed from the local network.
 func reportUnclaimed(ctx context.Context, credentials access.Service) {
 	claimable, err := credentials.Claimable(ctx)
 	if err != nil || !claimable {
@@ -200,10 +185,7 @@ func reportUnclaimed(ctx context.Context, credentials access.Service) {
 		"until then anyone who can reach it there can.")
 }
 
-// startAnnouncing puts the server on the local network when the owner's
-// setting says to, and keeps following that setting for as long as the server
-// runs: turning the switch off in the Dash stops the announcement rather than
-// scheduling a restart (ADR-008, ADR-009).
+// startAnnouncing follows the owner's local-discovery setting until shutdown.
 func startAnnouncing(
 	ctx context.Context, config serverConfig, ownerSettings settings.Service,
 ) (*discovery.Announcer, error) {
@@ -223,9 +205,7 @@ func startAnnouncing(
 	if !ownerSettings.Enabled(ctx, settings.AnnounceDiscovery) {
 		return announcer, nil
 	}
-	// A network that will not carry an announcement — a bridged container is
-	// the ordinary case — is not a reason to refuse to serve. Say so once and
-	// carry on; connecting with an address works either way.
+	// Discovery failure does not prevent direct connections.
 	if err := announcer.Start(); err != nil {
 		log.Printf("not announcing on the local network: %v", err)
 		return announcer, nil
@@ -246,9 +226,7 @@ func listenPort(listenAddr string) (int, error) {
 	return value, nil
 }
 
-// dashHandler serves the built Dash, answering its own routes with index.html so a
-// link to one of them survives a reload. Only extensionless paths fall back: a missing
-// asset must stay a 404 rather than become an HTML document with the wrong media type.
+// dashHandler serves the Dash and falls back to index.html only for extensionless routes.
 func dashHandler(webDir string) http.Handler {
 	files := http.FileServer(http.Dir(webDir))
 	index := filepath.Join(webDir, "index.html")

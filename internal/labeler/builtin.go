@@ -7,16 +7,12 @@ import (
 	"strings"
 )
 
-// Built-in labelers ship inside the binary, one script per game. Each script
-// is self-registering through its GAME_KEYS declaration, so supporting a new
-// game is one new .star file and no Go changes.
+// Built-in labelers are embedded and register themselves through GAME_KEYS.
 //
 //go:embed builtin/*.star
 var builtinScripts embed.FS
 
-// loadBuiltins executes every embedded script and indexes it by its declared
-// game keys. Built-ins are first-party code: any load failure or key collision
-// is a bug, not a condition to tolerate.
+// loadBuiltins executes embedded scripts and indexes them by declared game key.
 func loadBuiltins() (map[string]*script, error) {
 	entries, err := fs.Glob(builtinScripts, "builtin/*.star")
 	if err != nil {

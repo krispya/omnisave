@@ -27,11 +27,7 @@ type LockedOut struct {
 func (e *LockedOut) Error() string { return ErrPIN.Error() }
 func (e *LockedOut) Unwrap() error { return ErrPIN }
 
-// Service is the application boundary for who may reach this server.
-//
-// Authentication is a lookup rather than a comparison: the owner token still
-// works as the bootstrap and the way back in, and everything else carries a
-// credential this service issued and can revoke.
+// Service authenticates, issues, and revokes server credentials.
 type Service interface {
 	// Authenticate resolves a bearer token to the principal behind it.
 	Authenticate(ctx context.Context, token string) (*Principal, error)

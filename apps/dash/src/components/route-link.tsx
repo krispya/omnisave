@@ -6,10 +6,7 @@ type RouteLinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> & {
   children: ReactNode;
 };
 
-/**
- * A link to a Dash route. It is a real anchor, so it can be middle-clicked, opened in a
- * new tab, and copied; an ordinary click is handled in place instead of reloading the app.
- */
+/** A real anchor that handles ordinary Dash navigation without reloading. */
 export function RouteLink({ to, children, onClick, ...props }: RouteLinkProps) {
   return (
     <a

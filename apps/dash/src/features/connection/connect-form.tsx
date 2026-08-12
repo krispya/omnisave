@@ -12,18 +12,7 @@ type ConnectFormProps = {
   onOwnerToken: (token: string) => void;
 };
 
-/**
- * First contact with a server, in one of three shapes.
- *
- * A server nobody owns is claimed here, and claiming is where the owner sets
- * the PIN (ADR-010). Every browser after that signs in with those
- * four digits. The owner token is the way in from outside the network and the
- * way back when the PIN is forgotten, so it stays available and stays out of
- * the way.
- *
- * Whatever the shape, the result is the same: this browser ends up holding a
- * credential of its own, revocable beside the owner's Devices.
- */
+/** Claims a server or signs in, issuing this browser its own credential. */
 export function ConnectForm({
   claimable,
   pinSet,

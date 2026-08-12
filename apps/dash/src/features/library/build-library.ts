@@ -3,9 +3,7 @@ import type { GameSummary } from '../game/game-summary.js';
 
 const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
 
-// The server's Library is the source of truth: every Game appears whether or
-// not it has saves. Saves whose game the server does not list (games endpoints
-// disabled, or out of sync) still render, described by their own metadata.
+// Include catalog games without saves and saves missing from the catalog.
 export function buildLibrary(catalog: CatalogGame[] | null, saves: Omnisave[]): GameSummary[] {
   const savesByGame = new Map<string, Omnisave[]>();
   for (const save of saves) {

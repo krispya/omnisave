@@ -1,13 +1,6 @@
 import type { ButtonHTMLAttributes } from 'react';
 
-/**
- * The three weights a button comes in.
- *
- * `filled` is the accent: the foreground color becomes the fill, so the one
- * action a view is asking for is the brightest thing on it. `outline` is
- * everything else worth a border, and `plain` is a dismissal. `danger` is the
- * only place chroma is spent.
- */
+/** Visual button variants for primary, secondary, dismissive, and destructive actions. */
 export type ButtonVariant = 'filled' | 'outline' | 'plain' | 'danger';
 
 const variants: Record<ButtonVariant, string> = {

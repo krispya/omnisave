@@ -22,12 +22,7 @@ type ServerSettingsProps = {
   onDisconnect: () => void;
 };
 
-/**
- * Everything about the server rather than about the Library: what holds a
- * credential, and whether the server announces itself on the local network.
- * Devices asking to connect are not here — they live behind the menu's
- * "Asking to connect", which reaches the owner wherever they are.
- */
+/** Server credentials, providers, and local discovery settings. */
 export function ServerSettings({ token, credentialID, onDisconnect }: ServerSettingsProps) {
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [settings, setSettings] = useState<OwnerSetting[]>([]);
@@ -52,10 +47,7 @@ export function ServerSettings({ token, credentialID, onDisconnect }: ServerSett
     void refresh();
   }, [refresh]);
 
-  // Every owner action here has the same shape: mark the row busy, do the one
-  // thing, then re-read. The re-read is deliberate rather than left to the
-  // event stream — a revocation has to look like it landed even if the stream
-  // is down.
+  // Re-read after writes so the UI does not depend on event-stream delivery.
   async function act(id: string, action: () => Promise<unknown>) {
     setBusyID(id);
     try {
@@ -71,8 +63,7 @@ export function ServerSettings({ token, credentialID, onDisconnect }: ServerSett
   const clientID = settings.find((setting) => setting.key === 'igdb.client_id');
   const clientSecret = settings.find((setting) => setting.key === 'igdb.client_secret');
 
-  // Connecting, editing, and disconnecting are all the same write: an empty
-  // secret keeps the stored one, and empty everything turns the provider off.
+  // An empty secret preserves it; empty credentials disable the provider.
   async function saveProvider(values: { clientID: string; clientSecret: string }) {
     setBusyID('igdb');
     setProviderError('');

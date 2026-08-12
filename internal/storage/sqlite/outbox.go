@@ -79,11 +79,7 @@ func (r *Repository) enqueueGameProjection(ctx context.Context, tx *sql.Tx, id s
 	return enqueueStoreAction(ctx, tx, storeActionRecordGame, id, record)
 }
 
-// flushStoreOutbox applies committed portable-store work in transaction order.
-// Each action is idempotent, so a crash after the file write but before the row
-// deletion safely repeats it. The immediate transaction in flushNextStoreAction
-// is the database-wide ordering boundary. The Repository mutation lock alone
-// cannot protect two processes sharing one database and store.
+// flushStoreOutbox applies idempotent portable-store actions in database order.
 func (r *Repository) flushStoreOutbox(ctx context.Context) error {
 	for {
 		flushed, err := r.flushNextStoreAction(ctx, r.applyStoreAction)
@@ -98,11 +94,7 @@ func (r *Repository) flushStoreOutbox(ctx context.Context) error {
 
 type storeActionApplier func(context.Context, string, string, string) error
 
-// flushNextStoreAction holds SQLite's writer position from choosing the oldest
-// action until its durable store write and queue removal are complete. Another
-// repository can neither project a later action nor enqueue one that overtakes
-// this action. Releasing the lock between actions keeps the critical section
-// bounded and still preserves the queue's total order.
+// flushNextStoreAction holds SQLite's writer position through one durable projection.
 func (r *Repository) flushNextStoreAction(
 	ctx context.Context,
 	apply storeActionApplier,
@@ -150,11 +142,7 @@ func (r *Repository) flushNextStoreAction(
 	return true, nil
 }
 
-// beginStoreProjection waits for SQLite's global writer position. The DSN
-// makes BeginTx use BEGIN IMMEDIATE, so success proves that no other Repository
-// can have selected an action it has not finished projecting. A busy timeout
-// keeps ordinary contention efficient; retrying here handles a projection that
-// legitimately lasts longer than that timeout without weakening durability.
+// beginStoreProjection retries until it obtains SQLite's global writer position.
 func (r *Repository) beginStoreProjection(ctx context.Context) (*sql.Tx, error) {
 	delay := time.Millisecond
 	for {

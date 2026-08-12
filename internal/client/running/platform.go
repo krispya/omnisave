@@ -33,11 +33,7 @@ type knownProcess struct {
 	executable string
 }
 
-// Processes lists live processes that expose an executable path. Processes
-// that refuse theirs — kernel threads, other users' processes — cannot be a
-// game this user is playing, and zombies are already dead: a quit Proton
-// game routinely lingers as a defunct .exe until its prefix tears down, and
-// counting it would pin the game as playing forever.
+// Processes lists live, non-defunct processes with readable executable paths.
 func (p *platformProvider) Processes(ctx context.Context) ([]Process, error) {
 	live, err := process.ProcessesWithContext(ctx)
 	if err != nil {
@@ -78,14 +74,7 @@ func (p *platformProvider) Processes(ctx context.Context) ([]Process, error) {
 	return processes, nil
 }
 
-// defunct reports whether the OS lists a process that can no longer run
-// code. Only Linux checks — that is where the problem lives (a quit Proton
-// game lingers as a defunct .exe) and where status is a cheap procfs read;
-// on macOS each status costs an exec'd ps, which measured at ~1.4ms per
-// process — most of a second per sweep — for a corpse Unix-style reaping
-// makes rare there anyway. Status can be unreadable for a process mid-exit;
-// treating that as defunct errs toward not detecting, never toward a stuck
-// "playing".
+// defunct reports Linux zombie processes; unreadable status is treated as defunct.
 func defunct(ctx context.Context, candidate *process.Process) bool {
 	if runtime.GOOS != "linux" {
 		return false
@@ -111,17 +100,10 @@ func (p *platformProvider) Cmdline(ctx context.Context, pid int32) ([]string, er
 	return candidate.CmdlineSliceWithContext(ctx)
 }
 
-// maxOpenPathDescriptors bounds the descriptor walk: a process holding
-// thousands of descriptors is not a game whose save evidence sits past the
-// bound, and an unbounded walk would let one pathological process slow every
-// sweep.
+// maxOpenPathDescriptors bounds the cost of one process's descriptor walk.
 const maxOpenPathDescriptors = 512
 
-// OpenPaths returns the filesystem paths a process holds open, plus its
-// working directory. Only Linux answers: /proc/<pid>/fd and /proc/<pid>/cwd
-// are free to read for the user's own processes. Other platforms would need
-// an lsof-grade walk, so they report nothing and matchers fall back to
-// other evidence.
+// OpenPaths returns Linux process file descriptors and its working directory.
 func (p *platformProvider) OpenPaths(ctx context.Context, pid int32) ([]string, error) {
 	if runtime.GOOS != "linux" {
 		return nil, nil

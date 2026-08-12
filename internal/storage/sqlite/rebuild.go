@@ -13,22 +13,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
-// This file rebuilds the database from the store — the reverse of reconcile.
-//
-// The store is the durable record, so a database missing what the store holds
-// is an index that has fallen behind its data: deleted outright, restored from
-// an older backup, or created fresh beside a store carried over from another
-// machine. Opening walks the store's identifiers, imports whatever the
-// database does not hold, and leaves alone everything it does — the database
-// stays the live authority on what it already knows.
-//
-// The walk reads names, not records: a record's file is named by its
-// identifier, so a healthy open discovers it is missing nothing at the cost of
-// a directory listing, and reads only the records it is about to import.
-//
-// Before this pass, inspectStore reads every reachability record. If that walk
-// is incomplete, valid deletion facts are still honored but no absence-based
-// import or reclamation is attempted.
+// Rebuild imports portable records missing from SQLite after a complete store inspection.
 
 // rebuild imports into the database what the store holds and the database
 // lacks. It runs on open, before reconcile, so the two passes together leave
@@ -204,12 +189,7 @@ func (r *Repository) applyDeletionMarkers(ctx context.Context, inventory recover
 	return tx.Commit()
 }
 
-// noteRecordRowDivergence says loudly when a portable record is about to
-// overwrite a row that disagrees with it. The record wins — the outbox keeps
-// it the acknowledged state, and the two agree at rest — so a disagreement
-// means a legacy store that lagged, or an older store backup restored beside
-// a newer database, and rolling a name or Current Revision back silently
-// would be indistinguishable from data loss to its owner.
+// noteRecordRowDivergence reports before a portable record replaces conflicting row state.
 func (r *Repository) noteRecordRowDivergence(ctx context.Context, record store.Omnisave) {
 	var displayName string
 	var current sql.NullString
@@ -310,18 +290,8 @@ func (r *Repository) importOmnisave(ctx context.Context, record store.Omnisave) 
 	return err
 }
 
-// importRevisions inserts the arrived manifests parents-first across every
-// lineage at once: a fork's first own commit names a parent its source
-// created, so ordering each lineage's batch on its own could reach that child
-// before its parent exists anywhere, severing the chain. Each save imported
-// this rebuild then settles its Current Revision — the pointer its record
-// carried, or the newest tip for a legacy record from before the pointer
-// existed. Saves the database already held are not touched here; their pointer
-// is the database's to keep. It reports how many revisions were imported and
-// how many of their files name objects the store does not hold: those are
-// counted rather than refused, because a partial copy loses the missing bytes
-// either way and the manifest is the only thing that still says what they
-// were.
+// importRevisions inserts all lineages parents-first, then restores imported
+// saves' current pointers. Missing objects are counted without dropping manifests.
 func (r *Repository) importRevisions(
 	ctx context.Context,
 	arrivals map[string][]store.Revision,

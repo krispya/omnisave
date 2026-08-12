@@ -14,10 +14,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
-// Record kinds. Every file the store writes names its own kind and version in
-// its first two fields, so a reader that finds one in isolation — pulled out of
-// a backup, mailed to somebody, recovered by a file scavenger — can still tell
-// what it is holding.
+// Every record names its kind and version so it remains identifiable in isolation.
 const (
 	KindRevision = "revision"
 	KindOmnisave = "omnisave"
@@ -29,14 +26,7 @@ const (
 	DeletionGame     = "game"
 )
 
-// Revision is a manifest: one immutable snapshot, naming the content of every
-// file in it. This is the record that makes the store self-describing. An
-// object on its own is anonymous bytes; a manifest is what says those bytes are
-// the third save of Chrono Trigger and belong at saves/chrono.srm.
-//
-// It carries the game's and the lineage's identity rather than referencing
-// them, so a single manifest is enough to place its files even if every other
-// record in the store were lost.
+// Revision is a self-contained immutable snapshot manifest.
 type Revision struct {
 	Kind     string           `json:"kind"`
 	Version  int              `json:"version"`
@@ -56,9 +46,7 @@ type RevisionOmnisave struct {
 	DisplayName string `json:"display_name"`
 }
 
-// RevisionGame names the game a snapshot is of. The identifiers travel with it
-// so a recovered save can be matched back to a catalog entry — or to a game a
-// person recognizes — without a provider lookup.
+// RevisionGame identifies the game without requiring another store record.
 type RevisionGame struct {
 	ID          string                   `json:"id"`
 	Title       string                   `json:"title"`
@@ -74,9 +62,7 @@ type RevisionFile struct {
 	Format string `json:"format,omitempty"`
 }
 
-// Omnisave records a lineage's mutable facts — the ones no immutable revision
-// can carry. It is written when a save is created, renamed, restored, and after
-// every commit because the Current Revision pointer moves with each one.
+// Omnisave records a lineage's mutable identity, labels, and current pointer.
 type Omnisave struct {
 	Kind        string `json:"kind"`
 	Version     int    `json:"version"`
@@ -101,9 +87,7 @@ type Omnisave struct {
 	Metadata         map[string]string `json:"metadata,omitempty"`
 }
 
-// Game records catalog identity, so a recovered save has a title rather than an
-// opaque identifier. Provider metadata that can be fetched again is not kept
-// here; identity that cannot be re-derived is.
+// Game records the catalog identity needed to identify a recovered save.
 type Game struct {
 	Kind            string                    `json:"kind"`
 	Version         int                       `json:"version"`
@@ -117,9 +101,7 @@ type Game struct {
 	Fingerprints    []catalog.GameFingerprint `json:"fingerprints,omitempty"`
 }
 
-// Deletion is an immutable committed fact. Its presence, rather than absence
-// from SQLite or the store, is the proof recovery and reclamation require
-// before forgetting a save or revision.
+// Deletion is immutable proof that a logical deletion committed.
 type Deletion struct {
 	Kind       string    `json:"kind"`
 	Version    int       `json:"version"`
@@ -128,9 +110,7 @@ type Deletion struct {
 	DeletedAt  time.Time `json:"deleted_at"`
 }
 
-// PutRevision writes a manifest. Manifests are immutable: writing one that
-// already rests here is a no-op rather than an overwrite, so a reconciling
-// pass can run over a healthy store without rewriting all of it.
+// PutRevision writes an immutable manifest and leaves an existing one unchanged.
 func (s *Store) PutRevision(revision Revision) error {
 	if revision.ID == "" {
 		return errors.New("store: revision needs an id")
@@ -158,10 +138,7 @@ func (s *Store) HasRevision(id string) bool {
 	return err == nil
 }
 
-// PutOmnisave writes or replaces a lineage record, leaving an unchanged one
-// alone. Records are rewritten far more often than they change — every open
-// reconciles them — and an untouched file is one less thing to have been
-// half-written when a copy was taken.
+// PutOmnisave writes a changed lineage record and leaves an equal record untouched.
 func (s *Store) PutOmnisave(record Omnisave) error {
 	if record.ID == "" {
 		return errors.New("store: omnisave needs an id")
@@ -288,10 +265,7 @@ func (s *Store) EachGame(visit func(Game) error) error {
 	})
 }
 
-// EachRevisionID calls visit with every manifest's identifier without reading
-// any manifest. A record's file is named by its identifier, so what the store
-// holds is answerable from a directory walk alone — which is what lets a
-// rebuild ask that question on every open and read only what it is missing.
+// EachRevisionID visits manifest identifiers without reading their records.
 func (s *Store) EachRevisionID(visit func(id string) error) error {
 	return s.eachRecordID(revisionDir, visit)
 }

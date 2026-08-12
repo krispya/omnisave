@@ -14,19 +14,13 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
-// Read limits. Path and size questions are free — they are answered from the
-// revision's manifest — but content questions open artifacts, so a run gets a
-// bounded budget. A file over the limit, like every other unreadable file,
-// answers None: labelers degrade, they do not error.
+// Content reads are bounded per file and per labeling run.
 const (
 	maxFileBytes  = 8 << 20
 	maxTotalBytes = 32 << 20
 )
 
-// snapshot is the value handed to a script's label function: a read-only view
-// of one revision's file set. Paths are canonical save paths — forward
-// slashes, location-prefixed, identical on every device — which is what lets
-// one script label commits from all of them.
+// snapshot exposes a revision's canonical paths and content to a labeler.
 //
 // Free (manifest only):    paths([pattern]), exists(path), size(path)
 // Reads the file:          json(path), text(path), bytes(path)
@@ -155,9 +149,7 @@ func (s *snapshot) bytesMethod(_ *starlark.Thread, fn *starlark.Builtin, args st
 	return starlark.Bytes(content), nil
 }
 
-// jsonMethod parses a file as JSON, answering None for a file that is absent,
-// oversized, or not JSON. Decoded documents are cached: labelers routinely
-// consult one document from several helper functions.
+// jsonMethod parses and caches JSON, returning None when the file is unreadable or invalid.
 func (s *snapshot) jsonMethod(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var name string
 	if err := starlark.UnpackPositionalArgs(fn.Name(), args, kwargs, 1, &name); err != nil {
@@ -179,10 +171,7 @@ func (s *snapshot) jsonMethod(thread *starlark.Thread, fn *starlark.Builtin, arg
 	return decoded, nil
 }
 
-// read opens one artifact within the per-file and per-run byte limits.
-// Every failure mode — unknown path, oversized file, exhausted budget,
-// storage error — reports "not readable" rather than distinguishing itself:
-// a labeler has no better move available than labeling without the file.
+// read opens an artifact within the byte limits and treats all failures as unreadable.
 func (s *snapshot) read(name string) (string, bool) {
 	file, ok := s.byPath[name]
 	if !ok || file.Artifact.Size > maxFileBytes || file.Artifact.Size > s.budget {

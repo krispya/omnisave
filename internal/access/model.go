@@ -40,10 +40,7 @@ const (
 	PairingDenied   PairingStatus = "denied"
 )
 
-// PairingRequest is a Device asking for access, as the Dash shows it. The code
-// is here because the owner reads it: it is the only part of a request that
-// ties it to the Device that sent it, since the name and identity are minted
-// by the client and the address is worth what its network path is worth.
+// PairingRequest is a Device access request with the code the owner verifies.
 type PairingRequest struct {
 	ID            string        `json:"id"`
 	Code          string        `json:"code"`
@@ -108,9 +105,7 @@ type SignIn struct {
 	SourceAddress string `json:"-"`
 }
 
-// ClaimServer is the first browser taking ownership, which is also where the
-// owner's PIN is set: a claimed server nobody can sign in to would be a server
-// with one way in and no second browser.
+// ClaimServer takes initial ownership and sets the owner PIN.
 type ClaimServer struct {
 	Name string `json:"name,omitempty"`
 	PIN  string `json:"pin"`
@@ -127,8 +122,5 @@ type Principal struct {
 	Name         string
 }
 
-// OwnerPresent reports a request the owner is behind: the owner token, or a
-// credential the Dash holds. A Device's credential is not one of these, which
-// is what keeps approving another Device something only the owner can do
-// (ADR-007).
+// OwnerPresent reports whether the principal may perform owner-only operations.
 func (p Principal) OwnerPresent() bool { return p.Owner || p.Kind == KindDash }

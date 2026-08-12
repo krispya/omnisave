@@ -1,8 +1,4 @@
-// A promise cache resolves each key once and then serves the settled value
-// synchronously, so callers can render cached results on the first paint.
-// Concurrent loads for one key share a single in-flight promise, and failed
-// loads are forgotten so the next caller retries instead of replaying the
-// rejection.
+// Shares in-flight loads, serves settled values synchronously, and retries failures.
 export type PromiseCache<Key, Value> = {
   /** The cached value for a key, if its load has succeeded. */
   get(key: Key): Value | undefined;

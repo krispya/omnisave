@@ -73,15 +73,12 @@ func run(ctx context.Context, arguments []string) error {
 	}
 }
 
-// runConnect connects this Device to a server and persists the credential the
-// owner approved. Nothing is saved unless a credential comes back, so a
-// refused or abandoned attempt leaves any previous connection intact.
+// runConnect persists a server connection after successful approval.
 func runConnect(ctx context.Context, arguments []string) error {
 	flags := flag.NewFlagSet("connect", flag.ContinueOnError)
 	statePath := flags.String("state", "", "path to local tracking state")
 	server := flags.String("server", "", "Omnisave server URL; skips discovery")
-	// The owner token remains the way in when nothing else works, so it stays
-	// available here — and stays the exception rather than the flow.
+	// Keep owner-token authentication as an explicit recovery path.
 	token := flags.String("token", os.Getenv("OMNISAVE_API_TOKEN"), "owner token; skips pairing")
 	if err := flags.Parse(arguments); err != nil {
 		return err
@@ -129,9 +126,7 @@ func runConnect(ctx context.Context, arguments []string) error {
 	return err
 }
 
-// connectByPairing runs the flow a Device with no credential goes through:
-// find a server, ask it to pair, show the code the owner matches in the Dash,
-// and wait for them to answer (FDR-006).
+// connectByPairing discovers a server and waits for owner approval.
 func connectByPairing(
 	ctx context.Context, store *tracking.Store, state *tracking.State, serverURL string,
 ) (*remote.Client, error) {
@@ -161,9 +156,7 @@ func connectByPairing(
 		return nil, errReported
 	}
 
-	// The token is collected by the poll the screen drives, so it is captured
-	// here rather than returned through the interface: what the screen shows
-	// is a code and a state, never a credential.
+	// Capture the token from polling without exposing it to the display interface.
 	var credential string
 	outcome, err := tui.AwaitApproval(ctx, serverURL, ticket.Code,
 		func(ctx context.Context) (access.CollectionStatus, error) {
@@ -195,9 +188,7 @@ func connectByPairing(
 	return nil, errReported
 }
 
-// findServer looks for servers announcing themselves and settles on one. A
-// network that announced nothing is the ordinary case in a bridged container,
-// so it asks for an address rather than giving up (ADR-009).
+// findServer discovers a server or asks for its address when discovery finds none.
 func findServer(ctx context.Context) (string, error) {
 	var servers []discovery.Server
 	var browseErr error
@@ -228,10 +219,7 @@ func findServer(ctx context.Context) (string, error) {
 	}
 }
 
-// establishServer verifies a connection, registers this device, and persists
-// the server so later commands need no token or URL. Nothing is saved unless
-// the token is accepted, so a failed attempt leaves any previous connection
-// intact.
+// establishServer verifies and persists a connection after registering the Device.
 func establishServer(ctx context.Context, store *tracking.Store, state *tracking.State, serverURL, apiToken string) (*remote.Client, error) {
 	server, err := remote.New(serverURL, apiToken, nil)
 	if err != nil {
@@ -256,11 +244,7 @@ func establishServer(ctx context.Context, store *tracking.Store, state *tracking
 	return server, nil
 }
 
-// ensureServer returns a client for the established server connection,
-// running the connect flow first when this device has none. The saved
-// connection is checked before the command starts work: a server that is
-// down is reported in the first moment of the run rather than after a scan
-// and a selection prompt the run cannot honor.
+// ensureServer returns a verified client, connecting first when necessary.
 func ensureServer(ctx context.Context, store *tracking.Store, state *tracking.State, flagURL, flagToken string) (*remote.Client, error) {
 	url, token := serverConnection(*state, flagURL, flagToken)
 	if token != "" {
@@ -276,15 +260,11 @@ func ensureServer(ctx context.Context, store *tracking.Store, state *tracking.St
 		}
 		return server, nil
 	}
-	// No credential yet: this Device has never been connected, so it runs the
-	// same pairing flow `connect` does rather than asking for a secret.
+	// Use the pairing flow when the Device has no credential.
 	return connectByPairing(ctx, store, state, flagURL)
 }
 
-// awaitServer contacts the server before the command starts work. In a
-// terminal the connection panel shows what happened and offers the retry key,
-// so a NAS that was asleep costs one keypress; under a service manager or a
-// pipe there is no one to ask, so the failure is one line and the run ends.
+// awaitServer verifies connectivity, offering retries only in an interactive terminal.
 func awaitServer(ctx context.Context, serverURL string, server *remote.Client) error {
 	if !isatty.IsTerminal(os.Stderr.Fd()) {
 		err := verifyConnection(ctx, server)
@@ -470,24 +450,17 @@ func (m sessionMode) keepsWatching() bool {
 	return m == appSession
 }
 
-// runApp is the bare command: the whole app as one state machine that skips
-// whatever this Device already did. It connects if there is no saved
-// connection, asks which games to track if none are tracked, and then
-// always reconciles once and watches until the run is quit.
+// runApp connects, initializes tracking when needed, reconciles, and watches.
 func runApp(ctx context.Context, scanner *client.Scanner, arguments []string) error {
 	return runSession(ctx, scanner, "omnisave", appSession, arguments)
 }
 
-// runTrack is the selection step on its own: it always asks, so a game
-// installed since the last run can join, reports what the pass did, and
-// exits. Protecting those saves is what the commandless run is for.
+// runTrack updates the tracked-game selection and runs one reconciliation pass.
 func runTrack(ctx context.Context, scanner *client.Scanner, arguments []string) error {
 	return runSession(ctx, scanner, "track", trackSession, arguments)
 }
 
-// runSession connects, settles which games are tracked, and runs the one
-// reconcile pass that may ask. The commandless run then keeps watching;
-// track stops there.
+// runSession connects, updates tracking as needed, and runs one reconciliation pass.
 func runSession(ctx context.Context, scanner *client.Scanner, name string, mode sessionMode, arguments []string) error {
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	statePath := flags.String("state", "", "path to local tracking state")
@@ -547,9 +520,7 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 
 	var outcome tui.TrackOutcome
 	var bindingErr error
-	// What the pass learns about playing games outlives it: the watch phase
-	// inherits the presence picture, the detector whose process cache the
-	// pass just warmed, and the pulls the pass held back.
+	// Hand presence, the warmed detector, and deferred pulls to the watch phase.
 	detector := running.PlatformDetector()
 	var presence presenceWatch
 	var deferredPulls []string
@@ -557,11 +528,7 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 		taskCtx = activity.WithReporter(taskCtx, session.SetLabel)
 		var confirmed map[string]bool
 		outcome, confirmed = syncTracking(taskCtx, server, &state, scans, removed, report)
-		// Presence maps through Library identities, which the library sync
-		// just resolved, so it is assembled here and inherited by the watch
-		// phase rather than rebuilt there. A sync that failed to reach the
-		// server still leaves a picture worth watching with: the loop can
-		// report it once the server comes back.
+		// Build presence after resolving Library identities and reuse it in watch.
 		presence = trackedPresence(scanner, &state, scans)
 		if !outcome.Synced {
 			return
@@ -594,9 +561,7 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 				return choice, err
 			},
 		}
-		// The interactive pass gates its pulls too: alt-tabbing out of a
-		// running game to run omnisave must not undo that game's session.
-		// The sweep fails open, like the headless pass's (decision 13).
+		// Interactive pulls also defer while their game is running.
 		var gate *pullGate
 		if playing, sweepErr := playingNow(taskCtx, detector, presence.matchers); sweepErr == nil {
 			gate = &pullGate{playing: playing}
@@ -638,9 +603,7 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 		watchSeed{detector: detector, presence: presence, deferred: deferredPulls}, pass, *serverURL, *token)
 }
 
-// standingSelection is what a run that does not ask keeps: the tracked
-// games this scan can see. Re-applying it refreshes their scan details and
-// leaves games the scan missed tracked but untouched.
+// standingSelection refreshes visible tracked games without untracking missing ones.
 func standingSelection(state tracking.State, scans []client.TargetScan) []string {
 	tracked := state.TrackedIDs()
 	selected := make([]string, 0, len(tracked))
@@ -654,10 +617,7 @@ func standingSelection(state tracking.State, scans []client.TargetScan) []string
 	return selected
 }
 
-// keepTracking hands the commandless run's reconcile pass to the watch loop
-// in the same process: whatever was printed is now scrollback, and the live
-// block takes the bottom of the terminal. Running Omnisave is leaving it
-// open, so the run does not end until the user quits it.
+// keepTracking hands the reconciliation state to the watch loop until cancellation.
 func keepTracking(
 	ctx context.Context,
 	scanner *client.Scanner,
@@ -677,18 +637,13 @@ func keepTracking(
 	loop := newWatchLoop(scanner, server, store, seed.detector, settings, events)
 	loop.watched = watchedFiles(state, scans)
 	loop.presence = seed.presence
-	// Pulls the run held under a running game hand off like the watched
-	// files do: the loop watches for their exit from its first sweep, so
-	// skipping the opening pass does not skip decision 13's promise.
+	// Preserve deferred pulls when skipping the watch loop's opening pass.
 	loop.deferred = seed.deferred
 	url, _ := serverConnection(*state, flagURL, flagToken)
 	return keepWatching(ctx, loop, url, settings, pass)
 }
 
-// reconcileDeletedGames untracks games whose Library records were deleted on
-// the server, so the selection prompt reflects the deletion before it opens
-// (FDR-002, decision 10). An unreachable server is not a deletion; when the
-// list cannot be fetched, reconciliation waits for a run that can ask.
+// reconcileDeletedGames untracks games confirmed deleted from the server Library.
 func reconcileDeletedGames(ctx context.Context, server *remote.Client, state *tracking.State, report *tui.TrackReport) int {
 	serverGameIDs, err := server.ListGameIDs(ctx)
 	if err != nil {
@@ -712,11 +667,7 @@ func reconcileDeletedGames(ctx context.Context, server *remote.Client, state *tr
 	return untracked
 }
 
-// syncTracking makes the server aware of this device's tracked games: it
-// registers the device, resolves newly tracked games into the Library, and
-// refreshes provenance. Failures never undo local tracking — unresolved games
-// retry on the next track run. The returned set holds the games whose server
-// records were confirmed this run; only those are safe to bind against.
+// syncTracking registers tracked games and returns those confirmed by the server.
 func syncTracking(
 	ctx context.Context,
 	server *remote.Client,
@@ -758,10 +709,7 @@ func syncTracking(
 			Installed: visible,
 		})
 		if isNotFound(trackErr) {
-			// The stored Library identity no longer exists: the game was
-			// deleted on the server, and the server is the authority, so the
-			// deletion syncs back and this device stops tracking the game.
-			// Re-tracking it in a later run resolves it fresh.
+			// Untrack games whose stored Library identity was deleted by the server.
 			state.Untrack(id)
 			outcome.Untracked++
 			outcome.Tracked--
@@ -831,9 +779,7 @@ func isNotFound(err error) bool {
 	return errors.As(err, &response) && response.StatusCode == http.StatusNotFound
 }
 
-// reconcilePrompts carries the reconcile pass's interactive prompts. A nil
-// set makes the pass headless — every prompt-shaped situation is reported
-// and left for an interactive track run (FDR-005).
+// reconcilePrompts provides optional interaction; nil leaves decisions for a later run.
 type reconcilePrompts struct {
 	empty     func(gameTitle string, options []tui.SyncToDeviceOption) (tui.SyncToDeviceChoice, error)
 	stale     func(gameTitle, omnisaveName string) (tui.StaleBindingChoice, error)
@@ -850,9 +796,7 @@ func interactivePrompts() *reconcilePrompts {
 	}
 }
 
-// bindUnboundSaves runs FDR-003's binding pass: conflict-free seeds and Current
-// Revision matches are automatic, while a unique older match asks whether to advance
-// or fork. Ambiguous and unmatched saves remain unbound.
+// bindUnboundSaves automatically binds unambiguous matches and prompts for stale ones.
 func bindUnboundSaves(
 	ctx context.Context,
 	server *remote.Client,
@@ -865,11 +809,8 @@ func bindUnboundSaves(
 	return reconcileSaves(ctx, server, state, scans, confirmed, outcome, report, interactivePrompts(), nil, 0)
 }
 
-// reconcileSaves is the shared reconcile pass (FDR-003, FDR-005): unbound
-// saves get their binding decision, bound saves get the three-way sync
-// comparison. pushFloor suppresses pushes for saves synced more recently
-// than the floor, so continuously flushing saves do not flood history.
-// gate holds automatic pulls back for games being played; nil gates nothing.
+// reconcileSaves binds unbound saves and runs three-way sync for bound saves.
+// pushFloor spaces commits, and gate optionally defers pulls for running games.
 func reconcileSaves(
 	ctx context.Context,
 	server *remote.Client,
@@ -981,8 +922,7 @@ func reconcileSaves(
 				report.Removed(candidate.local.GameTitle)
 				continue
 			}
-			// Another lineage survives, so only this mapping is dead. Drop
-			// it and let the save match or wait for manual binding.
+			// Drop a dead mapping when another server lineage still survives.
 			state.Unbind(candidate.local)
 		}
 
@@ -1098,8 +1038,7 @@ func reconcileSaves(
 				return fmt.Errorf("unknown stale binding choice %q", choice)
 			}
 		}
-		// Zero or several matches: the pass never guesses (FDR-003) — the
-		// user picks the lineage, seeds fresh, or defers to manual bind.
+		// Leave zero or multiple matches for an explicit choice.
 		if prompts == nil {
 			outcome.Unbound++
 			report.Unbound(candidate.local.GameTitle)
@@ -1173,9 +1112,7 @@ func reconcileSaves(
 	return nil
 }
 
-// syncSaveToDevice offers an existing server lineage to a Device with no
-// local content. Placement is always interactive and requires one unambiguous
-// adapter-provided destination.
+// syncSaveToDevice places one selected server lineage at an unambiguous local destination.
 func syncSaveToDevice(
 	ctx context.Context,
 	server *remote.Client,
@@ -1314,17 +1251,13 @@ func revisionByID(history []omnisave.Revision, id *string) (omnisave.Revision, b
 	return omnisave.Revision{}, false
 }
 
-// descendsFrom reports whether node is a strict descendant of ancestor, and
-// whether the ancestry could be resolved at all. An unreadable chain — a
-// parent this history does not carry — resolves to false so the caller can
-// take the cautious branch rather than infer a relationship it cannot see.
+// descendsFrom reports strict ancestry and whether the available history proves it.
 func descendsFrom(history []omnisave.Revision, node, ancestor omnisave.Revision) (descends, resolved bool) {
 	byID := make(map[string]omnisave.Revision, len(history))
 	for _, revision := range history {
 		byID[revision.ID] = revision
 	}
-	// The walk is bounded by the history it walks, so a corrupt parent cycle
-	// ends as unresolved instead of spinning.
+	// Bound the walk so a parent cycle resolves as unknown.
 	for step := 0; step <= len(history); step++ {
 		if node.ParentID == nil {
 			return false, true
@@ -1352,10 +1285,7 @@ func omnisaveDisplayName(save omnisave.Omnisave) string {
 	return "Omnisave " + id
 }
 
-// syncBoundSave runs FDR-005's three-way comparison for one bound save:
-// the local content against the binding's baseline against the Omnisave's
-// Current Revision. Push and pull are lossless by construction; anything else is
-// divergence and never guessed at.
+// syncBoundSave compares local content, its baseline, and the Current Revision.
 func syncBoundSave(
 	ctx context.Context,
 	server *remote.Client,
@@ -1415,10 +1345,7 @@ func syncBoundSave(
 		if err != nil {
 			var conflict *remote.CurrentRevisionConflict
 			if errors.As(err, &conflict) {
-				// The Current Revision moved between this pass's read and its
-				// commit — another device committed or a restore moved the
-				// pointer. Not a failure and not worth a blind retry: the
-				// next pass reads the moved pointer and reconciles.
+				// Defer reconciliation when Current Revision moves during the commit.
 				outcome.Conflicted++
 				report.CurrentMoved(local.GameTitle, name)
 				return nil
@@ -1451,9 +1378,7 @@ func syncBoundSave(
 	}
 	if binding.MatchesManifest(manifest, baseline) {
 		if gate.holdPull(local.GameID) {
-			// A running game holds its save in memory: a pull applied now
-			// would be overwritten from memory at its next save and pushed
-			// back, silently undoing the restore (FDR-005, decision 13).
+			// Defer pulls that a running game could overwrite from memory.
 			outcome.Deferred++
 			report.PullDeferred(local.GameTitle, name)
 			return nil
@@ -1474,12 +1399,8 @@ func syncBoundSave(
 		report.SyncedWith(local.GameTitle, name, time.Now())
 		return nil
 	}
-	// Both sides moved, which is a conflict only when the server's move added
-	// progress this Device does not have: a current descending from the
-	// baseline means another Device built on this same line. A current the
-	// baseline descends from — a rewind — or one on a sibling branch holds
-	// nothing this Device lacks, so the local content is a new branch off the
-	// baseline rather than a conflict (FDR-005, decision 15).
+	// Diverge only when Current descends from the baseline; rewinds and sibling
+	// branches can accept local progress as a new branch.
 	descends, resolved := descendsFrom(history, current, baseline)
 	if resolved && !descends {
 		revision, err := binding.PushBranch(ctx, server, remoteSave.ID, save, current.ID, baseline)
@@ -1507,9 +1428,7 @@ func syncBoundSave(
 	return resolveDivergence(ctx, server, state, local, save, remoteSave, current, &baseline, outcome, report, prompts)
 }
 
-// resolveDivergence handles a save with new progress on both sides.
-// Headless passes report and skip; interactive runs ask, and both answers
-// keep every byte (FDR-005, decision 4).
+// resolveDivergence preserves both sides, prompting only during interactive runs.
 func resolveDivergence(
 	ctx context.Context,
 	server *remote.Client,
@@ -1582,9 +1501,7 @@ func resolveDivergence(
 	return nil
 }
 
-// preserveLocalProgress makes this device's unsynced content a server-side
-// lineage of its own: a fork of the baseline carrying one commit of the
-// local content, or a fresh seed when the binding never had a baseline.
+// preserveLocalProgress stores unsynced content as a fork or a new seed.
 func preserveLocalProgress(
 	ctx context.Context,
 	server *remote.Client,

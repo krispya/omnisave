@@ -14,14 +14,7 @@ import (
 // staleness must unblock, never block.
 const presenceTTL = 3 * time.Minute
 
-// devicePresence remembers, in memory only, which games each device recently
-// reported as being played. Presence is liveness, not provenance: a server
-// restart forgets it, and the next re-affirmation rebuilds it.
-//
-// The server is the only clock. A report ages out here, actively: a timer
-// fires at the earliest expiry, sweeps the stale reports, and announces the
-// change through expired — so readers render what they were last told and
-// never do time math of their own (ADR-001's authority extended to time).
+// devicePresence keeps expiring playing reports in memory and announces expiry changes.
 type devicePresence struct {
 	mu      sync.Mutex
 	now     func() time.Time

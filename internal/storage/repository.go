@@ -94,22 +94,13 @@ type CatalogRepository interface {
 	GetGameMedia(ctx context.Context, gameID, mediaID string) (*catalog.GameMedia, error)
 }
 
-// CredentialRecord is a credential as it is stored, carrying the hash that
-// authentication looks up.
-//
-// The secret-carrying shapes live here rather than beside the API types they
-// embed. A hash and a minted token have no business in a package that answers
-// HTTP: keeping them one import away from the handlers is what stops them from
-// being serialized by a writeJSON that meant to send the credential itself.
+// CredentialRecord is a credential with the hash used for authentication.
 type CredentialRecord struct {
 	access.Credential
 	TokenHash string
 }
 
-// PairingRecord is a pairing request as it is stored. It carries the two
-// secrets the API never returns together: the hashed poll handle, which is
-// what collects the credential, and the minted token, which is held only
-// between approval and the one collection that takes it.
+// PairingRecord stores the hashed poll handle and pending single-use token.
 type PairingRecord struct {
 	access.PairingRequest
 	HandleHash  string
@@ -119,10 +110,7 @@ type PairingRecord struct {
 // AccessRepository persists issued credentials and pairing requests.
 type AccessRepository interface {
 	InsertCredential(ctx context.Context, record CredentialRecord) error
-	// InsertFirstCredential stores a credential only while the server has
-	// none, and answers ErrConflict once it has one. Claiming a server is a
-	// race between whoever reaches it first, so "only the first" has to be
-	// decided by the write rather than by a read before it (ADR-010).
+	// InsertFirstCredential atomically stores only the first server credential.
 	InsertFirstCredential(ctx context.Context, record CredentialRecord) error
 	FindCredentialByTokenHash(ctx context.Context, tokenHash string) (*access.Credential, error)
 	ListCredentials(ctx context.Context) ([]access.Credential, error)
@@ -133,10 +121,7 @@ type AccessRepository interface {
 	GetPairingRequest(ctx context.Context, id string) (*access.PairingRequest, error)
 	ListPendingPairingRequests(ctx context.Context, now time.Time) ([]access.PairingRequest, error)
 	ResolvePairingRequest(ctx context.Context, id string, status access.PairingStatus, credentialID, mintedToken string) error
-	// TakePairingToken reads a request by its handle hash and, when one is
-	// waiting there, takes the minted token in the same step. Collecting a
-	// credential has to be single use, so the read and the clear are one
-	// operation rather than two a second poller could interleave with.
+	// TakePairingToken atomically reads and clears a single-use pairing token.
 	TakePairingToken(ctx context.Context, handleHash string, now time.Time) (*PairingRecord, error)
 	CountRecentPairingRequests(ctx context.Context, sourceAddress string, since time.Time) (int, error)
 	DeleteExpiredPairingRequests(ctx context.Context, before time.Time) error

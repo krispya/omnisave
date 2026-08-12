@@ -19,12 +19,7 @@ export type RevisionRail = {
   laneCount: number;
 };
 
-/**
- * Lays one save's history onto a git-style rail: every revision in one
- * newest-first column, the trunk in the first lane, and each branch left
- * behind by a rewind running its own lane until it curves into the node it
- * sprouted from.
- */
+/** Lays newest-first revision history onto trunk and rewind-branch lanes. */
 export function buildRevisionRail(save: Omnisave, revisions: Revision[]): RevisionRail {
   const graph = buildRevisionGraph([save], new Map([[save.id, revisions]]));
   const rows: RailRow[] = graph.nodes.map((node) => ({

@@ -247,15 +247,8 @@ var migrations = []string{
 		size   INTEGER NOT NULL
 	);`,
 
-	// Credentials the server has issued, and the pairing requests that mint
-	// them (ADR-007). Secrets are stored hashed and are never recoverable;
-	// pairing_requests.minted_token is the one exception, holding a token
-	// between approval and the single poll that collects it.
-	//
-	// Neither table references devices(id): a pairing request names an
-	// identity the client minted for itself, which the server may not have
-	// seen yet and which nothing here can verify. The name is copied onto the
-	// credential so a revocation list stays readable on its own.
+	// Issued credentials and the pairing requests that mint them. Stored secrets
+	// are hashed except for a token awaiting its single collection.
 	`CREATE TABLE credentials (
 		id           TEXT PRIMARY KEY,
 		token_hash   TEXT NOT NULL UNIQUE,
