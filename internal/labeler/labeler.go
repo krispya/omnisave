@@ -1,7 +1,7 @@
 // Package labeler derives revision display names from save content.
 //
 // A labeler is a small Starlark script bound to a game. At commit time it
-// receives the revision's file set and returns a name — "Necrobinder A5,
+// receives the revision's file set and returns a name — "Necro A5,
 // Underdocks flr 12, 11/66 HP" — or nothing. Scripts are pure functions
 // over the snapshot: they cannot reach the filesystem, the network, or the
 // clock, and a script that fails, stalls, or answers nonsense costs only the

@@ -19,7 +19,9 @@ type RevisionActionDialogProps = {
   /**
    * Names of the devices playing this game right now. A restore under a
    * live session waits for the game to close before it lands on that
-   * device, so the dialog says so and the confirm reads "Rewind anyway".
+   * device, and a save written in the meantime branches and takes current
+   * back (FDR-005, decision 15), so the dialog says so and the confirm
+   * reads "Rewind anyway".
    */
   playingDevices: string[];
   busy: boolean;
@@ -137,7 +139,7 @@ export function RevisionActionDialog({
         {live ? (
           <p role="alert" className="mt-4 rounded-md bg-accent/10 px-3 py-2 text-sm text-accent">
             Being played on {playingDevices.join(', ')}. The {label.toLowerCase()} lands there after
-            the game closes.
+            the game closes, unless it saves first.
           </p>
         ) : null}
 

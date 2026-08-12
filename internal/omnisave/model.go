@@ -80,10 +80,16 @@ type UpdateRevision struct {
 
 // CreateRevision describes partial changes committed against an expected current revision.
 type CreateRevision struct {
-	ExpectedCurrentRevisionID *string           `json:"expected_current_revision_id"`
-	Upserts                   []RevisionFile    `json:"upserts,omitempty"`
-	Deletes                   []string          `json:"deletes,omitempty"`
-	Metadata                  map[string]string `json:"metadata,omitempty"`
+	ExpectedCurrentRevisionID *string `json:"expected_current_revision_id"`
+	// ParentRevisionID attaches the new revision to a node other than the
+	// expected current revision, and its file set is the one Upserts and
+	// Deletes apply to. It is how a Device commits a branch after a restore
+	// moved current off the Device's baseline (FDR-005, decision 15). Nil
+	// means the expected current revision is the parent.
+	ParentRevisionID *string           `json:"parent_revision_id,omitempty"`
+	Upserts          []RevisionFile    `json:"upserts,omitempty"`
+	Deletes          []string          `json:"deletes,omitempty"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
 }
 
 // RestoreRevision moves an Omnisave's current pointer to an existing node.

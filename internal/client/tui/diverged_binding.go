@@ -7,10 +7,11 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
-// DivergedBindingChoice resolves a save whose local content and Omnisave
-// Current Revision both moved away from the sync baseline (FDR-005) — a
-// commit elsewhere or a restore, in any direction. Neither choice destroys
-// content.
+// DivergedBindingChoice resolves a save whose local content moved while the
+// Current Revision advanced past the sync baseline — another device building
+// on this same line, so each side holds progress the other lacks (FDR-005,
+// decision 4). A Current Revision restored backwards or sideways branches
+// instead and never reaches this prompt. Neither choice destroys content.
 type DivergedBindingChoice string
 
 const (

@@ -1,13 +1,13 @@
 # FDR-007: Revision Labeling
 
 **Status:** Experimental
-**Last reviewed:** 2026-08-09
+**Last reviewed:** 2026-08-10
 
 ## Overview
 
 Revision labeling names each committed revision from the save content it
-carries, so a history reads as moments in a game — "Necrobinder A5, Underdocks
-flr 12, 11/66 HP" — rather than as timestamps. A labeler is a small script
+carries, so a history reads as moments in a game — "Necro A5, Hive flr 18,
+53/66 HP" — rather than as timestamps. A labeler is a small script
 bound to one game; Omnisave ships built-in labelers for supported games, and
 the same mechanism is designed to accept user-provided labelers later.
 
@@ -31,7 +31,10 @@ the same mechanism is designed to accept user-provided labelers later.
 - Slay the Spire II is the first supported game: mid-run snapshots name the
   character, ascension, act, floor, and health; finished runs name the
   outcome — a win with floors climbed and duration, a death with its killer
-  and where, an abandonment. A fresh profile stays unnamed.
+  and where, an abandonment. Long character names use compact aliases in the
+  revision rail (`Necrobinder` becomes `Necro`). Floors match the game's counter
+  by counting every visited map point, including an act's opening Ancient. A
+  fresh profile stays unnamed.
 
 ## Design Decisions
 
