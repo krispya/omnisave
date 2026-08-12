@@ -15,12 +15,7 @@ import (
 // arguments still feels like one step.
 const BrowseWindow = 2 * time.Second
 
-// Browse listens for servers announcing themselves and returns what answered,
-// sorted by name so two runs in a row offer the same list in the same order.
-//
-// Nothing here is trusted. Anything on the network can claim to be an Omnisave
-// server; what a client gets from this is an address to try, and pairing still
-// decides whether it gets any further.
+// Browse returns discovered server claims in stable name order; pairing still grants access.
 func Browse(ctx context.Context, window time.Duration) ([]Server, error) {
 	if window <= 0 {
 		window = BrowseWindow

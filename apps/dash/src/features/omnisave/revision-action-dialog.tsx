@@ -16,13 +16,7 @@ type RevisionActionDialogProps = {
   action: RevisionAction;
   /** The save's name resolved with the list's positional fallback, never empty. */
   saveName: string;
-  /**
-   * Names of the devices playing this game right now. A restore under a
-   * live session waits for the game to close before it lands on that
-   * device, and a save written in the meantime branches and takes current
-   * back (FDR-005, decision 15), so the dialog says so and the confirm
-   * reads "Rewind anyway".
-   */
+  /** Devices whose live sessions may defer and later overwrite this restore. */
   playingDevices: string[];
   busy: boolean;
   error: string;
@@ -81,7 +75,7 @@ export function RevisionActionDialog({
 
   const restoring = action.kind === 'restore';
   const label = restoring ? revisionMoveLabel(action.move) : 'Fork';
-  // Forks only add a lineage; restores are what a live session can undo.
+  // Only restores can conflict with a live session.
   const live = restoring && playingDevices.length > 0;
 
   function submit(event: FormEvent<HTMLFormElement>) {

@@ -11,12 +11,7 @@ export function resolveFreshSave(saves: Omnisave[], save: Omnisave): Omnisave {
   return saves.find((candidate) => candidate.id === save.id) ?? save;
 }
 
-/**
- * Re-derives a pending action from the freshest library data. A conflicting
- * restore reloads the library while the dialog stays open, so the retry has to
- * send the reloaded current pointer — not the one captured when the dialog
- * opened — and the dialog's verb has to describe the move from there.
- */
+/** Re-derives a pending action against the latest current revision. */
 export function refreshRevisionAction(
   action: RevisionAction,
   saves: Omnisave[],

@@ -27,9 +27,7 @@ func syncConnection(state tracking.State, flagURL, flagToken string) (*remote.Cl
 	return remote.New(url, token, nil)
 }
 
-// runSync performs one headless reconcile over every tracked game and
-// reports what moved (FDR-005). It never prompts: prompt-shaped situations
-// are reported and wait for an interactive track run.
+// runSync performs one non-interactive reconciliation over all tracked games.
 func runSync(ctx context.Context, scanner *client.Scanner, arguments []string) error {
 	flags := flag.NewFlagSet("sync", flag.ContinueOnError)
 	statePath := flags.String("state", "", "path to local tracking state")
@@ -55,8 +53,7 @@ func runSync(ctx context.Context, scanner *client.Scanner, arguments []string) e
 	if err != nil {
 		return err
 	}
-	// A failed sweep skips the report entirely: the server's picture ages
-	// out on its own, and an empty report would clear a running game.
+	// Do not replace presence with an empty report when the sweep fails.
 	if played.swept {
 		reportPlaying(ctx, server, played.presence, played.playing)
 	}
@@ -65,12 +62,7 @@ func runSync(ctx context.Context, scanner *client.Scanner, arguments []string) e
 	return store.Save(state)
 }
 
-// syncPass runs the headless reconcile shared by sync and watch: deletion
-// reconciliation, library sync, then the three-way save pass. It returns
-// the tracked games' local save files so watchers know what to poll, and
-// what the pass learned about playing games — the presence picture the
-// watch loop re-affirms between passes, the sweep behind it, and the games
-// whose pulls the pass held back under a running game.
+// syncPass reconciles deletions, Library state, and saves for sync and watch.
 func syncPass(
 	ctx context.Context,
 	scanner *client.Scanner,
@@ -88,13 +80,9 @@ func syncPass(
 		return tui.TrackOutcome{}, nil, passPlaying{}, err
 	}
 	outcome, confirmed := syncTracking(ctx, server, state, scans, nil, report)
-	// Presence maps through Library identities, which the library sync just
-	// resolved, so a freshly tracked game reports on its very first pass.
+	// Build presence after Library identities are resolved.
 	played := passPlaying{presence: trackedPresence(scanner, state, scans)}
-	// One sweep serves two consumers with opposite failure policies: the
-	// pull gate fails open — an unreadable process list must not defer
-	// pulls forever — while the presence report fails closed, so swept
-	// says whether there is a picture worth reporting at all.
+	// Pull gating fails open, while presence omits failed sweeps.
 	var gate *pullGate
 	if detector != nil {
 		if playing, sweepErr := playingNow(ctx, detector, played.presence.matchers); sweepErr == nil {
@@ -115,10 +103,7 @@ func syncPass(
 	return outcome, watchedFiles(state, scans), played, nil
 }
 
-// watchedFiles lists the local files of tracked games' discovered saves,
-// plus their parent directories: a file appearing in a save's directory
-// bumps the directory's mtime, so new files trigger a pass even though
-// their own paths were never seen before.
+// watchedFiles includes save files and parent directories so new files trigger a pass.
 func watchedFiles(state *tracking.State, scans []client.TargetScan) []string {
 	paths := make(map[string]bool)
 	for _, scan := range scans {
@@ -134,9 +119,7 @@ func watchedFiles(state *tracking.State, scans []client.TargetScan) []string {
 			}
 			for _, destination := range discovered.Destinations {
 				for _, location := range destination.Locations {
-					// A missing prospective path changes from "missing" when the
-					// game creates its first save; a directory mtime also catches
-					// new files beneath an existing save root.
+					// Watch missing paths and directory mtimes for newly created saves.
 					paths[location.Path] = true
 				}
 			}

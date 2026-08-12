@@ -26,13 +26,7 @@ type serverEvent struct {
 	Type string
 }
 
-// subscription holds what one reader has not caught up on yet.
-//
-// Pending events are kept per scope rather than in a queue, which is what makes
-// "at least once per scope" true for a reader that is behind: repeated
-// invalidations of one scope coalesce into the latest, and a second scope
-// arriving never displaces the first. A one-slot signal wakes the reader
-// without the broker ever blocking on it.
+// subscription coalesces pending invalidations per scope without dropping another scope.
 type subscription struct {
 	mu      sync.Mutex
 	pending map[string]serverEvent

@@ -19,14 +19,7 @@ function Badge({ children }: { children: string }) {
   );
 }
 
-/**
- * What holds a credential, and when each was last used.
- *
- * Revoking one withdraws that credential and nothing else: every other device
- * keeps working, which is the whole reason they are issued separately (ADR-007).
- * Revoked credentials stay on the list — a record of what was withdrawn is
- * more useful than a shorter list.
- */
+/** Lists active and revoked credentials with their most recent use. */
 export function CredentialList({ credentials, currentID, busyID, onRevoke }: CredentialListProps) {
   return (
     <div>

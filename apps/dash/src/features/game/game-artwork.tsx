@@ -3,9 +3,7 @@ import { loadGameMedia, type CatalogGame, type GameMedia } from '../../lib/omnis
 import { createPromiseCache } from '../cache/promise-cache.js';
 import type { GameSummary } from './game-summary.js';
 
-// A game without cover art still needs to be told apart from its neighbours, so
-// the fallback varies — but in value only. Hue here would make the covers the
-// library is actually about compete with the ones it is still missing.
+// Vary fallback brightness so games without covers remain distinguishable.
 const artworkStyles = [
   'from-[#14161a] to-[#2c2f38]',
   'from-[#111318] to-[#242730]',
@@ -76,8 +74,7 @@ export function GameArtwork({
   );
 }
 
-// Media object URLs live for the whole session so a remounted poster renders
-// its image on the first paint instead of flashing the fallback artwork.
+// Session-scoped object URLs let remounted posters reuse loaded artwork.
 const gameMediaCache = createPromiseCache<string, string>({
   dispose: (objectURL) => URL.revokeObjectURL(objectURL),
 });

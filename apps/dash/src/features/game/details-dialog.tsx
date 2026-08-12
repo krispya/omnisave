@@ -3,8 +3,7 @@ import type { GameIdentifier } from '../../lib/omnisave-api.js';
 import type { GameSummary } from './game-summary.js';
 import { formatBytes, formatDate } from '../../lib/format.js';
 
-// Known identifier namespaces and metadata sources, mapped to the external
-// app they reference. Unknown namespaces fall back to their raw name.
+// Maps known identifier namespaces to their external catalog.
 const externalApps: Record<string, { label: string; url?: (value: string) => string }> = {
   'igdb.game': { label: 'IGDB' },
   'hasheous.game': { label: 'Hasheous' },
@@ -54,7 +53,7 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
-// A debug-style dump of everything the dash knows about the game.
+// Displays all game metadata available to the Dash.
 export function GameDetailsDialog({ game, onClose }: { game: GameSummary; onClose: () => void }) {
   const titleID = useId();
   const metadataEntries = Object.entries(game.metadata ?? {}).sort(([left], [right]) =>

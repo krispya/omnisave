@@ -6,11 +6,7 @@ import (
 	"github.com/libp2p/zeroconf/v2"
 )
 
-// Announcer puts the server on the local network and takes it off again.
-//
-// Starting and stopping are what make the Dash's switch mean something: an
-// owner who turns announcing off is telling the server to stop being findable
-// now, not at the next restart (ADR-008).
+// Announcer starts and stops the server's local-network advertisement.
 type Announcer struct {
 	announcement Announcement
 

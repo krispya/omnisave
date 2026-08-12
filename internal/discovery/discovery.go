@@ -1,9 +1,4 @@
-// Package discovery announces a server on the local network and finds one
-// from a client, over mDNS with DNS-SD (ADR-009).
-//
-// Nothing here grants access. An announcement carries an address and a name a
-// person can recognize, and a server found this way still pairs and is still
-// approved by the owner. A discovered server is a claim, not a credential.
+// Package discovery advertises and finds server addresses over mDNS with DNS-SD.
 package discovery
 
 import (

@@ -10,9 +10,7 @@ import (
 	"go.starlark.net/syntax"
 )
 
-// Execution limits. A labeler reads a couple of files and formats a line; a
-// script that needs more than this is broken, hostile, or fighting a save
-// format it no longer understands, and in every case the answer is "no name".
+// Execution limits bound untrusted labeler work.
 const (
 	maxExecutionSteps = 5_000_000
 	maxExecutionTime  = 2 * time.Second
@@ -26,15 +24,10 @@ type script struct {
 	label starlark.Callable
 }
 
-// fileOptions is the language dialect scripts run under. The zero value is
-// deliberate: no while loops, no recursion, no set literals — labelers
-// terminate by construction, with the step limit as the backstop.
+// fileOptions disables unbounded language features; the step limit is the backstop.
 var fileOptions = &syntax.FileOptions{}
 
-// loadScript executes a labeler's module once and captures its contract: a
-// GAME_KEYS list naming the games it labels and a label function. The module's
-// globals are frozen by execution, which is what makes the returned script
-// safe to share.
+// loadScript executes a module once and captures its GAME_KEYS and label function.
 func loadScript(name string, source []byte) (*script, error) {
 	thread := &starlark.Thread{Name: "labeler load " + name}
 	thread.SetMaxExecutionSteps(maxExecutionSteps)
@@ -76,9 +69,7 @@ func cutKey(key string) (namespace, value string, found bool) {
 	return "", "", false
 }
 
-// run calls the script's label function against snap and returns its answer.
-// "" means the script declined (returned None or an empty string); an error
-// means it misbehaved. Either way the caller commits, at worst unnamed.
+// run invokes a labeler; "" means it returned no name.
 func (s *script) run(ctx context.Context, snap *snapshot) (name string, err error) {
 	// A panic inside the interpreter or a host conversion must stay a missing
 	// name, never a failed commit.

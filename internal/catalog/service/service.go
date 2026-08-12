@@ -331,13 +331,7 @@ func (s *service) OpenMedia(ctx context.Context, gameID, mediaID string) (*catal
 	return media, payload, nil
 }
 
-// cacheableMediaKinds is what the catalog will fetch and keep. A provider may
-// describe more than this; anything not listed here is refused rather than
-// stored, so an unrecognized kind cannot quietly fill the artifact store.
-//
-// "cover" is the portrait box art and "artwork"/"screenshot" are the landscape
-// images — the two shapes the Dash draws, kept apart because neither can stand
-// in for the other.
+// cacheableMediaKinds limits stored media to the shapes the Dash renders.
 var cacheableMediaKinds = map[string]bool{"cover": true, "artwork": true, "screenshot": true}
 
 func (s *service) cacheMedia(ctx context.Context, gameID string, reference catalog.MediaReference) error {

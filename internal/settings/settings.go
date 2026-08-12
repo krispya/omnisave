@@ -1,7 +1,4 @@
-// Package settings holds owner settings: the small tier of configuration that
-// belongs to the owner rather than the deployment (ADR-008). Everything here
-// is stored in the database, edited in the Dash, and takes effect immediately.
-// A variable in the environment still wins, and says so.
+// Package settings manages runtime owner settings and deployment overrides.
 package settings
 
 import (
@@ -17,10 +14,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/storage"
 )
 
-// AnnounceDiscovery is whether the server announces itself on the local
-// network (ADR-009). It is the first owner setting, and it qualifies because
-// the owner is the right person to decide it and the answer changes without
-// the deployment changing.
+// AnnounceDiscovery controls whether the server announces itself locally.
 const (
 	AnnounceDiscovery = "discovery.announce"
 	IGDBClientID      = "igdb.client_id"
@@ -32,9 +26,7 @@ var (
 	ErrPinned   = errors.New("settings: pinned by the deployment")
 )
 
-// Source says where the value in force came from. The Dash shows this,
-// because a switch that silently ignores an edit is worse than one that was
-// never offered.
+// Source identifies where the effective value came from.
 type Source string
 
 const (
@@ -54,8 +46,7 @@ const (
 	KindSecret Kind = "secret"
 )
 
-// Definition declares one owner setting. Settings are added one at a time and
-// argued for individually, so this list is meant to stay short.
+// Definition declares one owner setting.
 type Definition struct {
 	Key     string
 	EnvVar  string
@@ -86,10 +77,7 @@ var definitions = []Definition{{
 	Kind:    KindSecret,
 }}
 
-// Setting is one setting as the Dash shows it.
-//
-// A secret's value is deliberately absent: Configured says whether one is
-// stored, and that is the most this type will ever carry about it.
+// Setting is a public setting view. Secret values are omitted; Configured reports presence.
 type Setting struct {
 	Key        string `json:"key"`
 	Group      string `json:"group"`
@@ -138,9 +126,7 @@ func New(repository storage.SettingsRepository, pinned map[string]string) Servic
 	return &service{repository: repository, pinned: pinned, now: time.Now}
 }
 
-// ParsePins turns raw environment values into pinned settings, rejecting a
-// value the operator meant as a boolean and typed as something else rather
-// than guessing at it.
+// ParsePins validates environment values and returns deployment-pinned settings.
 func ParsePins(lookup func(string) (string, bool)) (map[string]string, error) {
 	pinned := make(map[string]string)
 	for _, definition := range definitions {
@@ -291,9 +277,7 @@ func (s *service) resolve(ctx context.Context, definition Definition) (*Setting,
 	return &setting, nil
 }
 
-// apply puts a stored value onto the shape the Dash reads. A secret only ever
-// contributes the fact that it exists — this is the single place that decides
-// what leaves the server, so it is the single place that can leak one.
+// apply creates a public setting view without exposing stored secrets.
 func apply(setting *Setting, definition Definition, stored string) {
 	switch definition.Kind {
 	case KindToggle:

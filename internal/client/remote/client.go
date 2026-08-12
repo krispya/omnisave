@@ -70,11 +70,7 @@ func (e *ResponseError) Error() string {
 	return fmt.Sprintf("Omnisave server returned %s", http.StatusText(e.StatusCode))
 }
 
-// CurrentRevisionConflict reports a commit or restore the server refused
-// because the Omnisave's Current Revision is no longer the one this client
-// expected — another device committed or a restore moved the pointer first.
-// It carries the actual current revision so a caller can reconcile against
-// where the save really is instead of retrying blind.
+// CurrentRevisionConflict carries the actual pointer after a stale commit or restore.
 type CurrentRevisionConflict struct {
 	ActualCurrentRevisionID *string
 }

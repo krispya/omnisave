@@ -197,11 +197,7 @@ func Push(ctx context.Context, server Server, omnisaveID string, save target.Sav
 	return push(ctx, server, omnisaveID, save, expectedCurrentRevisionID, "", currentFiles)
 }
 
-// PushBranch commits the local content as a child of parent while the
-// Omnisave's current revision sits elsewhere: the local save continues
-// parent, which a restore moved current away from, so the commit branches
-// there rather than pretending to continue current (FDR-005, decision 15).
-// Committing still moves current onto the new revision.
+// PushBranch commits local content after parent and moves current to the new branch.
 func PushBranch(ctx context.Context, server Server, omnisaveID string, save target.Save, expectedCurrentRevisionID string, parent omnisave.Revision) (*omnisave.Revision, error) {
 	if parent.ID == "" {
 		return nil, fmt.Errorf("branch push needs the parent revision it continues")
@@ -265,10 +261,7 @@ func commitContent(ctx context.Context, server Server, omnisaveID string, save t
 	return server.CommitRevision(ctx, omnisaveID, input)
 }
 
-// uploadMissing sends exactly the artifacts the server lacks, reading each
-// from the local file that carries it. A file whose bytes changed since
-// the manifest was computed fails the sync rather than committing a torn
-// mixture of old and new content.
+// uploadMissing uploads only absent artifacts and rejects files changed after hashing.
 func uploadMissing(ctx context.Context, server Server, save target.Save, upserts []omnisave.RevisionFile, missing []string) error {
 	wanted := make(map[string]bool, len(missing))
 	for _, hash := range missing {
