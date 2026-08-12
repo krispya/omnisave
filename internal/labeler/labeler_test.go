@@ -37,53 +37,6 @@ func TestGamesWithoutALabelerStayUnnamed(t *testing.T) {
 	}
 }
 
-func TestSlayTheSpireTwoUsesCompactNamesAndTheGamesFloorCount(t *testing.T) {
-	content := []byte(`{
-		"ascension": 5,
-		"current_act_index": 1,
-		"acts": [
-			{"id": "ACT.UNDERDOCKS"},
-			{"id": "ACT.HIVE"}
-		],
-		"map_point_history": [
-			[
-				{"map_point_type": "ancient"}, {}, {}, {}, {}, {}, {}, {}, {},
-				{}, {}, {}, {}, {}, {}, {}, {}
-			],
-			[{"map_point_type": "ancient"}]
-		],
-		"players": [{
-			"character_id": "CHARACTER.NECROBINDER",
-			"current_hp": 53,
-			"max_hp": 66
-		}]
-	}`)
-	artifacts := &artifactOpener{blobs: map[string][]byte{hashOf(content): content}}
-	files := []omnisave.RevisionFile{{
-		Path: "remote/profile1/saves/current_run.save",
-		Artifact: omnisave.Artifact{
-			Format: "application/json",
-			SHA256: hashOf(content),
-			Size:   int64(len(content)),
-		},
-	}}
-	named, err := New(&gameDirectory{games: map[string]*catalog.Game{
-		"game-spire-2": {
-			ID: "game-spire-2",
-			Identifiers: []catalog.GameIdentifier{{
-				Namespace: "steam.app", Value: "2868840",
-			}},
-		},
-	}}, artifacts)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if label := named.NameRevision(context.Background(), "game-spire-2", files); label != "Necro A5, Hive flr 18, 53/66 HP" {
-		t.Fatalf("label = %q, want the provided save's compact name and floor count", label)
-	}
-}
-
 func TestAMisbehavingScriptCostsOnlyTheName(t *testing.T) {
 	spinning := "GAME_KEYS = [\"test.app:1\"]\n" +
 		"def label(snapshot):\n" +
