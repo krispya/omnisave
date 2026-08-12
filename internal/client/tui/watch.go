@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // WatchConfig describes the static parts of the watch view's footer.
@@ -24,11 +25,32 @@ type WatchConfig struct {
 	Synced time.Time
 }
 
-// WatchRequest is a keyboard request from the watch view to its loop.
-type WatchRequest int
+// WatchRequestKind names what the view is asking its loop to do.
+type WatchRequestKind int
 
-// WatchSyncNow asks the loop to run a pass immediately.
-const WatchSyncNow WatchRequest = iota
+const (
+	// WatchSyncNow asks the loop to run a pass immediately.
+	WatchSyncNow WatchRequestKind = iota
+	// WatchQuestionOpened tells the loop a question is on screen, so it holds
+	// its triggers: an answer has to land on the table it was built from, and
+	// a pass swapping that table underneath would answer a different one.
+	WatchQuestionOpened
+	// WatchQuestionDismissed releases the hold with nothing decided.
+	WatchQuestionDismissed
+	// WatchAnswered carries a decision and releases the hold. The loop
+	// replays it into the pass that follows rather than acting on it here.
+	WatchAnswered
+)
+
+// WatchRequest is a keyboard request from the watch view to its loop.
+type WatchRequest struct {
+	Kind WatchRequestKind
+	// Title and Omnisave name the save an answer belongs to — the same pair
+	// the question showed, which is how the pass finds it again.
+	Title    string
+	Omnisave string
+	Diverged DivergedBindingChoice
+}
 
 // PassResult is one completed pass as its sink shows it: what is true
 // afterwards, and what changed on the way there.
@@ -49,7 +71,9 @@ type WatchDisplay struct {
 
 // NewWatchDisplay builds the live view. Run blocks until the user quits.
 func NewWatchDisplay(config WatchConfig) *WatchDisplay {
-	requests := make(chan WatchRequest, 1)
+	// Opening a question, answering it, and asking for a sync are separate
+	// messages a user can produce faster than a pass drains them.
+	requests := make(chan WatchRequest, 4)
 	return &WatchDisplay{
 		program:  tea.NewProgram(newWatchModel(config, requests)),
 		requests: requests,
@@ -137,6 +161,78 @@ type watchModel struct {
 	spinGeneration int
 	synced         time.Time
 	now            time.Time
+	// question is the modal, open over the table. While it is open the loop
+	// holds its passes, so the table behind it cannot move under the answer.
+	question *watchQuestion
+}
+
+// watchQuestion is one waiting decision, taken off the settled table and
+// raised as a modal. It carries the pair the answer is keyed by.
+type watchQuestion struct {
+	title    string
+	omnisave string
+	options  []DivergedOption
+	cursor   int
+}
+
+// firstPending finds the save waiting to be asked. Several waiting saves are
+// answered one at a time, in table order: the modal names the game it is
+// asking about, so the next press raises the next one.
+func firstPending(snapshot ReportSnapshot) *watchQuestion {
+	for _, game := range snapshot.Games {
+		if game.Pending == nil || game.Pending.Kind != PendingDiverged {
+			continue
+		}
+		return &watchQuestion{
+			title:    game.Title,
+			omnisave: game.Pending.OmnisaveName,
+			options:  DivergedOptions(),
+		}
+	}
+	return nil
+}
+
+// ask sends a request without ever blocking the update loop.
+func (m watchModel) ask(request WatchRequest) {
+	select {
+	case m.requests <- request:
+	default:
+	}
+}
+
+// updateQuestion owns the keyboard while the modal is open. Escape decides
+// nothing: no answer is recorded and no pass runs, so the row stays exactly
+// as it was and the question can be asked again.
+func (m watchModel) updateQuestion(message tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch message.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		m.ask(WatchRequest{Kind: WatchQuestionDismissed})
+		m.question = nil
+	case "up", "k":
+		if m.question.cursor > 0 {
+			moved := *m.question
+			moved.cursor--
+			m.question = &moved
+		}
+	case "down", "j":
+		if m.question.cursor < len(m.question.options)-1 {
+			moved := *m.question
+			moved.cursor++
+			m.question = &moved
+		}
+	case "enter":
+		answer := WatchRequest{
+			Kind:     WatchAnswered,
+			Title:    m.question.title,
+			Omnisave: m.question.omnisave,
+			Diverged: m.question.options[m.question.cursor].Choice,
+		}
+		m.question = nil
+		m.ask(answer)
+	}
+	return m, nil
 }
 
 func (m watchModel) Init() tea.Cmd {
@@ -146,14 +242,24 @@ func (m watchModel) Init() tea.Cmd {
 func (m watchModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.KeyMsg:
+		if m.question != nil {
+			return m.updateQuestion(message)
+		}
 		switch message.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
 		case "s":
 			if !m.syncing {
-				select {
-				case m.requests <- WatchSyncNow:
-				default:
+				m.ask(WatchRequest{Kind: WatchSyncNow})
+			}
+		case "r":
+			// A pass in flight owns the table, so the question waits for it
+			// the same way a sync request does. What it asks about has to be
+			// settled before it is asked.
+			if !m.syncing {
+				if question := firstPending(m.snapshot); question != nil {
+					m.question = question
+					m.ask(WatchRequest{Kind: WatchQuestionOpened})
 				}
 			}
 		}
@@ -225,13 +331,48 @@ func eventScrollbackLines(events []Event) []string {
 	return append(lines, "")
 }
 
+// questionStyle boxes the modal. The rest of the client is borderless, so
+// the outline is what says the watch has stopped to ask something — a
+// takeover of the pinned block rather than one more line in it.
+var questionStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(mutedStyle.GetForeground()).
+	Padding(0, 1).
+	MarginLeft(2)
+
+// view renders the modal: what is being asked about, then the answers. No
+// explanation — the labels are the whole interface.
+func (q watchQuestion) view() string {
+	var body strings.Builder
+	body.WriteString(nameStyle.Render(q.title) + "\n")
+	body.WriteString(mutedStyle.Render(q.omnisave+" diverged from the server") + "\n\n")
+	for index, option := range q.options {
+		if index > 0 {
+			body.WriteString("\n")
+		}
+		if index == q.cursor {
+			body.WriteString(accentStyle.Render("› ") + nameStyle.UnsetBold().Render(option.Label))
+			continue
+		}
+		body.WriteString("  " + mutedStyle.Render(option.Label))
+	}
+	return questionStyle.Render(body.String())
+}
+
 func (m watchModel) View() string {
 	var view strings.Builder
 	header := titleStyle.Render("▲ Omnisave") + mutedStyle.Render(" · watching")
-	if m.syncing {
+	// A question owns the block, so the header carries nothing beside it: no
+	// pass is running behind it to spin for.
+	if m.syncing && m.question == nil {
 		header += " " + m.spinner.View()
 	}
 	view.WriteString(header + "\n\n")
+	if m.question != nil {
+		view.WriteString(m.question.view() + "\n\n")
+		view.WriteString("  " + mutedStyle.Render("↑↓ choose · enter confirm · esc dismiss") + "\n")
+		return view.String()
+	}
 	// The playing marker is stitched in at render time: presence moves on
 	// its own cadence, and must not wait for a pass to swap the table.
 	lines := ComposeStanding(m.snapshot, m.playing, m.now)
@@ -246,7 +387,13 @@ func (m watchModel) View() string {
 		view.WriteString(FailureLine(m.failure) + "\n")
 	}
 	view.WriteString("  " + mutedStyle.Render(m.activity()+" · "+m.config.ServerURL) + "\n")
-	view.WriteString("  " + mutedStyle.Render("s sync now · q quit") + "\n")
+	keys := "s sync now · q quit"
+	// The resolve key appears only when a save is actually waiting on it:
+	// a standing offer to answer nothing reads as something being wrong.
+	if firstPending(m.snapshot) != nil {
+		keys = "s sync now · r resolve · q quit"
+	}
+	view.WriteString("  " + mutedStyle.Render(keys) + "\n")
 	return view.String()
 }
 

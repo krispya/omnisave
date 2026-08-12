@@ -787,6 +787,20 @@ type reconcilePrompts struct {
 	diverged  func(gameTitle, omnisaveName string) (tui.DivergedBindingChoice, error)
 }
 
+// errUnanswered is how a replayed answer says a question is not the one it
+// holds. The pass then leaves that save waiting, which is what a pass with
+// no answers at all does with every question it meets.
+var errUnanswered = errors.New("no answer for this save")
+
+// A pass can answer some questions and not others: the watch view replays
+// one divergence answer and leaves every other question to a later run. So
+// each question asks whether it in particular can be put, rather than
+// whether the pass is interactive at all. A nil set answers nothing.
+func (p *reconcilePrompts) asksEmpty() bool     { return p != nil && p.empty != nil }
+func (p *reconcilePrompts) asksStale() bool     { return p != nil && p.stale != nil }
+func (p *reconcilePrompts) asksAmbiguous() bool { return p != nil && p.ambiguous != nil }
+func (p *reconcilePrompts) asksDiverged() bool  { return p != nil && p.diverged != nil }
+
 func interactivePrompts() *reconcilePrompts {
 	return &reconcilePrompts{
 		empty:     tui.PromptSyncToDevice,
@@ -981,7 +995,7 @@ func reconcileSaves(
 				continue
 			}
 			matchedRevision := matched.Revisions[len(matched.Revisions)-1]
-			if prompts == nil {
+			if !prompts.asksStale() {
 				// Headless: the stale question waits for an interactive run.
 				outcome.Unbound++
 				report.Stale(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave))
@@ -1039,7 +1053,7 @@ func reconcileSaves(
 			}
 		}
 		// Leave zero or multiple matches for an explicit choice.
-		if prompts == nil {
+		if !prompts.asksAmbiguous() {
 			outcome.Unbound++
 			report.Unbound(candidate.local.GameTitle)
 			continue
@@ -1169,7 +1183,7 @@ func syncSaveToDevice(
 		report.SaveLocationUnavailable(title)
 		return nil
 	}
-	if prompts == nil {
+	if !prompts.asksEmpty() {
 		report.SaveAvailable(title)
 		return nil
 	}
@@ -1443,12 +1457,21 @@ func resolveDivergence(
 	prompts *reconcilePrompts,
 ) error {
 	name := omnisaveDisplayName(remoteSave)
-	if prompts == nil {
+	waiting := func() error {
 		outcome.Diverged++
 		report.Diverged(local.GameTitle, name)
 		return nil
 	}
+	if !prompts.asksDiverged() {
+		return waiting()
+	}
 	choice, err := prompts.diverged(local.GameTitle, name)
+	// A replayed answer belongs to one save. Every other divergence the pass
+	// meets is one nobody has answered, so it waits exactly as it would have
+	// under a headless pass.
+	if errors.Is(err, errUnanswered) {
+		return waiting()
+	}
 	if err != nil {
 		return err
 	}

@@ -18,7 +18,7 @@ func TestDivergedBindingPromptOffersTwoLosslessChoices(t *testing.T) {
 		"Save changed here and Save 1 moved on the server",
 		"› Fork here",
 		"continue this device's progress as a new playthrough",
-		"Jump to current",
+		"Take current",
 		"keep this progress as a fork and take the current revision",
 	} {
 		if !strings.Contains(view, text) {

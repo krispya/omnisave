@@ -1,7 +1,7 @@
 # FDR-005: Save Sync
 
 **Status:** Experimental
-**Last reviewed:** 2026-08-10
+**Last reviewed:** 2026-08-11
 
 ## Overview
 
@@ -50,11 +50,16 @@ path, syncing-down built the read path; sync makes both routine.
   watching Device in seconds — and periodically as the fallback while the
   stream is down. It never prompts.
 - Diverged saves are reported — "save diverged from …; run
-  omnisave track to resolve" — and skipped until an interactive
-  track run asks: fork here, and this Device's progress continues as a new
-  lineage, or jump to latest, which first preserves the unsynced local
-  progress as a fork and then applies the Current Revision. Neither choice destroys
-  content.
+  omnisave track to resolve" — and skipped until someone answers: fork
+  here, and this Device's progress continues as a new lineage, or take
+  current, which first preserves the unsynced local progress as a fork
+  and then applies the Current Revision. Neither choice destroys content.
+- The answer can be given from the live watch view without stopping it:
+  the row says which Omnisave is waiting, `r` raises the question as a
+  modal over the pinned block, and the choice is applied by the pass that
+  follows (decision 16). Escape decides nothing. A watch with no terminal
+  keeps reporting and skipping, and an interactive track run still asks
+  the same question the same way.
 - A sync pass also completes the binding decisions that need no question:
   a tracked game's first save seeds, and a save matching an Omnisave's
   Current Revision rebinds. Anything that would prompt — a stale match, an ambiguous
@@ -153,8 +158,8 @@ path, syncing-down built the read path; sync makes both routine.
   it clears and comes back, so an idle watcher stays silent. When output
   is not a terminal — piped, or under a service manager — those same event
   lines are the log.
-- A diverged save simply shows its conflict status; resolution still
-  belongs to an interactive track run.
+- A diverged save shows its condition alone — "Save 1 · diverged" — and
+  the footer offers `r resolve` only while something is actually waiting.
 - Watch is a plain foreground process. Keeping it alive across reboots
   belongs to the OS service manager; the service unit is deployment work,
   not part of this feature.
@@ -450,6 +455,35 @@ of them goes quiet; every line survives in the tree, but "what is current"
 belongs to whoever committed last. Sync creates branches silently, so a
 history can grow paths nobody deliberately made — decision 14's tip-first
 deletion is the only cleanup.
+
+### 16. Watch hosts the question but never raises it
+
+**Decision:** Watch still never prompts. The user asks: a save waiting on
+a divergence offers `r`, which takes over the pinned block with the two
+answers and nothing else. What comes back is not a resolution but a
+recorded decision, keyed by the game and Omnisave the question named; the
+pass that follows replays it through the same reconcile an interactive
+track run uses. An answer is spent by the pass it is replayed into, the
+key is ignored while a pass is running, and no pass runs while a question
+is open. Escape records nothing and runs nothing. A watch with no
+terminal has no key and behaves exactly as before.
+**Why:** The rule watch is built on is that nothing blocks on a question
+nobody may be there to answer, and a prompt the pass raises breaks it —
+under a service manager it would wait forever. But the rule was costing a
+user who *is* there: a divergence stranded the save with no backup at all
+until they quit watch, ran track, and started over. Letting the user ask
+keeps the guarantee and removes the cost. Replaying the answer rather than
+acting on it directly is what keeps one reconcile path: the answer is
+validated against fresh state, so a divergence that resolved itself
+between question and pass is simply never reached, and a decision can
+never apply to a situation the user did not see.
+**Tradeoff:** Passes are held while a question is on screen, so a save
+written behind an open modal commits on the first poll after it closes and
+server movement noticed meanwhile falls back to the pull ticker. Several
+waiting saves are answered one at a time rather than picked from a list.
+And an answer given about a table that a concurrent `omnisave bind` has
+since changed is discarded rather than reconciled, which is the cautious
+half of the same validation.
 
 ## Related
 
