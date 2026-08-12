@@ -243,7 +243,8 @@ func TestWatchSpinsTheRowAPassHasInHand(t *testing.T) {
 }
 
 // A spinner says a row is busy; the phase says what it is busy with, which
-// is the difference between a sync working and a sync stuck.
+// is the difference between a sync working and a sync stuck. The header stays
+// compact because it has no particular save to describe.
 func TestTheWorkedRowSaysWhatThePassIsDoing(t *testing.T) {
 	model := newWatchModel(WatchConfig{
 		ServerURL: "http://localhost:8081",
@@ -253,12 +254,12 @@ func TestTheWorkedRowSaysWhatThePassIsDoing(t *testing.T) {
 		}},
 	}, make(chan WatchRequest, 1))
 
-	// The pass has not reached a game yet, so its phase belongs to the header.
+	// The pass has not reached a game yet, so only the spinner reaches the header.
 	started, _ := model.Update(watchPassStartedMsg{at: time.Now()})
 	scanning, _ := started.(watchModel).Update(watchPhaseMsg("scanning"))
 	header, _, _ := strings.Cut(ansi.Strip(scanning.(watchModel).View()), "\n")
-	if header != "▲ Omnisave · watching ⠋ scanning" {
-		t.Fatalf("expected work between games to read in the header, got %q", header)
+	if header != "▲ Omnisave · watching ⠋" {
+		t.Fatalf("expected no text beside the header spinner, got %q", header)
 	}
 
 	working, _ := scanning.(watchModel).Update(watchWorkingMsg("Slay the Spire II"))

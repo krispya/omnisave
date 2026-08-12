@@ -57,6 +57,79 @@ func TestApplyCurrentAppliesACompleteVerifiedHeadSnapshot(t *testing.T) {
 	}
 }
 
+// countingSource is an artifactSource that remembers what was asked of it,
+// so a test can hold the apply to the transfers it actually needs.
+type countingSource struct {
+	artifacts artifactSource
+	requested []string
+}
+
+func (s *countingSource) OpenArtifact(ctx context.Context, hash string) (io.ReadCloser, error) {
+	s.requested = append(s.requested, hash)
+	return s.artifacts.OpenArtifact(ctx, hash)
+}
+
+// A rewind moves one file and leaves the rest of the save alone. Content is
+// addressed by hash, so the unchanged files are already on this disk under
+// the revision being left — downloading them again would fetch the whole
+// save to change one part of it.
+func TestApplyCurrentTransfersOnlyContentTheLocalSaveDoesNotHold(t *testing.T) {
+	directory := t.TempDir()
+	local := target.Save{Files: []target.File{
+		writeFile(t, directory, "progress.sav", "second-progress"),
+		writeFile(t, directory, "world.dat", "shared-world"),
+		writeFile(t, directory, "config.ini", "shared-config"),
+	}}
+	matched := omnisave.Revision{ID: "revision-2", OmnisaveID: "save-a", Files: []omnisave.RevisionFile{
+		revisionFile("battery/progress.sav", "second-progress", "application/octet-stream"),
+		revisionFile("battery/world.dat", "shared-world", "application/octet-stream"),
+		revisionFile("battery/config.ini", "shared-config", "application/octet-stream"),
+	}}
+	rewound := revisionFile("battery/progress.sav", "first-progress", "application/octet-stream")
+	current := omnisave.Revision{ID: "revision-1", OmnisaveID: "save-a", Files: []omnisave.RevisionFile{
+		rewound,
+		revisionFile("battery/world.dat", "shared-world", "application/octet-stream"),
+		revisionFile("battery/config.ini", "shared-config", "application/octet-stream"),
+	}}
+	// Only the rewound file is offered by the server: an apply that reaches
+	// for anything else fails rather than quietly costing a transfer.
+	source := &countingSource{artifacts: artifactSource{rewound.Artifact.SHA256: []byte("first-progress")}}
+
+	if err := binding.ApplyCurrent(context.Background(), source, local, matched, current); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(directory, "progress.sav"), "first-progress")
+	assertFileContent(t, filepath.Join(directory, "world.dat"), "shared-world")
+	assertFileContent(t, filepath.Join(directory, "config.ini"), "shared-config")
+	if len(source.requested) != 1 || source.requested[0] != rewound.Artifact.SHA256 {
+		t.Fatalf("expected only the changed file to transfer, got %d requests", len(source.requested))
+	}
+}
+
+// The same holds within one revision: content the save carries under two
+// names is one artifact, and one artifact is one transfer.
+func TestApplyCurrentTransfersRepeatedContentOnce(t *testing.T) {
+	directory := t.TempDir()
+	local := target.Save{Files: []target.File{writeFile(t, directory, "progress.sav", "old-progress")}}
+	matched := omnisave.Revision{ID: "revision-1", OmnisaveID: "save-a", Files: []omnisave.RevisionFile{
+		revisionFile("battery/progress.sav", "old-progress", "application/octet-stream"),
+	}}
+	shared := revisionFile("battery/progress.sav", "new-progress", "application/octet-stream")
+	backup := revisionFile("battery/progress.bak", "new-progress", "application/octet-stream")
+	current := omnisave.Revision{ID: "revision-2", OmnisaveID: "save-a",
+		Files: []omnisave.RevisionFile{shared, backup}}
+	source := &countingSource{artifacts: artifactSource{shared.Artifact.SHA256: []byte("new-progress")}}
+
+	if err := binding.ApplyCurrent(context.Background(), source, local, matched, current); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(directory, "progress.sav"), "new-progress")
+	assertFileContent(t, filepath.Join(directory, "progress.bak"), "new-progress")
+	if len(source.requested) != 1 {
+		t.Fatalf("expected one transfer for content used twice, got %d", len(source.requested))
+	}
+}
+
 func TestApplyCurrentLeavesTheLocalSaveUntouchedWhenADownloadIsInvalid(t *testing.T) {
 	directory := t.TempDir()
 	local := target.Save{Files: []target.File{writeFile(t, directory, "progress.sav", "old-progress")}}

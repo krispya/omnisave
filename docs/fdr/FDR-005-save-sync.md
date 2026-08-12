@@ -78,10 +78,14 @@ path, syncing-down built the read path; sync makes both routine.
   an empty local save never commits over good server content, and each
   save has a spacing floor so continuously flushing saves (emulator SRAM)
   do not flood their history.
-- Transfers are incremental even though revisions are complete: a commit
-  is attempted first, and only the content the server reports missing is
-  uploaded — an unchanged file, or content another Device already
-  uploaded, never travels twice.
+- Transfers are incremental in both directions even though revisions are
+  complete. Committing attempts first and uploads only the content the
+  server reports missing, so an unchanged file, or content another Device
+  already uploaded, never travels twice. Syncing down transfers only the
+  content this Device does not already hold: a rewind or a fast-forward
+  inside one lineage usually moves a few files and leaves the rest
+  identical, and those are staged from the local save rather than fetched
+  again (decision 18).
 - The Dash shows an unnamed revision by its short identifier. Clicking that
   label turns it into an inline name field; Enter or leaving the field saves,
   and Escape cancels. A custom name replaces the identifier in flat and tree
@@ -521,6 +525,32 @@ game rather than per operation, so a quiet pass ripples one spinner down
 the table, and a game touched by both the library and the save phase is
 marked twice. Phases are live signals like presence, not part of the
 report: one missed costs nothing, because the next one replaces it.
+
+### 18. A sync down fetches only what this Device does not already hold
+
+**Decision:** Applying a revision stages every file it contains, but a file
+whose content this Device already holds is staged from the local save
+instead of the server. The revision being left is the index of what is on
+disk — the apply has just proved the local save equals it — and content is
+addressed by hash, so a hash appearing in both revisions is content already
+present, wherever it sits. Content repeated within one revision is
+transferred once and reused for every path it appears at. Local copies are
+verified exactly as downloads are, and any failure — the file moved, or is
+no longer what the revision said — falls through to the download rather
+than trusting what it found.
+**Why:** A rewind or a fast-forward inside one lineage typically changes one
+save file and leaves the others untouched, and the transfer was the whole
+revision every time — for the common case, most of a save fetched to
+replace a part of it. This is the same property the upload side already
+used, applied to the direction that lacked it.
+**Tradeoff:** Reused content is still copied into staging rather than left
+in place, because the apply's all-or-nothing swap replaces every file it
+manages and rolls the whole set back together; leaving files untouched
+would need a second, narrower rollback path. A local read is cheap against
+a network fetch, so the copy stays. The fallback to downloading cannot be
+reached in a test — it exists for a game rewriting a save between the match
+check and the copy — so it is defensive code that carries the guarantee
+rather than proven behavior.
 
 ## Related
 
