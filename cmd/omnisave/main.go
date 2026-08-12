@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"runtime"
@@ -34,6 +35,12 @@ import (
 // without printing a second, plainer copy of the error.
 var errReported = errors.New("failure already reported")
 
+// Build metadata is replaced at build time for distributed binaries.
+var (
+	version     = "dev"
+	buildNumber string
+)
+
 func main() {
 	if err := run(context.Background(), os.Args[1:]); err != nil {
 		if !errors.Is(err, errReported) {
@@ -44,6 +51,10 @@ func main() {
 }
 
 func run(ctx context.Context, arguments []string) error {
+	return runWithOutput(ctx, arguments, os.Stdout)
+}
+
+func runWithOutput(ctx context.Context, arguments []string, output io.Writer) error {
 	scanner := client.NewScanner(nil, retroarch.NewDefault(), steam.NewDefault())
 	if len(arguments) == 0 {
 		return runApp(ctx, scanner, nil)
@@ -62,7 +73,10 @@ func run(ctx context.Context, arguments []string) error {
 	case "bind":
 		return runBind(ctx, scanner, arguments[1:])
 	case "help", "-h", "--help":
-		printUsage()
+		printUsage(output)
+		return nil
+	case "-v", "--version":
+		fmt.Fprintln(output, formattedVersion())
 		return nil
 	default:
 		// Bare flags belong to the commandless run.
@@ -71,6 +85,13 @@ func run(ctx context.Context, arguments []string) error {
 		}
 		return fmt.Errorf("unknown command %q; run omnisave with no command, or use track, sync, watch, connect, scan, or bind", arguments[0])
 	}
+}
+
+func formattedVersion() string {
+	if buildNumber == "" {
+		return "omnisave " + version
+	}
+	return fmt.Sprintf("omnisave %s-%s", version, buildNumber)
 }
 
 // runConnect persists a server connection after successful approval.
@@ -1609,11 +1630,12 @@ func sortedGameIDs(games map[string]tracking.Game) []string {
 	return ids
 }
 
-func printUsage() {
-	fmt.Println(`Omnisave client
+func printUsage(output io.Writer) {
+	fmt.Fprintln(output, `Omnisave client
 
 Usage:
   omnisave [--state path]
+  omnisave -v | --version
   omnisave track [--state path]
   omnisave sync [--state path]
   omnisave watch [--poll 10s] [--pull-every 15m] [--floor 5m]
