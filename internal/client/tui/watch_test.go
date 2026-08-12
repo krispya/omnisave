@@ -162,7 +162,7 @@ func TestWatchViewSpinsWhileSyncingAndKeysWork(t *testing.T) {
 	settled.(watchModel).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	select {
 	case request := <-requests:
-		if request != WatchSyncNow {
+		if request.Kind != WatchSyncNow {
 			t.Fatalf("expected a sync-now request, got %v", request)
 		}
 	default:
@@ -200,5 +200,136 @@ func TestWatchMarksPlayingGamesWithTheirGlyph(t *testing.T) {
 	view = ansi.Strip(cleared.(watchModel).View())
 	if strings.Contains(view, "▶") || !strings.Contains(view, "✓ Slay the Spire 2") {
 		t.Fatalf("expected the state glyph back once play stops, got:\n%s", view)
+	}
+}
+
+func divergedSnapshot() ReportSnapshot {
+	return ReportSnapshot{Games: []GameStatus{
+		{Glyph: "✓", Title: "Slay the Spire 2", SyncedWith: "Save 1", SyncedAt: time.Now()},
+		{
+			Glyph:   "○",
+			Title:   "Project Zomboid",
+			Events:  []string{"Save diverged from Save 2, run omnisave track to resolve"},
+			Pending: &PendingDecision{Kind: PendingDiverged, OmnisaveName: "Save 2"},
+		},
+	}}
+}
+
+func settledWatchModel(requests chan WatchRequest, snapshot ReportSnapshot) watchModel {
+	model := newTestWatchModel(requests)
+	settled, _ := model.Update(watchPassFinishedMsg{result: PassResult{Snapshot: snapshot, At: time.Now()}})
+	return settled.(watchModel)
+}
+
+// The resolve key is offered only when a save is actually waiting on it.
+func TestTheResolveKeyAppearsOnlyWhileASaveIsWaiting(t *testing.T) {
+	quiet := settledWatchModel(make(chan WatchRequest, 4), ReportSnapshot{Games: []GameStatus{
+		{Glyph: "✓", Title: "Slay the Spire 2", SyncedWith: "Save 1", SyncedAt: time.Now()},
+	}})
+	if view := ansi.Strip(quiet.View()); !strings.Contains(view, "s sync now · q quit") {
+		t.Fatalf("expected no resolve key with nothing waiting, got:\n%s", view)
+	}
+
+	waiting := settledWatchModel(make(chan WatchRequest, 4), divergedSnapshot())
+	if view := ansi.Strip(waiting.View()); !strings.Contains(view, "s sync now · r resolve · q quit") {
+		t.Fatalf("expected the resolve key while a save waits, got:\n%s", view)
+	}
+}
+
+// The question takes over the pinned block: the table, the footer clock, and
+// the usual keys all step aside so the modal is the only thing asking.
+func TestTheQuestionTakesOverTheBlock(t *testing.T) {
+	requests := make(chan WatchRequest, 4)
+	model := settledWatchModel(requests, divergedSnapshot())
+
+	asked, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	view := ansi.Strip(asked.(watchModel).View())
+	for _, text := range []string{
+		"▲ Omnisave · watching",
+		"Project Zomboid",
+		"Save 2 diverged from the server",
+		"› Fork here",
+		"Take current",
+		"↑↓ choose · enter confirm · esc dismiss",
+	} {
+		if !strings.Contains(view, text) {
+			t.Fatalf("expected the question to contain %q, got:\n%s", text, view)
+		}
+	}
+	for _, gone := range []string{"Slay the Spire 2", "watching 0 save paths", "s sync now"} {
+		if strings.Contains(view, gone) {
+			t.Fatalf("expected the question to replace %q, got:\n%s", gone, view)
+		}
+	}
+	if request := <-requests; request.Kind != WatchQuestionOpened {
+		t.Fatalf("expected the loop to be told a question opened, got %v", request)
+	}
+}
+
+// A pass owns the table it is rebuilding, so the question waits for it —
+// the same rule that already holds the sync key.
+func TestTheQuestionWaitsForAPassInFlight(t *testing.T) {
+	requests := make(chan WatchRequest, 4)
+	model := settledWatchModel(requests, divergedSnapshot())
+	syncing, _ := model.Update(watchPassStartedMsg{at: time.Now()})
+
+	asked, _ := syncing.(watchModel).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	if asked.(watchModel).question != nil {
+		t.Fatal("expected a pass in flight to hold the question back")
+	}
+	select {
+	case request := <-requests:
+		t.Fatalf("expected no request while a pass runs, got %v", request)
+	default:
+	}
+}
+
+// Enter records the answer against the pair the question showed; the loop
+// replays it, so the view itself resolves nothing.
+func TestAnsweringSendsTheChoiceAndTheSaveItBelongsTo(t *testing.T) {
+	requests := make(chan WatchRequest, 4)
+	model := settledWatchModel(requests, divergedSnapshot())
+	asked, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	<-requests
+
+	moved, _ := asked.(watchModel).Update(tea.KeyMsg{Type: tea.KeyDown})
+	answered, _ := moved.(watchModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if answered.(watchModel).question != nil {
+		t.Fatal("expected answering to close the question")
+	}
+	request := <-requests
+	if request.Kind != WatchAnswered {
+		t.Fatalf("expected an answer, got %v", request)
+	}
+	if request.Title != "Project Zomboid" || request.Omnisave != "Save 2" {
+		t.Fatalf("expected the answer to name the save it belongs to, got %v", request)
+	}
+	if request.Diverged != DivergedBindingJump {
+		t.Fatalf("expected the second option to answer take-current, got %q", request.Diverged)
+	}
+}
+
+// Escape decides nothing: the row is left exactly as it was, and the loop
+// is released to keep syncing.
+func TestDismissingTheQuestionDecidesNothing(t *testing.T) {
+	requests := make(chan WatchRequest, 4)
+	model := settledWatchModel(requests, divergedSnapshot())
+	asked, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	<-requests
+
+	dismissed, _ := asked.(watchModel).Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if dismissed.(watchModel).question != nil {
+		t.Fatal("expected escape to close the question")
+	}
+	if request := <-requests; request.Kind != WatchQuestionDismissed {
+		t.Fatalf("expected a dismissal, got %v", request)
+	}
+	view := ansi.Strip(dismissed.(watchModel).View())
+	if !strings.Contains(view, "Save 2 · diverged") {
+		t.Fatalf("expected the waiting row to survive a dismissal, got:\n%s", view)
 	}
 }

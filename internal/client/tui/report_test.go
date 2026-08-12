@@ -64,10 +64,25 @@ func TestTheStandingTableDropsEventLinesAndKeepsTheCondition(t *testing.T) {
 
 	expected := strings.Join([]string{
 		"  ✓ Slay the Spire 2  Save 1 · synced 2m ago",
-		"  ○ Project Zomboid   Save diverged from Save 2, run omnisave track to resolve",
+		"  ○ Project Zomboid   Save 2 · diverged",
 	}, "\n")
 	if rendered != expected {
 		t.Fatalf("expected one standing line per game, got:\n%s", rendered)
+	}
+}
+
+// The live table states the condition and leaves the instruction to the
+// footer's key, but a printed report has no key to offer, so its own line
+// keeps naming the command that resolves the save.
+func TestThePrintedReportStillNamesWhatResolvesADivergedSave(t *testing.T) {
+	report := &TrackReport{}
+	report.Linked("Project Zomboid", "")
+	report.Diverged("Project Zomboid", "Save 2")
+
+	rendered := strings.Join(report.render(), "\n")
+
+	if !strings.Contains(rendered, "Save diverged from Save 2, run omnisave track to resolve") {
+		t.Fatalf("expected the printed report to name the resolving command, got:\n%s", rendered)
 	}
 }
 

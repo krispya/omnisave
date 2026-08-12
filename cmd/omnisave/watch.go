@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"os/signal"
 	"strings"
@@ -258,6 +259,17 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	deferred := l.deferred
 	// exitFired prevents failed exit-triggered passes from retrying every poll.
 	exitFired := false
+	// answers carries decisions the user gave the view, keyed by the game and
+	// Omnisave the question named. They are replayed into one pass and then
+	// forgotten: the pass validates each against fresh state, so an answer to
+	// a divergence that resolved itself meanwhile is simply never reached,
+	// and a stale answer can never land on a later, different question.
+	answers := make(map[string]tui.DivergedBindingChoice)
+	// held is set while a question is on screen. The answer has to land on
+	// the table the question was built from, so the loop runs no pass until
+	// it comes back — presence keeps re-affirming either way, because the
+	// server's picture must not age out behind an open modal.
+	held := false
 	affirmPresence := func() (map[string]bool, bool) {
 		// Skip process sweeps when there is no presence or deferred pull to update.
 		if l.detector == nil || (presence.deviceID == "" && len(deferred) == 0) {
@@ -292,7 +304,12 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			return nil
 		}
 		report := &tui.TrackReport{}
-		outcome, files, played, err := syncPass(ctx, l.scanner, l.server, l.detector, &state, report, l.floor)
+		// Answers are spent by the pass they are replayed into, whatever it
+		// makes of them. Holding one back for a later pass would let it apply
+		// to a divergence the user never saw.
+		prompts := replayedAnswers(answers)
+		clear(answers)
+		outcome, files, played, err := syncPass(ctx, l.scanner, l.server, l.detector, &state, report, l.floor, prompts)
 		// Preserve the last valid presence after a failed scan.
 		if played.presence.deviceID != "" {
 			presence = played.presence
@@ -385,16 +402,31 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			}
 		case <-settleTimer.C:
 			settleArmed = false
-			if stillWriting() {
+			if held || stillWriting() {
+				// Server movement noticed behind an open question falls back
+				// to the pull ticker, the same fallback a failed pass takes.
 				continue
 			}
 			refresh()
-		case <-sink.Requests():
-			// The user asked; theirs is the one trigger that never waits.
-			refresh()
+		case request := <-sink.Requests():
+			switch request.Kind {
+			case tui.WatchSyncNow:
+				// The user asked; theirs is the one trigger that never waits.
+				refresh()
+			case tui.WatchQuestionOpened:
+				held = true
+			case tui.WatchQuestionDismissed:
+				// Nothing was decided, so nothing runs: the save waits and
+				// the question can be asked again.
+				held = false
+			case tui.WatchAnswered:
+				held = false
+				answers[answerKey(request.Title, request.Omnisave)] = request.Diverged
+				refresh()
+			}
 		case <-presenceTicker.C:
 			playing, swept := affirmPresence()
-			if !swept {
+			if !swept || held {
 				continue
 			}
 			if !deferredGameExited(deferred, playing) {
@@ -414,7 +446,7 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			exitFired = true
 			refresh()
 		case <-pullTicker.C:
-			if stillWriting() {
+			if held || stillWriting() {
 				continue
 			}
 			refresh()
@@ -427,10 +459,39 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 				dirty = true
 				continue
 			}
-			if dirty {
+			// A save written behind an open question stays dirty, so the
+			// commit lands on the first poll after the question closes.
+			if dirty && !held {
 				refresh()
 			}
 		}
+	}
+}
+
+// answerKey identifies the save a question was asked about by the same pair
+// the question showed: the game's title and the Omnisave's display name.
+func answerKey(gameTitle, omnisaveName string) string {
+	return gameTitle + "\x00" + omnisaveName
+}
+
+// replayedAnswers turns collected answers into a prompts set the pass can
+// use. Only the divergence question is answerable this way, so every other
+// question stays nil and waits for an interactive run exactly as before. A
+// pass with nothing to replay gets no prompts at all and stays headless.
+func replayedAnswers(answers map[string]tui.DivergedBindingChoice) *reconcilePrompts {
+	if len(answers) == 0 {
+		return nil
+	}
+	replayed := make(map[string]tui.DivergedBindingChoice, len(answers))
+	maps.Copy(replayed, answers)
+	return &reconcilePrompts{
+		diverged: func(gameTitle, omnisaveName string) (tui.DivergedBindingChoice, error) {
+			choice, answered := replayed[answerKey(gameTitle, omnisaveName)]
+			if !answered {
+				return "", errUnanswered
+			}
+			return choice, nil
+		},
 	}
 }
 
