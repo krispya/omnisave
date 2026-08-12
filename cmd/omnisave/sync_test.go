@@ -416,7 +416,11 @@ func TestAPullWaitsWhileTheGameIsPlayedAndAppliesOnceItCloses(t *testing.T) {
 	}
 }
 
-func TestARestoreUnderLocalProgressDivergesAndJumpForksFirst(t *testing.T) {
+// A rewind under unsynced local progress is not a conflict: the server moved
+// its pointer back without adding anything this device lacks, so the local
+// content commits as a branch off the baseline it continues, and current
+// follows it (FDR-005, decision 15). No prompt, no preservation fork.
+func TestARestoreUnderLocalProgressBranchesWithoutAsking(t *testing.T) {
 	server := newRealServer(t)
 	fixture := newSyncFixture(t, "first-progress")
 	seed, bound := pushSecondRevision(t, server, &fixture, "second-progress")
@@ -431,48 +435,91 @@ func TestARestoreUnderLocalProgressDivergesAndJumpForksFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Headless passes report the divergence and touch nothing.
+	// A headless pass resolves it on its own: no prompts are wired in, so a
+	// pass that tried to ask would fail rather than branch.
 	outcome := syncOnce(t, server, &fixture, nil, 0)
-	if outcome.Diverged != 1 || outcome.Pushed != 0 || outcome.Pulled != 0 || outcome.Failed != 0 {
-		t.Fatalf("expected a restored current under local progress to diverge, got %+v", outcome)
+	if outcome.Branched != 1 || outcome.Diverged != 0 || outcome.Forked != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected a rewind under local progress to branch, got %+v", outcome)
 	}
 	content, _ := os.ReadFile(fixture.localPath)
 	if string(content) != "local-edit" {
-		t.Fatalf("expected the headless pass to leave the local save alone, got %q", content)
+		t.Fatalf("expected the branch commit to leave the local save alone, got %q", content)
 	}
 
-	// Jump preserves the local progress as a fork, then adopts the older
-	// restored current.
-	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
-	prompts.diverged = func(string, string) (tui.DivergedBindingChoice, error) {
-		return tui.DivergedBindingJump, nil
+	// The new revision continues the baseline it actually came from, not the
+	// restored node, and it is what the Omnisave now points at.
+	history, err := server.ListRevisions(context.Background(), bound.OmnisaveID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	outcome = syncOnce(t, server, &fixture, prompts, 0)
-	if outcome.Forked != 1 || outcome.Pulled != 1 || outcome.Failed != 0 {
-		t.Fatalf("expected the jump to preserve then adopt, got %+v", outcome)
-	}
-	content, _ = os.ReadFile(fixture.localPath)
-	if string(content) != "first-progress" {
-		t.Fatalf("expected the jump to place the restored current revision, got %q", content)
+	if len(history) != 3 {
+		t.Fatalf("expected the seed, the baseline, and the branch commit, got %d revisions", len(history))
 	}
 	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
-	rebound, _ := fixture.state.BindingFor(local)
-	if rebound.OmnisaveID != bound.OmnisaveID || rebound.LastSyncedRevisionID == nil ||
-		*rebound.LastSyncedRevisionID != seed.ID {
-		t.Fatalf("expected the binding to stay on the lineage at the restored revision, got %+v", rebound)
+	branched, _ := fixture.state.BindingFor(local)
+	if branched.LastSyncedRevisionID == nil {
+		t.Fatalf("expected the baseline to advance to the branch commit, got %+v", branched)
+	}
+	committed, found := revisionByID(history, branched.LastSyncedRevisionID)
+	if !found {
+		t.Fatal("expected the branch commit in the Omnisave's history")
+	}
+	if committed.ParentID == nil || *committed.ParentID != *bound.LastSyncedRevisionID {
+		t.Fatalf("expected the branch commit to attach to the old baseline, got parent %v", committed.ParentID)
 	}
 	saves, err := server.ListOmnisaves(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	preserved := false
-	for _, save := range saves {
-		if save.ID != bound.OmnisaveID && strings.Contains(save.DisplayName, "(diverged)") {
-			preserved = true
+	if len(saves) != 1 {
+		t.Fatalf("expected branching to create no new Omnisave, got %d saves", len(saves))
+	}
+	if saves[0].CurrentRevisionID == nil || *saves[0].CurrentRevisionID != committed.ID {
+		t.Fatalf("expected the branch commit to become current, got %v", saves[0].CurrentRevisionID)
+	}
+}
+
+// A rewind that another device has already built on leaves current on a
+// sibling branch. That is still not a conflict — nothing this device holds is
+// at risk — so its progress branches off its own baseline, and the restored
+// node ends up with two children.
+func TestProgressBesideASiblingBranchBranchesRatherThanDiverging(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	seed, bound := pushSecondRevision(t, server, &fixture, "second-progress")
+	if _, err := server.RestoreCurrentRevision(context.Background(), bound.OmnisaveID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: bound.LastSyncedRevisionID,
+		RevisionID:                seed.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Another device adopts the rewind and plays on from it, so current now
+	// sits on a branch this device's baseline never touched.
+	sibling := otherDeviceCommit(t, server, bound.OmnisaveID, "deck-after-rewind")
+	if err := os.WriteFile(fixture.localPath, []byte("local-edit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	outcome := syncOnce(t, server, &fixture, nil, 0)
+	if outcome.Branched != 1 || outcome.Diverged != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected progress beside a sibling branch to branch, got %+v", outcome)
+	}
+	history, err := server.ListRevisions(context.Background(), bound.OmnisaveID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	children := 0
+	for _, revision := range history {
+		if revision.ParentID != nil && *revision.ParentID == seed.ID {
+			children++
 		}
 	}
-	if !preserved {
-		t.Fatal("expected the local edit to survive as a preservation fork")
+	if children != 2 {
+		t.Fatalf("expected the restored node to carry two branches, got %d children", children)
+	}
+	// The sibling's work is untouched; it simply is no longer current.
+	if _, found := revisionByID(history, &sibling.ID); !found {
+		t.Fatal("expected the other device's revision to survive branching")
 	}
 }
 

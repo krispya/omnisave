@@ -194,6 +194,25 @@ func MatchesManifest(manifest []omnisave.RevisionFile, revision omnisave.Revisio
 // baseline paths the local save no longer has. The returned revision is the
 // binding's next baseline.
 func Push(ctx context.Context, server Server, omnisaveID string, save target.Save, expectedCurrentRevisionID string, currentFiles []omnisave.RevisionFile) (*omnisave.Revision, error) {
+	return push(ctx, server, omnisaveID, save, expectedCurrentRevisionID, "", currentFiles)
+}
+
+// PushBranch commits the local content as a child of parent while the
+// Omnisave's current revision sits elsewhere: the local save continues
+// parent, which a restore moved current away from, so the commit branches
+// there rather than pretending to continue current (FDR-005, decision 15).
+// Committing still moves current onto the new revision.
+func PushBranch(ctx context.Context, server Server, omnisaveID string, save target.Save, expectedCurrentRevisionID string, parent omnisave.Revision) (*omnisave.Revision, error) {
+	if parent.ID == "" {
+		return nil, fmt.Errorf("branch push needs the parent revision it continues")
+	}
+	return push(ctx, server, omnisaveID, save, expectedCurrentRevisionID, parent.ID, parent.Files)
+}
+
+// push commits the local manifest as a child of parentRevisionID — empty
+// meaning the expected current revision — with parentFiles supplying the
+// paths a delete has to cover.
+func push(ctx context.Context, server Server, omnisaveID string, save target.Save, expectedCurrentRevisionID, parentRevisionID string, parentFiles []omnisave.RevisionFile) (*omnisave.Revision, error) {
 	if omnisaveID == "" || expectedCurrentRevisionID == "" {
 		return nil, fmt.Errorf("push needs a bound Omnisave and its baseline")
 	}
@@ -209,16 +228,20 @@ func Push(ctx context.Context, server Server, omnisaveID string, save target.Sav
 		local[file.Path] = true
 	}
 	var deletes []string
-	for _, file := range currentFiles {
+	for _, file := range parentFiles {
 		if !local[file.Path] {
 			deletes = append(deletes, file.Path)
 		}
 	}
-	revision, err := commitContent(ctx, server, omnisaveID, save, omnisave.CreateRevision{
+	input := omnisave.CreateRevision{
 		ExpectedCurrentRevisionID: &expectedCurrentRevisionID,
 		Upserts:                   upserts,
 		Deletes:                   deletes,
-	})
+	}
+	if parentRevisionID != "" && parentRevisionID != expectedCurrentRevisionID {
+		input.ParentRevisionID = &parentRevisionID
+	}
+	revision, err := commitContent(ctx, server, omnisaveID, save, input)
 	if err != nil {
 		return nil, fmt.Errorf("commit local progress: %w", err)
 	}

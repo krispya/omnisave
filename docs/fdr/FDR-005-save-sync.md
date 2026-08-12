@@ -1,7 +1,7 @@
 # FDR-005: Save Sync
 
 **Status:** Experimental
-**Last reviewed:** 2026-08-09
+**Last reviewed:** 2026-08-10
 
 ## Overview
 
@@ -28,8 +28,14 @@ path, syncing-down built the read path; sync makes both routine.
   - Current moved, local still at the baseline — the Current Revision syncs down and the
     baseline advances. Nothing is lost: the replaced content is exactly
     the baseline revision, which the server keeps.
-  - Both moved — the save is diverged. Sync never resolves divergence on
-    its own.
+  - Both moved — what happens depends on where the Current Revision went.
+    A Current Revision descending from the baseline means another Device
+    built on this same line, so both sides hold progress the other lacks:
+    the save is diverged, and sync never resolves divergence on its own. A
+    Current Revision the baseline descends from — a restore rewound it — or
+    one sitting on a sibling branch adds nothing this Device is missing, so
+    the local progress commits as a branch off the baseline and the Current
+    Revision follows it (decision 15).
 - A binding without a baseline (a manual bind to non-matching content,
   [FDR-003](FDR-003-automatic-save-binding.md) decision 9) is diverged
   from the start and resolves the same way.
@@ -81,23 +87,28 @@ path, syncing-down built the read path; sync makes both routine.
   bound Device synchronizes toward. In the Dash, any revision in that
   Omnisave's tree can be restored as current. Restoring creates no revision,
   changes no revision timestamp or label, and discards no history.
-- The next commit after a restore is a child of the restored revision. If that
-  revision already had a child, the history branches inside the same
-  Omnisave. Branches are unnamed paths; users name important revisions instead.
+- The next commit from a Device that adopted a restore is a child of the
+  restored revision. A Device that has unsynced progress instead commits onto
+  the revision its own content continues, wherever that sits. Either way, a
+  node that already had a child gains a second one and the history branches
+  inside the same Omnisave. Branches are unnamed paths; users name important
+  revisions instead.
 - Rewinding means restoring an ancestor, fast-forwarding means restoring a
   descendant, and jumping covers a sibling branch. When several descendants
   are available the user chooses the exact node or tip; the server never
   chooses a path.
 - Restoring is global server state. A clean bound Device adopts the restored
-  content on its next sync. A Device with unsynced changes diverges and gets
-  the usual fork-or-jump choice (decision 4): either answer first preserves
-  the unsynced progress as a fork, and an unwanted fork is deleted in the
-  Dash rather than discarded by sync.
+  content on its next sync. A Device with unsynced changes commits them as a
+  branch and becomes current again (decision 15) rather than stopping to ask:
+  its progress is never held behind a prompt, and the restored revision stays
+  in the tree to be restored again once that Device is quiet.
 - When a Device reports the game as being played, the Dash's restore dialog
   says so — "Being played on Steam Deck" — and its confirm reads "Rewind
-  anyway". Either way the restore only lands on that Device after the game
-  closes (decision 13); the dialog makes the wait visible instead of
-  surprising.
+  anyway". The restore lands on that Device once the game closes
+  (decision 13). If the game writes a save before then, that progress
+  branches and takes the Current Revision back, so a rewind issued
+  mid-session may need issuing again after the game closes. Nothing is lost
+  either way: both lines stay in the tree.
 - Forking at a revision creates a separately named and synchronized Omnisave
   whose current revision is that same immutable node. The fork shares the
   node's label and ancestor path, creates no copied root revision, and owns
@@ -198,16 +209,22 @@ closes most of that window by holding pulls while the game runs.
 
 ### 4. Divergence prompts, and both answers keep everything
 
-**Decision:** Headless sync and watch report divergence and skip.
-Interactive track asks: fork here, or jump to latest — and jump first
-preserves the unsynced local progress as a fork before applying the Current Revision.
-**Why:** A binding decides which lineage future revisions extend, and a
-silent guess writes history onto the wrong playthrough
+**Decision:** Divergence is new progress on *both* sides of one line — a
+Current Revision that descends from this Device's baseline while the local
+content moved too (decision 15 covers every other shape). Headless sync and
+watch report it and skip. Interactive track asks: fork here, or jump to
+latest — and jump first preserves the unsynced local progress as a fork
+before applying the Current Revision.
+**Why:** Only a Current Revision built on top of the baseline represents
+work this Device has never seen, so only then does continuing locally mean
+choosing between two real playthroughs — and a binding decides which lineage
+future revisions extend, so a silent guess writes history onto the wrong one
 ([FDR-003](FDR-003-automatic-save-binding.md), decision 6). Making jump
 preserve-first means the prompt has no destructive option: nothing is
 ever lost to sync, only ever kept on a lineage you may later delete.
 **Tradeoff:** Jumps leave a fork to clean up in the Dash, and unresolved
-divergences accumulate lineages.
+divergences accumulate lineages. Two Devices that both keep playing still
+reach this prompt on every pass until one of them stops.
 
 ### 5. Sync completes the automatic half of binding
 
@@ -316,13 +333,17 @@ branch.
 ### 12. Branches are topology; forks are independent saves
 
 **Decision:** A revision has at most one parent and may have several children.
-Those unnamed paths remain inside one Omnisave. A fork is the only way to
-create another named, bound, independently current Omnisave; it shares the
-fork revision and ancestor path rather than copying the snapshot.
+Those unnamed paths remain inside one Omnisave, and a Device reaches them by
+committing (decision 15) as readily as the Dash reaches them by restoring. A
+fork is the only way to create another named, bound, independently current
+Omnisave; it shares the fork revision and ancestor path rather than copying
+the snapshot.
 **Why:** Users need names and bindings for independent playthroughs, not for
 every historical alternative. Sharing immutable ancestry makes lineage
 literal, keeps revision names consistent across forks, and avoids an invented
-duplicate at every fork point.
+duplicate at every fork point. Keeping branching cheap enough for sync to do
+silently is what stops ordinary rewinds from minting Omnisaves nobody asked
+for.
 **Tradeoff:** Revision retention crosses Omnisave deletion boundaries: shared
 ancestors must remain until no surviving Omnisave graph needs them. There are
 no branch names or merges; a dead branch is removed by deleting its revisions
@@ -361,7 +382,12 @@ next.
 **Tradeoff:** A rewind issued mid-session is not visible in the game
 until it closes and reopens, and a game whose adapter offers no activity
 detection is never seen as playing — those pulls fall back to decision
-3's pre-placement re-check. The interactive pass checks a sweep taken at
+3's pre-placement re-check. A deferred pull is also not a reservation: if
+the game writes a save while the pull waits, that progress branches and
+takes the Current Revision back (decision 15), and the rewind has to be
+issued again once the game is closed. The alternative — holding the
+Device's progress hostage until the deferred pull lands — would make the
+gate silently outrank the player at the controller. The interactive pass checks a sweep taken at
 its start, so a game launched while a prompt sits open can slip past the
 gate; the re-check absorbs that too. The gate is the automatic pull's
 alone: the downloads decision 3 carves out as prompted — joining a
@@ -389,6 +415,41 @@ so a crash or a restored backup cannot resurrect it
 first. A Device that last synced at a deleted revision loses its baseline and
 re-answers with a divergence prompt if its content has moved; nothing is lost
 either way, but the server cannot warn which baselines a deletion strands.
+
+### 15. A rewound Current Revision is a branch, not a conflict
+
+**Decision:** When both sides have moved, sync classifies by where the
+Current Revision sits relative to the baseline. Only a Current Revision
+descending from the baseline is a conflict (decision 4). Anything else — a
+restore that rewound current to an ancestor, or moved it to a sibling
+branch — means the server holds no progress this Device lacks, so the pass
+commits the local content as a child of the baseline it actually continues
+and lets the Current Revision follow that commit. It happens headlessly,
+with no prompt and no new Omnisave. A commit therefore names its parent
+separately from the Current Revision it expects: the parent is where the
+node attaches and supplies the file set the change applies to, while the
+expected Current Revision remains the optimistic-concurrency check
+([ADR-001](../adr/ADR-001-server-authority.md)). A binding that never had a
+baseline has no node to branch from and stays a divergence.
+**Why:** The old rule read every restore under unsynced progress as a
+conflict and answered it with a fork, which broke sync until someone ran an
+interactive pass and then left a second Omnisave to clean up — heavy
+machinery for a case where nothing is actually in contention. Attaching to
+the baseline rather than to current is what makes it honest: the content
+continues that node, and manifests record their parent immutably
+([ADR-012](../adr/ADR-012-portable-save-store.md)), so claiming the restored
+node as parent would record a lineage that never happened. Splitting parent
+from expected current keeps the guarantee ADR-001 actually cares about — a
+Device that has misread the pointer is still refused — while dropping the
+incidental requirement that the two be the same node.
+**Tradeoff:** A rewind is undone by the next commit from a Device that never
+adopted it, so rewinding a save someone is actively playing may not stick
+until they stop. The sibling case can also move current off another Device's
+branch, and two Devices playing at once will take turns holding it until one
+of them goes quiet; every line survives in the tree, but "what is current"
+belongs to whoever committed last. Sync creates branches silently, so a
+history can grow paths nobody deliberately made — decision 14's tip-first
+deletion is the only cleanup.
 
 ## Related
 

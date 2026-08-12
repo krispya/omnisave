@@ -75,21 +75,28 @@ func (a *announcer) diff(snapshot tui.ReportSnapshot, started, at time.Time, emi
 
 	for _, game := range snapshot.Games {
 		sentences := make(map[string]bool, len(game.Events))
+		spoken := false
 		for _, sentence := range game.Events {
 			sentences[sentence] = true
 			if emit && !a.sentences[game.Title][sentence] {
 				events = append(events, tui.Event{
 					Glyph: game.Glyph, Title: game.Title, Sentence: sentence, At: at,
 				})
+				spoken = true
 			}
 		}
 		a.sentences[game.Title] = sentences
 
 		// A push or a pull leaves no sentence behind — the save simply
-		// synced — so the moment it happened is the event.
+		// synced — so the moment it happened is the event. A pass that
+		// already said something about this game said the more specific
+		// thing, so adding "synced with" writes the same news twice: a
+		// branched save reads as one line, not two. The cost is that a game
+		// whose other save spoke this pass loses its plain synced line; the
+		// live view still carries the standing state either way.
 		known, seenBefore := a.synced[game.Title]
 		if game.SyncedAt.After(known) {
-			if emit && (seenBefore || game.SyncedAt.After(started)) {
+			if emit && !spoken && (seenBefore || game.SyncedAt.After(started)) {
 				events = append(events, tui.Event{
 					Glyph:    game.Glyph,
 					Title:    game.Title,
@@ -109,8 +116,9 @@ func (a *announcer) diff(snapshot tui.ReportSnapshot, started, at time.Time, emi
 // over the server's event stream — a Dash restore reaches this device in
 // seconds — with a periodic pass as the fallback when the stream is down.
 // Watch never prompts — a diverged save is reported as such and waits for
-// an interactive track run. In a terminal it shows a live view; piped or
-// under a service manager it logs plainly.
+// an interactive track run, while local progress beside a rewound Current
+// Revision branches and keeps flowing (FDR-005, decision 15). In a terminal
+// it shows a live view; piped or under a service manager it logs plainly.
 func runWatch(ctx context.Context, scanner *client.Scanner, arguments []string) error {
 	flags := flag.NewFlagSet("watch", flag.ContinueOnError)
 	statePath := flags.String("state", "", "path to local tracking state")

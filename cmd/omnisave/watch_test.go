@@ -236,6 +236,128 @@ func TestAServerEventTriggersAPassThatAppliesADashRewind(t *testing.T) {
 	}
 }
 
+// A branch is news the pass already stated, so it reads as one line rather
+// than its own sentence plus the generic synced line, and the game goes
+// straight back to standing state.
+func TestABranchIsAnnouncedOnceAndLeavesNoCondition(t *testing.T) {
+	started := time.Now()
+	established := &tui.TrackReport{}
+	established.SyncedWith("Chrono Trigger", "Save 1", started.Add(-3*time.Hour))
+	watcher := newAnnouncer()
+	watcher.announce(established.Snapshot(), started, started)
+
+	report := &tui.TrackReport{}
+	report.Branched("Chrono Trigger", "Save 1")
+	report.SyncedWith("Chrono Trigger", "Save 1", started.Add(time.Second))
+	snapshot := report.Snapshot()
+
+	events := watcher.announce(snapshot, started, started)
+	if len(events) != 1 || events[0].Sentence != "Save branched from Save 1" {
+		t.Fatalf("expected one branch line, got %v", sentences(events))
+	}
+	standing := tui.ComposeStanding(snapshot, nil, started.Add(2*time.Second))
+	if len(standing) != 1 || !strings.Contains(standing[0], "synced just now") {
+		t.Fatalf("expected the branched save to read as synced, got %v", standing)
+	}
+	if quiet := watcher.announce(snapshot, started, started); len(quiet) != 0 {
+		t.Fatalf("expected a branched save to stay quiet afterwards, got %v", sentences(quiet))
+	}
+}
+
+// Watch used to stall on a rewind it could not resolve: the save diverged,
+// every later pass re-reported it, and nothing synced until someone ran
+// track. Branching keeps the loop flowing without a prompt (FDR-005,
+// decision 15).
+func TestARewoundCurrentUnderLocalProgressKeepsWatchFlowing(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	seed, bound := pushSecondRevision(t, server, &fixture, "second-progress")
+
+	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(fixture.state); err != nil {
+		t.Fatal(err)
+	}
+	loop := watchLoop{
+		scanner: client.NewScanner(nil, fixtureAdapter{fixture: &fixture}),
+		server:  server,
+		store:   store,
+		// The local write is the trigger under test, so the poll path — the
+		// one that owns the quiet-interval rule — is what runs each pass.
+		poll:    20 * time.Millisecond,
+		pull:    time.Hour,
+		floor:   0,
+		settle:  time.Millisecond,
+		events:  newAnnouncer(),
+		watched: []string{fixture.localPath},
+	}
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+
+	// The game wrote while the Dash rewound underneath it, so the pass finds
+	// progress on both sides with current below the baseline.
+	if _, err := server.RestoreCurrentRevision(context.Background(), bound.OmnisaveID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: bound.LastSyncedRevisionID,
+		RevisionID:                seed.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture.localPath, []byte("kept-playing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result := awaitPass(t, sink)
+	if result.Err != nil {
+		t.Fatalf("expected the branching pass to succeed, got %v", result.Err)
+	}
+	if !strings.Contains(result.Summary, "1 branched") {
+		t.Fatalf("expected the pass to report a branch, got %q", result.Summary)
+	}
+	if len(result.Events) != 1 || !strings.Contains(result.Events[0].Sentence, "branched from") {
+		t.Fatalf("expected one branch event, got %v", sentences(result.Events))
+	}
+	content, err := os.ReadFile(fixture.localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "kept-playing" {
+		t.Fatalf("expected branching to leave the local save alone, got %q", content)
+	}
+
+	// The loop is not stuck: the next write commits the ordinary way.
+	if err := os.WriteFile(fixture.localPath, []byte("still-playing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	next := awaitPass(t, sink)
+	if next.Err != nil {
+		t.Fatalf("expected the pass after a branch to succeed, got %v", next.Err)
+	}
+	if strings.Contains(next.Summary, "diverged") || strings.Contains(next.Summary, "branched") {
+		t.Fatalf("expected the save to push normally after branching, got %q", next.Summary)
+	}
+	history, err := server.ListRevisions(context.Background(), bound.OmnisaveID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 4 {
+		t.Fatalf("expected the branch and the push that followed it, got %d revisions", len(history))
+	}
+}
+
+// awaitPass takes the next finished pass, failing the test rather than
+// hanging when the loop never runs one.
+func awaitPass(t *testing.T, sink *passSink) tui.PassResult {
+	t.Helper()
+	select {
+	case result := <-sink.finished:
+		return result
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for a watch pass")
+		return tui.PassResult{}
+	}
+}
+
 // stubProcesses is a process source a test can break, the unreadable process
 // table a detection sweep must not turn into an empty playing report.
 type stubProcesses struct {

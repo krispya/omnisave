@@ -177,15 +177,26 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 	if input.ExpectedCurrentRevisionID != nil && *input.ExpectedCurrentRevisionID == "" {
 		return nil, omnisave.ErrInvalid
 	}
+	if input.ParentRevisionID != nil && *input.ParentRevisionID == "" {
+		return nil, omnisave.ErrInvalid
+	}
 	if !sameString(save.CurrentRevisionID, input.ExpectedCurrentRevisionID) {
 		return nil, &omnisave.CurrentRevisionConflict{
 			ExpectedCurrentRevisionID: cloneString(input.ExpectedCurrentRevisionID),
 			ActualCurrentRevisionID:   cloneString(save.CurrentRevisionID),
 		}
 	}
+	// The parent is where the new node attaches; the expected current revision
+	// is only the concurrency check. They are the same node for an ordinary
+	// commit and differ for a branch commit, whose content continues a node a
+	// restore moved current away from (FDR-005, decision 15).
+	parentRevisionID := input.ExpectedCurrentRevisionID
+	if input.ParentRevisionID != nil {
+		parentRevisionID = input.ParentRevisionID
+	}
 	filesByPath := make(map[string]omnisave.RevisionFile)
-	if input.ExpectedCurrentRevisionID != nil {
-		parent, err := s.repository.GetRevision(ctx, saveID, *input.ExpectedCurrentRevisionID)
+	if parentRevisionID != nil {
+		parent, err := s.repository.GetRevision(ctx, saveID, *parentRevisionID)
 		if err != nil {
 			return nil, translateError(err)
 		}
@@ -254,7 +265,7 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 	revision := omnisave.Revision{
 		ID:         uuid.NewString(),
 		OmnisaveID: saveID,
-		ParentID:   cloneString(input.ExpectedCurrentRevisionID),
+		ParentID:   cloneString(parentRevisionID),
 		CreatedAt:  time.Now().UTC(),
 		Files:      files,
 		Metadata:   cloneMap(input.Metadata),

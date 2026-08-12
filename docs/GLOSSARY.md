@@ -30,7 +30,7 @@ User-facing concepts. If a user might say the word, it goes here.
 
 **Current Revision**. The one revision an omnisave presently represents and every bound Device synchronizes toward. Restoring another node moves this global pointer without changing either revision. The next commit becomes a child of the selected node. A **tip** is any revision without children and need not be current.
 
-**Labeler**. A per-game script that names a revision from its save content at commit — "Necrobinder A5, Underdocks flr 12" — running on the server so every device sees the same name. A labeler with nothing to say leaves the revision unnamed, and a name a person chooses by hand always outranks the labeler's. See [FDR-007](fdr/FDR-007-revision-labeling.md).
+**Labeler**. A per-game script that names a revision from its save content at commit running on the server so every device sees the same name. A labeler with nothing to say leaves the revision unnamed, and a name a person chooses by hand always outranks the labeler's. See [FDR-007](fdr/FDR-007-revision-labeling.md).
 
 **Restore**. Make any revision in an omnisave's tree current without creating or changing a revision. Moving to an ancestor is a **rewind**, moving to a descendant is a **fast-forward**, and moving between sibling branches is a **jump**.
 
@@ -48,7 +48,7 @@ User-facing concepts. If a user might say the word, it goes here.
 
 **Binding**. A machine-local mapping from one Local Save to one omnisave. Tracking creates bindings automatically when it seeds a new omnisave or finds one lineage with matching current content. `omnisave bind` remains available for corrections. A binding records the revision whose content the Local Save is known to equal, called the **sync baseline**. A manual binding to non-matching content has no baseline and starts life diverged (see _Sync_).
 
-**Sync**. The pass keeping a bound save and its omnisave equal: local progress commits up as revisions, server progress applies down to disk, and the sync baseline arbitrates which direction is safe. New progress on both sides is **divergence**, which sync never resolves on its own. An interactive track run asks, and both answers keep everything. Runs once via `omnisave sync` and continuously via `omnisave watch`. See [FDR-005](fdr/FDR-005-save-sync.md).
+**Sync**. The pass keeping a bound save and its omnisave equal: local progress commits up as revisions, server progress applies down to disk, and the sync baseline arbitrates which direction is safe. New progress on both sides is **divergence** only when the Current Revision has advanced beyond the baseline; sync never resolves that on its own, and an interactive track run asks, both answers keeping everything. Local progress beside a Current Revision that was restored backwards or sideways is committed as a branch instead, with nothing to ask. Runs once via `omnisave sync` and continuously via `omnisave watch`. See [FDR-005](fdr/FDR-005-save-sync.md).
 
 ## Authorization
 
