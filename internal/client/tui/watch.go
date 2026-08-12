@@ -353,8 +353,9 @@ func (m watchModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// eventScrollback keeps consecutive events adjacent and leaves one blank line
-// before the live watch block that Bubble Tea redraws beneath it.
+// eventScrollback keeps events adjacent even when separate passes print them.
+// The live view owns the blank line before its title so it is not committed
+// between event batches.
 func eventScrollback(events []Event) string {
 	if len(events) == 0 {
 		return ""
@@ -363,7 +364,7 @@ func eventScrollback(events []Event) string {
 	for _, event := range events {
 		lines = append(lines, EventLine(event))
 	}
-	return strings.Join(lines, "\n") + "\n"
+	return strings.Join(lines, "\n")
 }
 
 // questionStyle boxes the modal. The rest of the client is borderless, so
@@ -402,7 +403,9 @@ func (m watchModel) View() string {
 	if m.syncing && m.question == nil {
 		header += " " + m.spinner.View()
 	}
-	view.WriteString(header + "\n\n")
+	// The separator belongs to the live block. If it were printed with each
+	// event batch, separate passes would leave blank lines between events.
+	view.WriteString("\n" + header + "\n\n")
 	if m.question != nil {
 		view.WriteString(m.question.view() + "\n\n")
 		view.WriteString("  " + mutedStyle.Render("↑↓ choose · enter confirm · esc dismiss") + "\n")

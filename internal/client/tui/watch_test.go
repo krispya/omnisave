@@ -69,20 +69,25 @@ func TestWatchViewShowsTheTableTallyAndFooter(t *testing.T) {
 	}
 }
 
-func TestEventScrollbackLeavesSpaceBeforeTheWatchView(t *testing.T) {
+func TestEventScrollbackKeepsSeparatePassesAdjacent(t *testing.T) {
 	at := time.Date(2026, 8, 9, 0, 23, 0, 0, time.Local)
-	scrollback := eventScrollback([]Event{
-		{Glyph: "○", Title: "Slay the Spire 2", Sentence: "waiting for game to close", At: at},
-		{Glyph: "✓", Title: "Slay the Spire 2", Sentence: "synced with Main", At: at},
-	})
+	waiting := Event{Glyph: "○", Title: "Slay the Spire 2", Sentence: "waiting for game to close", At: at}
+	synced := Event{Glyph: "✓", Title: "Slay the Spire 2", Sentence: "synced with Main", At: at}
+	scrollback := eventScrollback([]Event{waiting, synced})
 
-	want := EventLine(Event{Glyph: "○", Title: "Slay the Spire 2", Sentence: "waiting for game to close", At: at}) + "\n" +
-		EventLine(Event{Glyph: "✓", Title: "Slay the Spire 2", Sentence: "synced with Main", At: at}) + "\n"
+	want := EventLine(waiting) + "\n" + EventLine(synced)
 	if scrollback != want {
-		t.Fatalf("expected adjacent events and one trailing blank line, got %q", scrollback)
+		t.Fatalf("expected adjacent events with no committed separator, got %q", scrollback)
 	}
 	if idle := eventScrollback(nil); idle != "" {
 		t.Fatalf("expected an idle pass not to add a separator, got %q", idle)
+	}
+}
+
+func TestWatchViewOwnsTheBlankLineBeforeItsTitle(t *testing.T) {
+	view := ansi.Strip(newTestWatchModel(make(chan WatchRequest, 1)).View())
+	if !strings.HasPrefix(view, "\n▲ Omnisave · watching\n") {
+		t.Fatalf("expected one live separator before the title, got %q", view)
 	}
 }
 
@@ -149,7 +154,7 @@ func TestWatchViewSpinsWhileSyncingAndKeysWork(t *testing.T) {
 	model := newTestWatchModel(requests)
 	updated, _ := model.Update(watchPassStartedMsg{})
 	syncingView := ansi.Strip(updated.(watchModel).View())
-	header, _, _ := strings.Cut(syncingView, "\n")
+	header, _, _ := strings.Cut(strings.TrimPrefix(syncingView, "\n"), "\n")
 	if header != "▲ Omnisave · watching ⠋" {
 		t.Fatalf("expected the active header to end at the spinner, got %q", header)
 	}
@@ -256,7 +261,7 @@ func TestTheWorkedRowSaysWhatThePassIsDoing(t *testing.T) {
 	// The pass has not reached a game yet, so only the spinner reaches the header.
 	started, _ := model.Update(watchPassStartedMsg{at: time.Now()})
 	scanning, _ := started.(watchModel).Update(watchPhaseMsg("scanning"))
-	header, _, _ := strings.Cut(ansi.Strip(scanning.(watchModel).View()), "\n")
+	header, _, _ := strings.Cut(strings.TrimPrefix(ansi.Strip(scanning.(watchModel).View()), "\n"), "\n")
 	if header != "▲ Omnisave · watching ⠋" {
 		t.Fatalf("expected no text beside the header spinner, got %q", header)
 	}
