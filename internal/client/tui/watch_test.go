@@ -71,18 +71,17 @@ func TestWatchViewShowsTheTableTallyAndFooter(t *testing.T) {
 
 func TestEventScrollbackLeavesSpaceBeforeTheWatchView(t *testing.T) {
 	at := time.Date(2026, 8, 9, 0, 23, 0, 0, time.Local)
-	lines := eventScrollbackLines([]Event{
+	scrollback := eventScrollback([]Event{
 		{Glyph: "○", Title: "Slay the Spire 2", Sentence: "waiting for game to close", At: at},
 		{Glyph: "✓", Title: "Slay the Spire 2", Sentence: "synced with Main", At: at},
 	})
 
-	if len(lines) != 3 || lines[2] != "" {
-		t.Fatalf("expected one blank line after the event batch, got %q", lines)
+	want := EventLine(Event{Glyph: "○", Title: "Slay the Spire 2", Sentence: "waiting for game to close", At: at}) + "\n" +
+		EventLine(Event{Glyph: "✓", Title: "Slay the Spire 2", Sentence: "synced with Main", At: at}) + "\n"
+	if scrollback != want {
+		t.Fatalf("expected adjacent events and one trailing blank line, got %q", scrollback)
 	}
-	if strings.Contains(lines[0], "\n") || strings.Contains(lines[1], "\n") {
-		t.Fatalf("expected events to stay adjacent, got %q", lines)
-	}
-	if idle := eventScrollbackLines(nil); len(idle) != 0 {
+	if idle := eventScrollback(nil); idle != "" {
 		t.Fatalf("expected an idle pass not to add a separator, got %q", idle)
 	}
 }
