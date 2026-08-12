@@ -1314,6 +1314,33 @@ func revisionByID(history []omnisave.Revision, id *string) (omnisave.Revision, b
 	return omnisave.Revision{}, false
 }
 
+// descendsFrom reports whether node is a strict descendant of ancestor, and
+// whether the ancestry could be resolved at all. An unreadable chain — a
+// parent this history does not carry — resolves to false so the caller can
+// take the cautious branch rather than infer a relationship it cannot see.
+func descendsFrom(history []omnisave.Revision, node, ancestor omnisave.Revision) (descends, resolved bool) {
+	byID := make(map[string]omnisave.Revision, len(history))
+	for _, revision := range history {
+		byID[revision.ID] = revision
+	}
+	// The walk is bounded by the history it walks, so a corrupt parent cycle
+	// ends as unresolved instead of spinning.
+	for step := 0; step <= len(history); step++ {
+		if node.ParentID == nil {
+			return false, true
+		}
+		if *node.ParentID == ancestor.ID {
+			return true, true
+		}
+		parent, ok := byID[*node.ParentID]
+		if !ok {
+			return false, false
+		}
+		node = parent
+	}
+	return false, false
+}
+
 func omnisaveDisplayName(save omnisave.Omnisave) string {
 	if name := strings.TrimSpace(save.DisplayName); name != "" {
 		return name
@@ -1444,6 +1471,36 @@ func syncBoundSave(
 			return nil
 		}
 		outcome.Pulled++
+		report.SyncedWith(local.GameTitle, name, time.Now())
+		return nil
+	}
+	// Both sides moved, which is a conflict only when the server's move added
+	// progress this Device does not have: a current descending from the
+	// baseline means another Device built on this same line. A current the
+	// baseline descends from — a rewind — or one on a sibling branch holds
+	// nothing this Device lacks, so the local content is a new branch off the
+	// baseline rather than a conflict (FDR-005, decision 15).
+	descends, resolved := descendsFrom(history, current, baseline)
+	if resolved && !descends {
+		revision, err := binding.PushBranch(ctx, server, remoteSave.ID, save, current.ID, baseline)
+		if err != nil {
+			var conflict *remote.CurrentRevisionConflict
+			if errors.As(err, &conflict) {
+				outcome.Conflicted++
+				report.CurrentMoved(local.GameTitle, name)
+				return nil
+			}
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+		if err := state.RecordSynced(local, remoteSave.ID, revision.ID); err != nil {
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+		outcome.Branched++
+		report.Branched(local.GameTitle, name)
 		report.SyncedWith(local.GameTitle, name, time.Now())
 		return nil
 	}

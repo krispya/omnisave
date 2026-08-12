@@ -343,6 +343,107 @@ func TestRestoreMovesCurrentAndTheNextCommitCreatesABranch(t *testing.T) {
 	}
 }
 
+// A branch commit names its parent separately from the current revision it
+// expects, so a Device whose content continues a node a restore moved away
+// from attaches there instead of pretending to continue current. The
+// concurrency check still guards the pointer (FDR-005, decision 15).
+func TestABranchCommitAttachesToItsParentAndStillGuardsCurrent(t *testing.T) {
+	ctx := context.Background()
+	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "chrono-trigger"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "chrono.srm", Artifact: storeBlob(t, ctx, saves, "millennial fair")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	later, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &root.ID,
+		Upserts: []omnisave.RevisionFile{
+			{Path: "chrono.srm", Artifact: storeBlob(t, ctx, saves, "ocean palace")},
+			{Path: "chrono.rtc", Artifact: storeBlob(t, ctx, saves, "clock")},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saves.Restore(ctx, save.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &later.ID,
+		RevisionID:                root.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Current sits at root; the commit continues later, and its delete covers
+	// a path only later carries — proof the parent supplied the base file set.
+	branch, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &root.ID,
+		ParentRevisionID:          &later.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "chrono.srm", Artifact: storeBlob(t, ctx, saves, "black omen")}},
+		Deletes:                   []string{"chrono.rtc"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch.ParentID == nil || *branch.ParentID != later.ID {
+		t.Fatalf("the branch commit should attach to its parent, got %v", branch.ParentID)
+	}
+	if len(branch.Files) != 1 || branch.Files[0].Path != "chrono.srm" {
+		t.Fatalf("the branch commit should build on its parent's files, got %+v", branch.Files)
+	}
+	stored, err := saves.Get(ctx, save.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.CurrentRevisionID == nil || *stored.CurrentRevisionID != branch.ID {
+		t.Fatalf("a branch commit should still move current onto itself, got %v", stored.CurrentRevisionID)
+	}
+
+	// Naming a parent does not buy a way past the pointer check.
+	_, err = saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &root.ID,
+		ParentRevisionID:          &later.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "chrono.srm", Artifact: storeBlob(t, ctx, saves, "lavos")}},
+	})
+	var conflict *omnisave.CurrentRevisionConflict
+	if !errors.As(err, &conflict) || conflict.ActualCurrentRevisionID == nil ||
+		*conflict.ActualCurrentRevisionID != branch.ID {
+		t.Fatalf("a stale branch commit must be refused with the actual current revision, got %v", err)
+	}
+
+	// A parent outside this Omnisave is not a way to reach another lineage.
+	other, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "chrono-trigger"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stranger, err := saves.CommitRevision(ctx, other.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "chrono.srm", Artifact: storeBlob(t, ctx, saves, "elsewhere")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &branch.ID,
+		ParentRevisionID:          &stranger.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "chrono.srm", Artifact: storeBlob(t, ctx, saves, "lavos")}},
+	})
+	if !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("a parent from another Omnisave should not resolve, got %v", err)
+	}
+	blank := ""
+	_, err = saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &branch.ID,
+		ParentRevisionID:          &blank,
+		Upserts:                   []omnisave.RevisionFile{{Path: "chrono.srm", Artifact: storeBlob(t, ctx, saves, "lavos")}},
+	})
+	if !errors.Is(err, omnisave.ErrInvalid) {
+		t.Fatalf("an empty parent should be refused, got %v", err)
+	}
+}
+
 func TestAForkKeepsItsForkPointAfterRewindingBelowIt(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
@@ -469,7 +570,7 @@ func (n *notingNamer) NameRevision(_ context.Context, gameID string, _ []omnisav
 
 func TestCommittedRevisionsAreNamedByTheGamesLabeler(t *testing.T) {
 	ctx := context.Background()
-	namer := &notingNamer{name: "Necrobinder A5, Underdocks flr 12"}
+	namer := &notingNamer{name: "Necro A5, Underdocks flr 12"}
 	saves := omnisaveservice.NewWithNamer(storagetest.NewMemoryRepository(), namer)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-spire2"})
 	if err != nil {
@@ -482,7 +583,7 @@ func TestCommittedRevisionsAreNamedByTheGamesLabeler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if revision.DisplayName != "Necrobinder A5, Underdocks flr 12" ||
+	if revision.DisplayName != "Necro A5, Underdocks flr 12" ||
 		revision.NameSource != omnisave.NameSourceLabeler {
 		t.Fatalf("commit did not carry the labeler's name: %+v", revision)
 	}

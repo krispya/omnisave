@@ -184,6 +184,14 @@ func (r *TrackReport) PullDeferred(title, omnisaveName string) {
 	r.event(title, omnisaveName+" · waiting for game to close")
 }
 
+// Branched records local progress committed as a new branch: a restore had
+// moved the Omnisave's current revision off this device's baseline, and
+// committing here made the local line current again. It reads as a sync, not
+// a condition, because nothing is left to resolve.
+func (r *TrackReport) Branched(title, omnisaveName string) {
+	r.event(title, "save branched from "+omnisaveName)
+}
+
 // Diverged records a save with new progress on both sides, waiting for an
 // interactive run to resolve.
 func (r *TrackReport) Diverged(title, omnisaveName string) {
@@ -397,6 +405,9 @@ type TrackOutcome struct {
 	Pushed    int
 	Pulled    int
 	Diverged  int
+	// Branched counts local progress committed as a new branch because a
+	// restore moved current off this Device's baseline.
+	Branched int
 	// Deferred counts pulls held back because the game is being played;
 	// the pass after the game closes applies them.
 	Deferred int
@@ -414,7 +425,8 @@ func (o TrackOutcome) Changed() bool {
 
 func (o TrackOutcome) changes() int {
 	return o.Added + o.Linked + o.Untracked + o.Pending + o.Seeded + o.Rebound + o.Jumped +
-		o.Forked + o.Bound + o.Unbound + o.Pushed + o.Pulled + o.Diverged + o.Deferred + o.Conflicted + o.Failed
+		o.Forked + o.Bound + o.Unbound + o.Pushed + o.Pulled + o.Branched + o.Diverged + o.Deferred +
+		o.Conflicted + o.Failed
 }
 
 // TrackSummary prints the closing dim tally.
@@ -457,6 +469,9 @@ func SummaryLine(outcome TrackOutcome) string {
 	}
 	if outcome.Pushed+outcome.Pulled > 0 {
 		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d synced", outcome.Pushed+outcome.Pulled)))
+	}
+	if outcome.Branched > 0 {
+		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d branched", outcome.Branched)))
 	}
 	if outcome.Diverged > 0 {
 		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d diverged", outcome.Diverged)))
