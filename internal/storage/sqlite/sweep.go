@@ -6,24 +6,9 @@ import (
 	"log"
 )
 
-// This file reclaims at open what deletion marked and a crash left behind.
-//
-// Runtime deletion works in two steps: the transaction removes the rows and
-// records immutable markers, and reclamation removes the manifests and objects
-// afterwards. Everything after the commit can be interrupted. Rebuild deletes
-// only rows named by positive markers and otherwise adds; reconcile only adds
-// to the store. Physical leftovers would therefore accumulate forever. The
-// sweep collects them on open after both repair passes. At that point the
-// database names every live revision and file, and the complete inventory
-// proves no unreadable portable record was mistaken for absence.
-//
-// The sweep cannot be called without the complete inventory produced by
-// recovery. Damage therefore disables the whole pass instead of turning an
-// unreadable record into evidence that its content is garbage.
+// Sweep reclaims deletion leftovers only after a complete store inventory proves liveness.
 
-// sweep removes marker-condemned manifests and unreferenced objects. Its
-// error is for the caller to log: a failed sweep leaves leftovers for the
-// next one, never an unservable store.
+// sweep removes marker-condemned manifests and unreferenced objects best-effort.
 func (r *Repository) sweep(ctx context.Context, proof completeInventory) error {
 	knownRevisions, err := tableIDs(ctx, r.db, "revisions")
 	if err != nil {

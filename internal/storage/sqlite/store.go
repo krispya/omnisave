@@ -14,13 +14,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
-// This file keeps the portable store in step with the database.
-//
-// SQLite is the online authority and the store is the portable durable record.
-// Every mutation commits a self-contained store projection to SQLite's outbox;
-// only that queue writes manifests, records, and deletion markers. Reconcile
-// remains repair for a legacy or manually incomplete store, not the mechanism
-// that makes current writes safe.
+// Portable-store writes are projected from SQLite's transactional outbox.
 
 // noteStoreLag logs best-effort physical cleanup after its immutable deletion
 // marker is durable. Failure retains bytes and is retried by a complete sweep.
@@ -267,10 +261,7 @@ func (r *Repository) dropRevisions(revisionIDs []string) error {
 	return nil
 }
 
-// reconcile snapshots the database into the transactional outbox. Repair is
-// not a side door around normal projection ordering: its game and save records
-// use the same database-wide sequence as live mutations. Immutable revision
-// manifests are queued only when absent from the store.
+// reconcile queues missing portable records in normal projection order.
 func (r *Repository) reconcile(ctx context.Context) (bool, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -303,9 +294,7 @@ func (r *Repository) reconcile(ctx context.Context) (bool, error) {
 		}
 	}
 
-	// Every revision row, not every surviving save's revisions: retention
-	// already deleted the rows no surviving save reaches, so a row whose
-	// creator is gone is exactly a shared ancestor a fork still needs.
+	// Include shared revisions whose creator save was deleted.
 	revisionIDs, err := queryIDs(ctx, tx, `SELECT id FROM revisions ORDER BY id`)
 	if err != nil {
 		return false, fmt.Errorf("reconcile revisions: %w", err)
@@ -337,10 +326,7 @@ func omnisaveIDsOfGame(ctx context.Context, tx *sql.Tx, gameID string) ([]string
 	return queryIDs(ctx, tx, `SELECT id FROM omnisaves WHERE game_id = ?`, gameID)
 }
 
-// revisionIDsOfGame lists every node in a game's graph by the game identity
-// each revision carries, for a deletion that has to remove their manifests
-// after the rows are gone. Going by the creator save instead would miss nodes
-// whose creator was already deleted while a fork retained them.
+// revisionIDsOfGame lists all graph nodes, including those created by deleted forks.
 func revisionIDsOfGame(ctx context.Context, tx *sql.Tx, gameID string) ([]string, error) {
 	return queryIDs(ctx, tx, `SELECT id FROM revisions WHERE game_id = ?`, gameID)
 }

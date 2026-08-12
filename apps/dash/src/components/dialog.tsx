@@ -1,11 +1,6 @@
 import { useEffect, useId, type ReactNode } from 'react';
 
-/**
- * The surface every dialog is drawn on.
- *
- * Escape dismisses, but not while the dialog's own action is in flight — a
- * stray keypress should not abandon a write whose outcome is not known yet.
- */
+/** Shared dialog surface that blocks dismissal while its action is pending. */
 export function Dialog({
   title,
   description,

@@ -1,16 +1,6 @@
 import { useMemo, useSyncExternalStore } from 'react';
 
-/**
- * What the dash is showing, as a shareable link:
- *
- *   /                   the Library
- *   /games/<game>       one game
- *   /settings           the server: connecting devices, credentials, discovery
- *
- * Only whole views get a route. Which save has its history open and which way a game's
- * saves are drawn are things a reader does inside a game, not places to link to; a
- * focused save view would be its own route.
- */
+/** A shareable Dash view: the Library, one game, or server settings. */
 export type Route = { name: 'library' } | { name: 'game'; gameID: string } | { name: 'settings' };
 
 const routeChanged = 'omnisave:routechange';
@@ -34,10 +24,7 @@ export function routePath(route: Route) {
   }
 }
 
-/**
- * Shows a route. `replace` is for corrections the reader did not ask for — a stale
- * link, a disconnect — so the back button still walks their own steps.
- */
+/** Shows a route, replacing history when correcting stale or inaccessible state. */
 export function navigate(route: Route, options?: { replace?: boolean }) {
   const path = routePath(route);
   if (path === window.location.pathname) return;
@@ -48,11 +35,7 @@ export function navigate(route: Route, options?: { replace?: boolean }) {
   window.dispatchEvent(new Event(routeChanged));
 }
 
-/**
- * True when a click on a link should be handled here instead of by the browser. Anything
- * the reader means as "open this elsewhere" — a new tab, a download, another origin —
- * is left alone.
- */
+/** Reports whether an unmodified same-origin link should use client-side navigation. */
 export function handledByRouter(event: {
   defaultPrevented: boolean;
   button: number;

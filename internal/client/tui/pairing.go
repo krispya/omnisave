@@ -21,11 +21,7 @@ const pollInterval = time.Second
 // until it reports something other than pending.
 type PollPairing func(context.Context) (access.CollectionStatus, error)
 
-// AwaitApproval shows the code the owner matches in the Dash, and waits.
-//
-// The code is the whole point of this screen: it is the one part of the
-// request the owner can check against the Device in front of them, so it is
-// what the Device puts on its screen (FDR-006).
+// AwaitApproval displays the verification code and waits for the owner's decision.
 func AwaitApproval(ctx context.Context, serverURL, code string, poll PollPairing) (access.CollectionStatus, error) {
 	model := newPairingModel(ctx, serverURL, code, poll)
 	result, err := tea.NewProgram(model, tea.WithOutput(os.Stderr)).Run()

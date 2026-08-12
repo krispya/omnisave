@@ -18,12 +18,7 @@ import (
 // /usr/bin/retroarch that no root can claim.
 const frontendName = "retroarch"
 
-// RunningGames reports which emulated games a live RetroArch frontend is
-// playing. The frontend is found by install root or by name; the game is
-// then identified by path evidence — its content or save file among the
-// frontend's arguments or open files. A frontend sitting in its menu, or on
-// a platform that exposes no open files, claims no game: absence of
-// evidence reads as not playing, never as everything playing.
+// RunningGames identifies live RetroArch games from content or save paths.
 func (a *Adapter) RunningGames(ctx context.Context, snapshot *running.Snapshot, discovered target.Target, games []target.InstalledGame) (map[string]bool, error) {
 	if discovered.Adapter != adapterName {
 		return nil, fmt.Errorf("invalid RetroArch target")
@@ -69,11 +64,7 @@ func isFrontend(process running.Process, roots []string) bool {
 	return strings.EqualFold(base, frontendName)
 }
 
-// claimPaths returns the paths whose presence proves a game is the one being
-// played: its content file and its prospective battery-save files. Each claim
-// carries its symlink-resolved form alongside — open-file evidence arrives
-// kernel-canonicalized, while the adapter may know the ROM or save directory
-// only through a link.
+// claimPaths returns original and resolved content and save paths for a game.
 func (a *Adapter) claimPaths(game target.InstalledGame) []string {
 	claims := slices.Clone(a.resolved.resolve(game.Identity.ContentPath))
 	profile, ok := a.platform(game.Identity.Platform)

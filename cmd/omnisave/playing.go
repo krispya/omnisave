@@ -10,10 +10,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 )
 
-// presenceWatch is what a pass hands the watch loop so the server's picture
-// of playing games stays fresh between passes: the adapter matchers to sweep
-// with, each tracked game's Library identity and display title, and the
-// device doing the reporting.
+// presenceWatch contains the state needed to refresh playing reports between passes.
 type presenceWatch struct {
 	deviceID string
 	matchers []running.Matcher
@@ -21,9 +18,7 @@ type presenceWatch struct {
 	titles   map[string]string
 }
 
-// trackedPresence assembles the presence picture from one pass's scans.
-// Built after the library sync so Library identities are resolved and a
-// freshly tracked game reports on its very first pass.
+// trackedPresence assembles presence state after Library identities are resolved.
 func trackedPresence(scanner *client.Scanner, state *tracking.State, scans []client.TargetScan) presenceWatch {
 	presence := presenceWatch{
 		deviceID: state.Device.ID,
@@ -47,11 +42,8 @@ func trackedPresence(scanner *client.Scanner, state *tracking.State, scans []cli
 	return presence
 }
 
-// passPlaying is what one pass learned about playing games: the presence
-// picture it assembled, the process sweep it ran — shared by the pull gate
-// and the presence report, so a pass costs one sweep — and the games whose
-// pulls the gate held back for their exit. swept distinguishes an empty
-// picture from a sweep that failed, which must not be reported as one.
+// passPlaying holds a shared process sweep, its presence report, and deferred pulls.
+// swept distinguishes a valid empty result from a failed sweep.
 type passPlaying struct {
 	presence presenceWatch
 	playing  map[string]bool
@@ -59,11 +51,8 @@ type passPlaying struct {
 	waiting  []string
 }
 
-// pullGate holds automatic pulls back while their game is being played
-// (FDR-005, decision 13) and remembers which games are waiting, so the
-// watch loop knows whose exit resolves them. A nil gate — no detector, or
-// a sweep that failed — holds nothing: detection fails open, because a
-// platform whose process list is unreadable must not defer pulls forever.
+// pullGate defers pulls for running games and records which exits unblock them.
+// A nil gate fails open and defers nothing.
 type pullGate struct {
 	playing map[string]bool
 	waiting []string
@@ -92,10 +81,8 @@ func deferredGameExited(deferred []string, playing map[string]bool) bool {
 	return false
 }
 
-// playingNow reports which tracked games are being played, from one process
-// sweep. A failed sweep is an error, not an empty picture: callers skip
-// their report entirely, because reporting nobody playing would clear valid
-// presence for a game that is still running.
+// playingNow reports running tracked games from one process sweep.
+// Callers must not treat a failed sweep as an empty presence report.
 func playingNow(ctx context.Context, detector *running.Detector, matchers []running.Matcher) (map[string]bool, error) {
 	if detector == nil || len(matchers) == 0 {
 		return nil, nil
@@ -103,9 +90,7 @@ func playingNow(ctx context.Context, detector *running.Detector, matchers []runn
 	return detector.Playing(ctx, matchers...)
 }
 
-// playingGames maps a playing sweep through a lookup — Library game IDs for
-// the server's report, display titles for the watch view's playing marker —
-// sorted so equal pictures compare equal.
+// playingGames maps and sorts a process sweep for stable reports.
 func playingGames(lookup map[string]string, playing map[string]bool) []string {
 	names := make([]string, 0, len(playing))
 	for localID, isPlaying := range playing {
@@ -117,9 +102,7 @@ func playingGames(lookup map[string]string, playing map[string]bool) []string {
 	return names
 }
 
-// reportPlaying tells the server what this device sees being played right
-// now. Best-effort: presence is a courtesy the Dash shows and ages out on
-// its own, so a failed report is not worth failing a pass over.
+// reportPlaying sends best-effort presence; failures do not fail the sync pass.
 func reportPlaying(ctx context.Context, server *remote.Client, presence presenceWatch, playing map[string]bool) {
 	if presence.deviceID == "" {
 		return

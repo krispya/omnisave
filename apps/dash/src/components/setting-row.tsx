@@ -1,15 +1,7 @@
 import type { ReactNode } from 'react';
 import { Icon, type IconName } from './icon.js';
 
-/**
- * One row of a settings group. Every row is the same shape — icon, title,
- * supporting line, trailing control — so a page reads as one list rather than
- * one layout per kind of setting.
- *
- * The supporting line is meant to carry the setting's *current value*, not a
- * description of what it does: "Connected · client abc123" tells the reader
- * something a title cannot, where "Connects to IGDB" only repeats it.
- */
+/** A settings row with an icon, current value, and optional trailing control. */
 type RowProps = {
   icon?: IconName;
   title: ReactNode;
@@ -64,11 +56,7 @@ export function ActionRow({
   );
 }
 
-/**
- * A row carrying a switch. The switch is the row's control, so the row itself
- * is not clickable — a stray click on a destructive-adjacent toggle is worth
- * more friction than the convenience is worth.
- */
+/** A settings row whose trailing control is a switch. */
 export function SwitchRow({
   checked,
   onChange,

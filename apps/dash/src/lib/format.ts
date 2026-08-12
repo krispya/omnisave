@@ -4,14 +4,14 @@ export function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
 }
 
-/** Revisions minutes apart are common, so history needs the clock time as well. */
+/** Formats a full revision timestamp. */
 export function formatDateTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Unknown date';
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
 }
 
-/** Compact stamp for history rows: the clock today, the day this year, the year before that. */
+/** Formats history rows as a time today, a date this year, or a dated year. */
 export function formatHistoryStamp(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'unknown';

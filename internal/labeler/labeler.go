@@ -1,15 +1,4 @@
-// Package labeler derives revision display names from save content.
-//
-// A labeler is a small Starlark script bound to a game. At commit time it
-// receives the revision's file set and returns a name — "Necro A5,
-// Underdocks flr 12, 11/66 HP" — or nothing. Scripts are pure functions
-// over the snapshot: they cannot reach the filesystem, the network, or the
-// clock, and a script that fails, stalls, or answers nonsense costs only the
-// name, never the commit.
-//
-// Built-in labelers are Starlark rather than Go so that user-provided
-// labelers can later run on the exact runtime the built-ins have already
-// proven, differing only in where the script is stored.
+// Package labeler derives revision display names with sandboxed Starlark scripts.
 package labeler
 
 import (
@@ -46,9 +35,7 @@ type Labeler struct {
 	scripts   map[string]*script
 }
 
-// New loads the built-in labeler scripts and returns a Labeler that reads
-// game identity from games and file content from artifacts. A built-in that
-// fails to load is a programming error and fails construction.
+// New loads built-in labelers backed by game metadata and stored artifacts.
 func New(games GameDirectory, artifacts ArtifactOpener) (*Labeler, error) {
 	scripts, err := loadBuiltins()
 	if err != nil {
@@ -57,10 +44,7 @@ func New(games GameDirectory, artifacts ArtifactOpener) (*Labeler, error) {
 	return &Labeler{games: games, artifacts: artifacts, scripts: scripts}, nil
 }
 
-// NameRevision derives a display name for a revision of gameID holding files,
-// or "" when the game has no labeler or its script declines or fails. It is
-// best-effort by contract: callers commit unnamed rather than propagate an
-// error.
+// NameRevision derives a display name, returning "" when labeling is unavailable or fails.
 func (l *Labeler) NameRevision(ctx context.Context, gameID string, files []omnisave.RevisionFile) string {
 	if l == nil {
 		return ""

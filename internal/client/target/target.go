@@ -141,11 +141,7 @@ type Adapter interface {
 	DiscoverSaveDestinations(context.Context, Target, InstalledGame) ([]SaveDestination, error)
 }
 
-// Activity is implemented by adapters that can tell which of their installed
-// games are being played right now. Detection is the adapter's to define —
-// only the adapter knows what a running game looks like for its store on
-// this device — while the shared snapshot keeps every adapter's answer to
-// one process sweep. The result maps InstalledGame IDs to liveness.
+// Activity detects active InstalledGame IDs from a shared process snapshot.
 type Activity interface {
 	RunningGames(ctx context.Context, snapshot *running.Snapshot, discovered Target, games []InstalledGame) (map[string]bool, error)
 }

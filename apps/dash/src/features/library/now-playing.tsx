@@ -3,17 +3,7 @@ import { RouteLink } from '../../components/route-link.js';
 import { GameMediaImage } from '../game/game-artwork.js';
 import { backdrop, playingOn, type GameSummary } from '../game/game-summary.js';
 
-/**
- * What is being played right now, across every device the server tracks.
- *
- * It sits above the Library because it answers a different question: the
- * Library is for finding a game, this is for seeing what is already happening.
- * When nothing is being played it is absent rather than empty — a row that
- * says "nothing" every day is a row that costs the Library space for nothing.
- *
- * The cards are landscape where the Library's are portrait, so the two never
- * read as the same list twice.
- */
+/** A landscape card row for games currently being played on tracked devices. */
 export function NowPlaying({ games, token }: { games: GameSummary[]; token: string }) {
   const playing = games
     .map((game) => ({ game, devices: playingOn(game) }))

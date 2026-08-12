@@ -1,10 +1,4 @@
-// Package store is Omnisave's portable save store: one directory holding
-// everything needed to recover saved games, and nothing else.
-//
-// The store is the durable record; the SQLite database is an index over it.
-// Copy the directory anywhere and every save is recoverable from it alone,
-// without this server, this database, or a network. That property is what the
-// layout is for:
+// Package store implements the portable, self-contained save store.
 //
 //	VERSION                  the format marker, so a reader knows what it has
 //	objects/ab/<sha>.gz      file content, gzip, sharded by the hash's first byte
@@ -13,15 +7,6 @@
 //	games/ab/<id>.json       catalog identity, so a recovered save has a name
 //	deletions/<kind>/ab/<id>.json committed deletion markers
 //	reclaiming/ab/<sha>.gz objects staged for crash-safe removal
-//
-// Manifests and records are uncompressed JSON because a person reading them
-// during a recovery has a text editor and may have nothing else. Object content
-// is compressed because saves are numerous and compress well; gzip is the one
-// format every platform can already open.
-//
-// Deliberately absent: credentials, pairing state, the owner PIN, the owner
-// token, and owner settings. Those are deployment secrets, they are not needed
-// to recover a save, and this directory is meant to be handed to someone.
 package store
 
 import (
@@ -34,10 +19,7 @@ import (
 	"strings"
 )
 
-// Version is the store format this package writes. A reader refuses a store
-// numbered higher than this: an older binary cannot know what a newer format
-// left out, and guessing with save data is not acceptable. Version 4 replaced
-// mutable tombstones with immutable deletion markers.
+// Version is the store format written by this package. Newer formats are rejected.
 const Version = 4
 
 const (
@@ -101,10 +83,7 @@ func (s *Store) ensureLayout() error {
 	return s.sweepTemporaries()
 }
 
-// sweepTemporaries removes the residue of writes that never finished — a crash
-// between creating a temporary file and renaming it into place. Nothing ever
-// reads them, but they accumulate forever on a machine that loses power, and a
-// person recovering by hand should not have to wonder what they are.
+// sweepTemporaries removes files left by interrupted atomic writes.
 func (s *Store) sweepTemporaries() error {
 	return filepath.WalkDir(s.root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
@@ -156,10 +135,7 @@ func parseVersion(marker string) (int, error) {
 	return version, nil
 }
 
-// objectPath locates content by hash. Objects sit under a directory named for
-// the hash's first byte: a store accumulates one object per distinct file per
-// revision, and flat directories of that size are slow to walk and unpleasant
-// to open in a file manager.
+// objectPath locates content in a shard selected by the hash's first byte.
 func (s *Store) objectPath(hash string) string {
 	return filepath.Join(s.root, objectDir, hash[:2], hash+".gz")
 }
@@ -184,9 +160,7 @@ func (s *Store) deletionPath(targetKind, id string) string {
 	return filepath.Join(s.root, deletionDir, targetKind, shard(id), id+".json")
 }
 
-// shard groups records the way objects are grouped. Record identifiers are
-// opaque, so this takes the first two characters of their hash rather than of
-// the identifier itself, which keeps the spread even whatever they look like.
+// shard distributes opaque identifiers by the first byte of their hash.
 func shard(id string) string {
 	sum := sha256.Sum256([]byte(id))
 	return hex.EncodeToString(sum[:1])
@@ -209,10 +183,7 @@ func ValidHash(hash string) bool {
 	return true
 }
 
-// writeFileAtomic replaces a file with content, leaving either the old file or
-// the new one behind and never a partial write. A store may be copied at any
-// moment, including during a write, and a half-written manifest in the copy
-// would be indistinguishable from a corrupt one.
+// writeFileAtomic replaces a file without exposing partial content.
 func writeFileAtomic(path string, content []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -245,11 +216,7 @@ func writeFileAtomic(path string, content []byte, mode os.FileMode) error {
 	return syncDirectory(filepath.Dir(path))
 }
 
-// syncDirectory forces a directory entry to disk. Renaming a fully written file
-// into place is atomic, but the rename itself is not durable until the
-// directory holding it is flushed — without this, power loss can leave a store
-// whose object or manifest was written and then forgotten. The store is the
-// durable record, so it pays for the flush.
+// syncDirectory makes a completed rename durable across power loss.
 func syncDirectory(path string) error {
 	directory, err := os.Open(path)
 	if err != nil {

@@ -8,10 +8,7 @@ import { RevisionNameEditor } from './revision-name-editor.js';
 import { buildRevisionRail } from './revision-rail.js';
 import { revisionMove, revisionMoveLabel } from './revision-navigation.js';
 
-/**
- * The revision to reveal after following a fork edge. `revisionID` is omitted when the
- * target is the save's own fork point, whose id the log linking to it cannot know.
- */
+/** A fork target to reveal; an omitted revision identifies the target's fork point. */
 export type RevisionFocus = {
   saveID: string;
   revisionID?: string;
@@ -163,15 +160,12 @@ export function RevisionLog({
     focusedRow.current?.scrollIntoView?.({ block: 'nearest' });
   }, [focusedID, revisions]);
 
-  // One newest-first column, git style: the trunk holds the first lane, and
-  // branch lanes curve into the node they sprouted from. A fork shows as an
-  // inline decoration on the shared revision it began at, like a git ref.
+  // Draw newest-first history with rewind branches and fork markers.
   const rail = buildRevisionRail(save, revisions);
   const gutterStyle = { width: `${rail.laneCount * LANE}rem` };
 
   if (loading) {
-    // Placeholders keep the row rhythm, so the history fills them in rather than
-    // resizing the card a second time.
+    // Placeholders preserve row height while history loads.
     return (
       <div aria-label="Loading revisions">
         {Array.from({ length: 3 }, (_, index) => (
@@ -207,9 +201,7 @@ export function RevisionLog({
             const forkLinks = lineage.forks.get(revision.id) ?? [];
             const isCurrent = revision.id === save.current_revision_id;
             const isForkPoint = revision.id === save.forked_from?.revision_id;
-            // Only a tip nothing needs offers deletion: not current, nothing
-            // building on it, no fork starting here. The server re-checks
-            // globally; this only hides the action where it must refuse.
+            // Offer deletion only for a non-current tip with no fork dependents.
             const deletable =
               !isCurrent &&
               !isForkPoint &&

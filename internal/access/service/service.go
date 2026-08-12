@@ -98,11 +98,7 @@ func (s *service) Authenticate(ctx context.Context, token string) (*access.Princ
 	}, nil
 }
 
-// touch records that a credential was used, at most once a minute, and off the
-// request's own path. Last-used is a fact the owner reads later; nothing in the
-// answer depends on it, and the write would otherwise take the database's one
-// connection mid-request. A failure is not worth failing a request the
-// credential was entitled to make.
+// touch records credential use asynchronously and at most once per interval.
 func (s *service) touch(ctx context.Context, credentialID string) {
 	now := s.now()
 	s.mu.Lock()
@@ -315,12 +311,7 @@ func (s *service) Claimable(ctx context.Context) (bool, error) {
 	return len(credentials) == 0, nil
 }
 
-// Claim mints the first credential for the browser that got here first
-// (ADR-010). Whether that browser is entitled to is decided before this — by
-// the network it arrived from — because this layer cannot see an address.
-//
-// Two browsers claiming at once is exactly the case that must not issue two
-// credentials, so the write itself decides: the second one loses.
+// Claim atomically mints the server's first credential after network authorization.
 func (s *service) Claim(ctx context.Context, input access.ClaimServer) (*access.IssuedCredential, error) {
 	// Validate the PIN before minting anything: a claim that took the server
 	// and then failed on a typo would leave it owned and unreachable.

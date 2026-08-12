@@ -8,10 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-// Track reporting gives every game its own line — a state glyph, the title
-// padded to a shared column, and the standing state of its save — with what
-// happened this pass indented beneath it, one dim sentence per line. A game
-// that needed nothing keeps its single line. Run-wide failures print first.
+// Track reports render one standing line per game with pass events beneath it.
 
 // TrackReport buffers tracking results and renders them grouped by game.
 type TrackReport struct {
@@ -145,11 +142,7 @@ func (r *TrackReport) UpToDate(title string) {
 	r.changed()
 }
 
-// SyncedWith records a bound save's standing state: the Omnisave it syncs
-// with and when the last sync event happened — a seed, push, pull, or
-// rebind now, or the recorded time of an earlier one. Every healthy bound
-// save reads "Save 1 · synced 2m ago"; what happened this pass lives in
-// the summary tally. Live views age the timestamp between passes.
+// SyncedWith records a bound save and its latest successful sync time.
 func (r *TrackReport) SyncedWith(title, omnisaveName string, at time.Time) {
 	entry := r.game(title)
 	if entry.syncedWith == "" || at.After(entry.syncedAt) {
@@ -303,11 +296,7 @@ func ComposeReport(snapshot ReportSnapshot, now time.Time) []string {
 	return lines
 }
 
-// ComposeStanding renders only what is true right now — one line per game,
-// no event lines. It is the live view's table: a pass's events scroll past
-// as their own lines (see Event), so the pinned block never grows. The
-// playing set, keyed by display title, is presence stitched in at render
-// time — it moves on its own cadence, never part of a pass's report.
+// ComposeStanding renders current game state with live presence and no event history.
 func ComposeStanding(snapshot ReportSnapshot, playing map[string]bool, now time.Time) []string {
 	width := 0
 	for _, game := range snapshot.Games {

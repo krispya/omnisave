@@ -6,11 +6,7 @@ import { destinations } from './navigation.js';
 
 const expandedStorageKey = 'omnisave.sidebar-expanded';
 
-/**
- * Whether the rail stays open. Someone who wants labels wants them every visit,
- * so the choice outlives the tab; anyone who has never made it gets the narrow
- * rail, which is the one that leaves the most room for the Library.
- */
+/** Persists whether the navigation rail is expanded. */
 function storedExpanded() {
   try {
     return localStorage.getItem(expandedStorageKey) === 'true';
@@ -19,11 +15,7 @@ function storedExpanded() {
   }
 }
 
-/**
- * A rail item. The section being read is marked by color and a bar at the
- * menu's edge rather than by a filled pill: at this size a fill would be the
- * largest shape in the chrome, and what is being said is small — you are here.
- */
+/** A navigation rail destination with an active marker. */
 function RailItem({
   icon,
   label,
@@ -60,16 +52,7 @@ function RailItem({
   );
 }
 
-/**
- * The destinations beside the content, opened and closed by the one control
- * above them.
- *
- * Closed, the rail has no surface: icons sit directly on the page, and the
- * chrome costs the Library nothing but the width of a glyph. Opening gives it
- * a panel and moves the content over rather than covering it — the menu is
- * part of the layout, and something that appears over what you were reading is
- * a different, more interruptive thing.
- */
+/** Expandable navigation rail beside the page content. */
 export function NavigationRail({ route }: { route: Route }) {
   const [expanded, setExpanded] = useState(storedExpanded);
 
@@ -79,7 +62,7 @@ export function NavigationRail({ route }: { route: Route }) {
     try {
       localStorage.setItem(expandedStorageKey, String(next));
     } catch {
-      // A browser that refuses storage still gets the rail, just not the memory.
+      // Storage failures only disable persistence.
     }
   }
 
@@ -151,26 +134,16 @@ export function NavigationBar({ route }: { route: Route }) {
   );
 }
 
-/**
- * The row above the content: the section's name at the left, and the app-wide
- * controls at the right corner the way a media server's chrome is. The
- * controls are about the app rather than a place in it — today, the devices
- * asking to connect. The bar is part of the layout, so every page starts
- * below it rather than underneath it.
- */
+/** Displays the current section and app-wide controls above the content. */
 export function TopBar({
   title,
   back,
   pendingCount,
   onOpenRequests,
 }: {
-  /** The section's name — the only title any page draws. */
+  /** The current section's title. */
   title: string;
-  /**
-   * Where the arrow leads when a page sits inside the section. Set, it takes
-   * the title's place: the reader already knows where they are — the page
-   * names its subject — and what the corner owes them is the way out.
-   */
+  /** Parent route shown in place of the section title. */
   back?: Route;
   /** Devices asking to connect right now, marked with a dot on the control. */
   pendingCount: number;
@@ -210,20 +183,7 @@ export function TopBar({
   );
 }
 
-/**
- * Said only when something is wrong.
- *
- * Being connected is the ordinary case and does not need reporting — a status
- * light that reads "Connected" every second of every session teaches people to
- * stop seeing it, which is exactly when it needs to be seen. The stream
- * reconnects on its own, so this explains the wait rather than offering a
- * button that would only do what is already happening.
- *
- * It spans the whole window, above the menu as well as the content, because it
- * is about the app rather than about the section being read; and it sticks,
- * because a warning that scrolls away has stopped warning anyone. It is opaque
- * for the same reason — content passing underneath must not show through it.
- */
+/** A window-wide connection warning shown while automatic reconnection runs. */
 export function ConnectionBanner({ lost }: { lost: boolean }) {
   if (!lost) return null;
 

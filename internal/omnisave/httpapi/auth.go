@@ -31,10 +31,7 @@ func Authenticate(service access.Service, next http.Handler) http.Handler {
 	})
 }
 
-// RequireOwner guards what only the owner may do: approving another client,
-// and changing the PIN. A Device holds a credential too, and ADR-007 is
-// explicit that approval happens in the Dash and nowhere else — without this,
-// one compromised Device could admit others and lock the owner out.
+// RequireOwner guards operations that Device credentials may not perform.
 func RequireOwner(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := PrincipalFrom(r.Context())
@@ -46,9 +43,7 @@ func RequireOwner(next http.Handler) http.Handler {
 	})
 }
 
-// RequireOwnerToken guards the one thing an issued credential must not do:
-// mint another. Only the owner token may trade itself for a credential, so a
-// stolen Device credential cannot quietly grow a second one.
+// RequireOwnerToken prevents issued credentials from minting another credential.
 func RequireOwnerToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := PrincipalFrom(r.Context())
@@ -78,11 +73,7 @@ func PrincipalFrom(ctx context.Context) (*access.Principal, bool) {
 	return principal, ok
 }
 
-// sourceAddress is the peer this request arrived from, as the Dash shows it
-// beside a pairing request. It is the connection's own address and nothing
-// more: a forwarded header is a claim by whatever set it, so a deployment
-// behind a reverse proxy sees the proxy here. That is why the code, not this,
-// is what the owner matches (FDR-006).
+// sourceAddress returns the direct peer and does not trust forwarded headers.
 func sourceAddress(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -91,11 +82,7 @@ func sourceAddress(r *http.Request) string {
 	return host
 }
 
-// fromLocalNetwork reports a request that arrived from loopback or a private
-// address. It is what stands between an unclaimed server and a stranger
-// (ADR-010), and it is best-effort by nature: a deployment behind a reverse
-// proxy shows this the proxy's address, so every request there looks local.
-// Those deployments claim with the owner token instead.
+// fromLocalNetwork reports whether the direct peer is loopback or private.
 func fromLocalNetwork(r *http.Request) bool {
 	address := net.ParseIP(sourceAddress(r))
 	if address == nil {

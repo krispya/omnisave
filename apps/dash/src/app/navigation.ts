@@ -1,22 +1,13 @@
 import type { IconName } from '../components/icon.js';
 import type { Route } from '../lib/route.js';
 
-/**
- * Where the dash can go, declared once.
- *
- * The shell renders this list two ways — a rail beside the content on wide
- * screens, a bar beneath it on narrow ones — so a new destination is a line
- * here rather than an edit in two layouts.
- */
+/** Dash destinations shared by wide and narrow navigation. */
 export type Destination = {
   id: string;
   label: string;
   icon: IconName;
   route: Route;
-  /**
-   * Which routes count as being here. A game is somewhere inside the Library,
-   * so reading one keeps the Library lit rather than lighting nothing.
-   */
+  /** Routes that mark this destination as active. */
   covers: (route: Route) => boolean;
 };
 
