@@ -37,6 +37,24 @@ type trackedGameReport struct {
 	events     []string
 	syncedWith string
 	syncedAt   time.Time
+	pending    *PendingDecision
+}
+
+// PendingKind names a question a headless pass reported and skipped. The
+// sentence beside it says the same thing to a reader; this says it to a
+// live view, which has to raise the question rather than print it.
+type PendingKind string
+
+// PendingDiverged is a save with new progress on both sides, waiting for the
+// answer only a person can give (FDR-005, decision 4).
+const PendingDiverged PendingKind = "diverged"
+
+// PendingDecision is what a save is waiting to be asked, carried as data so
+// the view can key an answer back to the save that asked. The game's title
+// is the row it rides, so only the Omnisave has to be named here.
+type PendingDecision struct {
+	Kind         PendingKind
+	OmnisaveName string
 }
 
 func (r *TrackReport) game(title string) *trackedGameReport {
@@ -189,6 +207,7 @@ func (r *TrackReport) Branched(title, omnisaveName string) {
 // interactive run to resolve.
 func (r *TrackReport) Diverged(title, omnisaveName string) {
 	r.mark(title, mutedStyle.Render("○"))
+	r.game(title).pending = &PendingDecision{Kind: PendingDiverged, OmnisaveName: omnisaveName}
 	r.event(title, "save diverged from "+omnisaveName+", run omnisave track to resolve")
 }
 
@@ -246,6 +265,9 @@ type GameStatus struct {
 	Events     []string
 	SyncedWith string
 	SyncedAt   time.Time
+	// Pending is the question this game's save is waiting on, if any. A
+	// printed report says so in its sentence; a live view raises it.
+	Pending *PendingDecision
 }
 
 // ReportSnapshot is the report's current content in renderable form.
@@ -263,12 +285,18 @@ func (r *TrackReport) Snapshot() ReportSnapshot {
 		if glyph == "" {
 			glyph = successStyle.Render("✓")
 		}
+		var pending *PendingDecision
+		if entry.pending != nil {
+			decision := *entry.pending
+			pending = &decision
+		}
 		games = append(games, GameStatus{
 			Glyph:      glyph,
 			Title:      title,
 			Events:     append([]string(nil), entry.events...),
 			SyncedWith: entry.syncedWith,
 			SyncedAt:   entry.syncedAt,
+			Pending:    pending,
 		})
 	}
 	return ReportSnapshot{General: append([]string(nil), r.general...), Games: games}
@@ -316,6 +344,12 @@ func ComposeStanding(snapshot ReportSnapshot, playing map[string]bool, now time.
 // reported about it, so an unresolved event — a diverged save, a missing
 // one — stays visible until the pass that clears it.
 func condition(game GameStatus, now time.Time) string {
+	// A waiting question reads as the condition alone. The printed report
+	// has to name the command that answers it; the live view has a key and
+	// a footer to say so, and repeating it on every row would be noise.
+	if game.Pending != nil {
+		return game.Pending.OmnisaveName + " · " + string(game.Pending.Kind)
+	}
 	if status := standingState(game, now); status != "" {
 		return status
 	}

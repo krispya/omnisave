@@ -49,7 +49,7 @@ func runSync(ctx context.Context, scanner *client.Scanner, arguments []string) e
 		return err
 	}
 	report := &tui.TrackReport{}
-	outcome, _, played, err := syncPass(ctx, scanner, server, running.PlatformDetector(), &state, report, 0)
+	outcome, _, played, err := syncPass(ctx, scanner, server, running.PlatformDetector(), &state, report, 0, nil)
 	if err != nil {
 		return err
 	}
@@ -63,6 +63,8 @@ func runSync(ctx context.Context, scanner *client.Scanner, arguments []string) e
 }
 
 // syncPass reconciles deletions, Library state, and saves for sync and watch.
+// A nil prompts set leaves every question waiting, which is what a headless
+// pass wants; watch passes one carrying the answers its view collected.
 func syncPass(
 	ctx context.Context,
 	scanner *client.Scanner,
@@ -71,6 +73,7 @@ func syncPass(
 	state *tracking.State,
 	report *tui.TrackReport,
 	pushFloor time.Duration,
+	prompts *reconcilePrompts,
 ) (tui.TrackOutcome, []string, passPlaying, error) {
 	activity.Report(ctx, "checking library")
 	reconciled := reconcileDeletedGames(ctx, server, state, report)
@@ -92,7 +95,7 @@ func syncPass(
 		}
 	}
 	if outcome.Synced {
-		if err := reconcileSaves(ctx, server, state, scans, confirmed, &outcome, report, nil, gate, pushFloor); err != nil {
+		if err := reconcileSaves(ctx, server, state, scans, confirmed, &outcome, report, prompts, gate, pushFloor); err != nil {
 			return outcome, nil, played, err
 		}
 	}

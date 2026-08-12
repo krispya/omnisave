@@ -163,12 +163,14 @@ func (a fixtureAdapter) DiscoverSaveDestinations(context.Context, target.Target,
 type passSink struct {
 	finished chan tui.PassResult
 	playing  chan []string
+	requests chan tui.WatchRequest
 }
 
 func newPassSink() *passSink {
 	return &passSink{
 		finished: make(chan tui.PassResult, 16),
 		playing:  make(chan []string, 16),
+		requests: make(chan tui.WatchRequest, 4),
 	}
 }
 
@@ -176,7 +178,162 @@ func (s *passSink) Watching(int)                       {}
 func (s *passSink) PassStarted()                       {}
 func (s *passSink) Playing(titles []string)            { s.playing <- titles }
 func (s *passSink) PassFinished(result tui.PassResult) { s.finished <- result }
-func (s *passSink) Requests() <-chan tui.WatchRequest  { return nil }
+func (s *passSink) Requests() <-chan tui.WatchRequest  { return s.requests }
+
+// waitForPass takes the next finished pass, failing rather than hanging.
+func waitForPass(t *testing.T, sink *passSink) tui.PassResult {
+	t.Helper()
+	select {
+	case result := <-sink.finished:
+		return result
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for a pass to finish")
+		return tui.PassResult{}
+	}
+}
+
+// pendingSave finds the question a pass left waiting, the way the view does.
+func pendingSave(t *testing.T, result tui.PassResult) tui.GameStatus {
+	t.Helper()
+	for _, game := range result.Snapshot.Games {
+		if game.Pending != nil {
+			return game
+		}
+	}
+	t.Fatalf("expected a pass to leave a question waiting, got %+v", result.Snapshot.Games)
+	return tui.GameStatus{}
+}
+
+// divergedLoop seeds a divergence and returns a loop watching it, so the
+// tests below start where a user actually meets the question.
+func divergedLoop(t *testing.T, server *remote.Client, fixture *bindingFixture) watchLoop {
+	t.Helper()
+	if outcome := syncOnce(t, server, fixture, nil, 0); outcome.Seeded != 1 {
+		t.Fatalf("expected the first pass to seed, got %+v", outcome)
+	}
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	bound, ok := fixture.state.BindingFor(local)
+	if !ok {
+		t.Fatal("expected a binding after seeding")
+	}
+	if err := os.WriteFile(fixture.localPath, []byte("local-divergence"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	otherDeviceCommit(t, server, bound.OmnisaveID, "deck-divergence")
+
+	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(fixture.state); err != nil {
+		t.Fatal(err)
+	}
+	return watchLoop{
+		scanner: client.NewScanner(nil, fixtureAdapter{fixture: fixture}),
+		server:  server,
+		store:   store,
+		poll:    time.Hour,
+		pull:    time.Hour,
+		floor:   0,
+		settle:  time.Hour,
+		events:  newAnnouncer(),
+	}
+}
+
+// Watch reports a divergence and cannot resolve it alone, but the user
+// watching can answer it in place: the answer replays into the next pass,
+// which runs the same reconcile an interactive track run would have.
+func TestAnAnsweredDivergenceResolvesWithoutLeavingWatch(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	loop := divergedLoop(t, server, &fixture)
+
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+
+	reported := waitForPass(t, sink)
+	waiting := pendingSave(t, reported)
+	if waiting.Pending.Kind != tui.PendingDiverged {
+		t.Fatalf("expected the opening pass to report a divergence, got %+v", waiting.Pending)
+	}
+	content, _ := os.ReadFile(fixture.localPath)
+	if string(content) != "local-divergence" {
+		t.Fatalf("expected the reported divergence to leave local content, got %q", content)
+	}
+
+	sink.requests <- tui.WatchRequest{
+		Kind:     tui.WatchAnswered,
+		Title:    waiting.Title,
+		Omnisave: waiting.Pending.OmnisaveName,
+		Diverged: tui.DivergedBindingJump,
+	}
+
+	answered := waitForPass(t, sink)
+	if answered.Err != nil {
+		t.Fatalf("expected the replayed answer to reconcile, got %v", answered.Err)
+	}
+	content, _ = os.ReadFile(fixture.localPath)
+	if string(content) != "deck-divergence" {
+		t.Fatalf("expected the answer to adopt the current revision, got %q", content)
+	}
+	saves, err := server.ListOmnisaves(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 2 {
+		t.Fatalf("expected the local progress preserved as a fork, got %d saves", len(saves))
+	}
+}
+
+// An answer belongs to the question it was given for. Once replayed it is
+// spent, so a later divergence waits to be asked about rather than
+// inheriting a decision the user made about a different one.
+func TestAReplayedAnswerIsSpentAndDoesNotResolveTheNextDivergence(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	loop := divergedLoop(t, server, &fixture)
+
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+
+	waiting := pendingSave(t, waitForPass(t, sink))
+	sink.requests <- tui.WatchRequest{
+		Kind:     tui.WatchAnswered,
+		Title:    waiting.Title,
+		Omnisave: waiting.Pending.OmnisaveName,
+		Diverged: tui.DivergedBindingJump,
+	}
+	if answered := waitForPass(t, sink); answered.Err != nil {
+		t.Fatalf("expected the first answer to reconcile, got %v", answered.Err)
+	}
+
+	// The same save diverges again. Nobody has answered this one.
+	state, err := loop.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	bound, ok := state.BindingFor(local)
+	if !ok {
+		t.Fatal("expected the binding to survive the answer")
+	}
+	if err := os.WriteFile(fixture.localPath, []byte("later-local"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	otherDeviceCommit(t, server, bound.OmnisaveID, "later-deck")
+
+	sink.requests <- tui.WatchRequest{Kind: tui.WatchSyncNow}
+
+	next := waitForPass(t, sink)
+	if pendingSave(t, next).Pending.Kind != tui.PendingDiverged {
+		t.Fatal("expected the new divergence to wait for its own answer")
+	}
+	content, _ := os.ReadFile(fixture.localPath)
+	if string(content) != "later-local" {
+		t.Fatalf("expected the unanswered divergence to leave local content, got %q", content)
+	}
+}
 
 func TestAServerEventTriggersAPassThatAppliesADashRewind(t *testing.T) {
 	server := newRealServer(t)
