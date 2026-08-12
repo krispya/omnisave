@@ -1,9 +1,9 @@
 # Labels Slay the Spire II revisions from the run state in the save.
 #
-#   Mid-run:  "Necrobinder A5, Underdocks flr 12, 11/66 HP"
-#   Run over: "Necrobinder A4 win, 45 flrs, 1h02m"
-#             "Necrobinder A5 died to Decimillipede, Hive flr 23"
-#             "Necrobinder A5 abandoned, Hive flr 23"
+#   Mid-run:  "Necro A5, Hive flr 18, 53/66 HP"
+#   Run over: "Necro A4 win, 48 flrs, 1h02m"
+#             "Necro A5 died to Decimillipede, Hive flr 25"
+#             "Necro A5 abandoned, Hive flr 25"
 #
 # A snapshot mid-run carries saves/current_run.save; a finished run deletes it
 # and appends saves/history/<start_time>.run. A snapshot with neither is a
@@ -20,6 +20,9 @@ GAME_KEYS = [
 # ENCOUNTER.TERROR_EEL_ELITE into "Terror Eel".
 _TIER_SUFFIXES = ["_EVENT_ENCOUNTER", "_WEAK", "_NORMAL", "_ELITE", "_BOSS"]
 _SMALL_WORDS = ["of", "the", "and", "in", "to"]
+_SHORT_CHARACTER_NAMES = {
+    "NECROBINDER": "Necro",
+}
 
 def _pretty(ident):
     """CHARACTER.NECROBINDER -> Necrobinder; ENCOUNTER.TERROR_EEL_ELITE -> Terror Eel."""
@@ -39,11 +42,11 @@ def _pretty(ident):
     return " ".join(words) if words else None
 
 def _floors(history):
-    """Floors climbed so far; each act's leading ancient node is floor 0 of that act."""
+    """The game's floor counter: every visited map point, including each act's Ancient."""
     total = 0
     for act in history if type(history) == "list" else []:
-        if type(act) == "list" and len(act) > 1:
-            total += len(act) - 1
+        if type(act) == "list":
+            total += len(act)
     return total
 
 def _act_name(doc):
@@ -83,7 +86,9 @@ def _player(doc):
 
 def _character(doc):
     player = _player(doc)
-    return _pretty(player.get("character_id") or player.get("character")) or "Unknown"
+    ident = player.get("character_id") or player.get("character")
+    key = ident.split(".", 1)[-1] if type(ident) == "string" else None
+    return _SHORT_CHARACTER_NAMES.get(key) or _pretty(ident) or "Unknown"
 
 def _place(doc):
     act = _act_name(doc)
