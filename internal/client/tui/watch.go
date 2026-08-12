@@ -126,6 +126,20 @@ func (d *WatchDisplay) Playing(titles []string) {
 	d.program.Send(watchPlayingMsg(titles))
 }
 
+// Working names the game the running pass has in hand, by display title, so
+// the row spins while its save is being worked on. An empty title clears the
+// mark: the pass is between games and no row may claim the spinner.
+func (d *WatchDisplay) Working(title string) {
+	d.program.Send(watchWorkingMsg(title))
+}
+
+// Phase carries what the pass is doing right now, as the work itself reports
+// it. It belongs to whatever the pass has in hand: a game's row while one is
+// held, and the header while the pass is between games.
+func (d *WatchDisplay) Phase(message string) {
+	d.program.Send(watchPhaseMsg(message))
+}
+
 // PassFinished atomically replaces settled state and prints the pass's events.
 func (d *WatchDisplay) PassFinished(result PassResult) {
 	d.program.Send(watchPassFinishedMsg{result: result})
@@ -135,6 +149,8 @@ type (
 	watchWatchingMsg     struct{ files int }
 	watchPassStartedMsg  struct{ at time.Time }
 	watchPlayingMsg      []string
+	watchWorkingMsg      string
+	watchPhaseMsg        string
 	watchPassFinishedMsg struct{ result PassResult }
 	watchSpinDoneMsg     struct{ generation int }
 	watchClockMsg        time.Time
@@ -149,12 +165,18 @@ func watchClock() tea.Cmd {
 }
 
 type watchModel struct {
-	config         WatchConfig
-	requests       chan<- WatchRequest
-	spinner        spinner.Model
-	files          int
-	snapshot       ReportSnapshot
-	playing        map[string]bool
+	config   WatchConfig
+	requests chan<- WatchRequest
+	spinner  spinner.Model
+	files    int
+	snapshot ReportSnapshot
+	playing  map[string]bool
+	// working is the game the running pass has in hand, and phase is what it
+	// is doing. They are what the view learns while a pass is in flight: the
+	// row working names spins, and it says phase instead of its settled
+	// status until the pass lets go.
+	working        string
+	phase          string
 	failure        string
 	syncing        bool
 	syncStarted    time.Time
@@ -278,12 +300,24 @@ func (m watchModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			playing[title] = true
 		}
 		m.playing = playing
+	case watchWorkingMsg:
+		// A phase belongs to the game it was reported under, so moving to the
+		// next one starts with nothing said about it rather than inheriting
+		// what the last game was doing.
+		m.working = string(message)
+		m.phase = ""
+	case watchPhaseMsg:
+		m.phase = string(message)
 	case watchPassStartedMsg:
 		m.syncing = true
 		m.syncStarted = message.at
 		m.spinGeneration++
 	case watchPassFinishedMsg:
 		result := message.result
+		// A finished pass has nothing in hand, whatever it last reported
+		// working on, so no row is left spinning between passes.
+		m.working = ""
+		m.phase = ""
 		m.failure = passFailure(result)
 		if m.failure == "" {
 			// Only a pass that reached the server can claim the table and
@@ -366,6 +400,12 @@ func (m watchModel) View() string {
 	// pass is running behind it to spin for.
 	if m.syncing && m.question == nil {
 		header += " " + m.spinner.View()
+		// Work between games — scanning, reaching the server about all of
+		// them — belongs to no row, so the header says it. Without this a
+		// pass's longest stretches are the ones it says least about.
+		if m.working == "" && m.phase != "" {
+			header += " " + mutedStyle.Render(m.phase)
+		}
 	}
 	view.WriteString(header + "\n\n")
 	if m.question != nil {
@@ -373,9 +413,15 @@ func (m watchModel) View() string {
 		view.WriteString("  " + mutedStyle.Render("↑↓ choose · enter confirm · esc dismiss") + "\n")
 		return view.String()
 	}
-	// The playing marker is stitched in at render time: presence moves on
-	// its own cadence, and must not wait for a pass to swap the table.
-	lines := ComposeStanding(m.snapshot, m.playing, m.now)
+	// The live marks are stitched in at render time: presence and the pass's
+	// current game each move on their own cadence, and must not wait for a
+	// pass to swap the table.
+	lines := ComposeStanding(m.snapshot, Marks{
+		Playing: m.playing,
+		Working: m.working,
+		Phase:   m.phase,
+		Spinner: m.spinner.View(),
+	}, m.now)
 	if len(lines) == 0 {
 		view.WriteString(mutedStyle.Render("  No tracked saves discovered yet") + "\n")
 	}

@@ -19,6 +19,27 @@ type TrackReport struct {
 	// OnUpdate, when set, receives a fresh snapshot after every event, so
 	// live views repaint as a pass progresses.
 	OnUpdate func(snapshot ReportSnapshot)
+
+	// OnWorking, when set, receives the game a pass has in hand, and "" when
+	// it moves off one. It carries no report content: a live view marks the
+	// row it names and keeps showing the settled table underneath, so a pass
+	// in progress never replaces what is true with what is half-finished.
+	OnWorking func(title string)
+}
+
+// Working names the game the pass has moved on to. A pass works one game at
+// a time, so a later call replaces the mark rather than adding to it.
+func (r *TrackReport) Working(title string) {
+	if r.OnWorking != nil {
+		r.OnWorking(title)
+	}
+}
+
+// Idle clears the mark. A pass between games — scanning, sweeping
+// processes, talking to the server about all of them — leaves no row
+// claiming to be worked on.
+func (r *TrackReport) Idle() {
+	r.Working("")
 }
 
 func (r *TrackReport) changed() {
@@ -316,7 +337,7 @@ func ComposeReport(snapshot ReportSnapshot, now time.Time) []string {
 		}
 	}
 	for _, game := range snapshot.Games {
-		lines = append(lines, gameLine(game, false, standingState(game, now), width))
+		lines = append(lines, gameLine(game, game.Glyph, standingState(game, now), width))
 		for _, event := range game.Events {
 			lines = append(lines, eventIndent+mutedStyle.Render(event))
 		}
@@ -324,8 +345,25 @@ func ComposeReport(snapshot ReportSnapshot, now time.Time) []string {
 	return lines
 }
 
-// ComposeStanding renders current game state with live presence and no event history.
-func ComposeStanding(snapshot ReportSnapshot, playing map[string]bool, now time.Time) []string {
+// Marks are what a live view stitches onto the settled table at render
+// time. Presence and pass activity each move on their own cadence, so
+// neither may wait for a pass to swap the table underneath them.
+type Marks struct {
+	// Playing is the set of game titles this device sees being played.
+	Playing map[string]bool
+	// Working is the game the running pass has in hand, if any.
+	Working string
+	// Phase is what the pass is doing to that game right now — "downloading",
+	// "preparing (2/5)" — as the work itself reports it. It stands in for the
+	// row's settled status while it lasts.
+	Phase string
+	// Spinner is the view's current spinner frame, already styled. The
+	// working game's row wears it in place of its glyph.
+	Spinner string
+}
+
+// ComposeStanding renders current game state with live marks and no event history.
+func ComposeStanding(snapshot ReportSnapshot, marks Marks, now time.Time) []string {
 	width := 0
 	for _, game := range snapshot.Games {
 		if count := utf8.RuneCountInString(game.Title); count > width {
@@ -334,9 +372,52 @@ func ComposeStanding(snapshot ReportSnapshot, playing map[string]bool, now time.
 	}
 	lines := make([]string, 0, len(snapshot.Games))
 	for _, game := range snapshot.Games {
-		lines = append(lines, gameLine(game, playing[game.Title], condition(game, now), width))
+		lines = append(lines, gameLine(game, rowGlyph(game, marks), rowStatus(game, marks, now), width))
 	}
 	return lines
+}
+
+// rowStatus is what a row says about itself. A game being worked on says
+// what is happening to it instead of when it last succeeded: during a sync
+// that is the more useful of the two, and the settled status comes back
+// intact the moment the pass lets go of the row.
+func rowStatus(game GameStatus, marks Marks, now time.Time) string {
+	phase := RowPhase(marks.Phase, game.Title)
+	if phase == "" || marks.Working != game.Title {
+		return condition(game, now)
+	}
+	// The Omnisave keeps its place at the head of the status, so a row mid
+	// sync reads like every other line about it — "Save 1 · downloading"
+	// beside "Save 1 · waiting for game to close".
+	if game.SyncedWith != "" {
+		return game.SyncedWith + " · " + phase
+	}
+	return phase
+}
+
+// RowPhase is a phase as a row says it. The work names the game it is doing
+// — the same text serves a one-line command spinner, which has no row and
+// needs it — but on a row the title is already the first thing there, so
+// saying it twice is noise.
+func RowPhase(phase, title string) string {
+	if title == "" {
+		return phase
+	}
+	return strings.TrimSuffix(phase, " "+title)
+}
+
+// rowGlyph is the mark a row wears. Work outranks presence, which outranks
+// the state the last pass settled: the spinner is the only place the view
+// can say this game is being worked on right now — the whole point of
+// watching it — and a live session is more current than a settled state.
+func rowGlyph(game GameStatus, marks Marks) string {
+	if marks.Spinner != "" && marks.Working == game.Title {
+		return marks.Spinner
+	}
+	if marks.Playing[game.Title] {
+		return successStyle.Render("▶")
+	}
+	return game.Glyph
 }
 
 // condition is what the live table says about a game. A save that is bound
@@ -380,16 +461,10 @@ func EventLine(event Event) string {
 // eventIndent nests a pass's events under the game they belong to.
 const eventIndent = "      "
 
-// gameLine is what is true of a game: its state glyph, its name, and the
+// gameLine is what is true of a game: the glyph it wears, its name, and the
 // status it carries. What happened this pass reads underneath, so a game
 // with nothing to report still holds exactly one line.
-func gameLine(game GameStatus, playing bool, status string, width int) string {
-	glyph := game.Glyph
-	// A live session claims the state glyph: playing is the row's most
-	// current truth, and the glyph column keeps every line aligned.
-	if playing {
-		glyph = successStyle.Render("▶")
-	}
+func gameLine(game GameStatus, glyph, status string, width int) string {
 	line := "  " + glyph + " " + plainTitle(game.Title)
 	if status == "" {
 		return line

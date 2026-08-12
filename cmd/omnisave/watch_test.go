@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -158,12 +159,16 @@ func (a fixtureAdapter) DiscoverSaveDestinations(context.Context, target.Target,
 	return nil, nil
 }
 
-// passSink records finished passes and playing markers so a test can wait
-// for them.
+// passSink records finished passes, playing markers, and the games passes
+// took in hand, so a test can wait for them.
 type passSink struct {
 	finished chan tui.PassResult
 	playing  chan []string
 	requests chan tui.WatchRequest
+
+	mutex   sync.Mutex
+	working []string
+	phases  []string
 }
 
 func newPassSink() *passSink {
@@ -178,7 +183,35 @@ func (s *passSink) Watching(int)                       {}
 func (s *passSink) PassStarted()                       {}
 func (s *passSink) Playing(titles []string)            { s.playing <- titles }
 func (s *passSink) PassFinished(result tui.PassResult) { s.finished <- result }
-func (s *passSink) Requests() <-chan tui.WatchRequest  { return s.requests }
+
+func (s *passSink) Working(title string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.working = append(s.working, title)
+}
+
+func (s *passSink) Phase(message string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.phases = append(s.phases, message)
+}
+
+// reported is every phase the pass described, in order.
+func (s *passSink) reported() []string {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return append([]string(nil), s.phases...)
+}
+
+// worked is every game the sink was told about, in order, including the
+// empty titles that clear the mark.
+func (s *passSink) worked() []string {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return append([]string(nil), s.working...)
+}
+
+func (s *passSink) Requests() <-chan tui.WatchRequest { return s.requests }
 
 // waitForPass takes the next finished pass, failing rather than hanging.
 func waitForPass(t *testing.T, sink *passSink) tui.PassResult {
@@ -391,6 +424,52 @@ func TestAServerEventTriggersAPassThatAppliesADashRewind(t *testing.T) {
 	if string(content) != "first-progress" {
 		t.Fatalf("expected the pass to pull the restored revision, got %q", content)
 	}
+	// The pull is the longest thing a rewind does here, and the only place
+	// the view can say so is the phase the transfer reports for itself.
+	phases := sink.reported()
+	if !slices.ContainsFunc(phases, func(phase string) bool {
+		return strings.HasPrefix(phase, "downloading")
+	}) {
+		t.Fatalf("expected the pull to say it was downloading, got %v", phases)
+	}
+}
+
+// A pass is otherwise silent until it finishes, which leaves a rewind
+// arriving from the Dash looking like nothing is happening. It names the
+// game it has in hand as it goes, so the live view can spin that row, and
+// hands back an empty title when it is done holding one.
+func TestAPassNamesTheGameItHasInHand(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(fixture.state); err != nil {
+		t.Fatal(err)
+	}
+	loop := watchLoop{
+		scanner: client.NewScanner(nil, fixtureAdapter{fixture: &fixture}),
+		server:  server,
+		store:   store,
+		poll:    time.Hour,
+		pull:    time.Hour,
+		floor:   0,
+		settle:  time.Hour,
+		events:  newAnnouncer(),
+	}
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+
+	if result := waitForPass(t, sink); result.Err != nil {
+		t.Fatalf("expected the opening pass to succeed, got %v", result.Err)
+	}
+	worked := sink.worked()
+	if !slices.Contains(worked, "Chrono Trigger") {
+		t.Fatalf("expected the pass to name the game it worked on, got %v", worked)
+	}
+	if len(worked) == 0 || worked[len(worked)-1] != "" {
+		t.Fatalf("expected a finished pass to hold no game, got %v", worked)
+	}
 }
 
 // A branch is news the pass already stated, so it reads as one line rather
@@ -412,7 +491,7 @@ func TestABranchIsAnnouncedOnceAndLeavesNoCondition(t *testing.T) {
 	if len(events) != 1 || events[0].Sentence != "Save branched from Save 1" {
 		t.Fatalf("expected one branch line, got %v", sentences(events))
 	}
-	standing := tui.ComposeStanding(snapshot, nil, started.Add(2*time.Second))
+	standing := tui.ComposeStanding(snapshot, tui.Marks{}, started.Add(2*time.Second))
 	if len(standing) != 1 || !strings.Contains(standing[0], "synced just now") {
 		t.Fatalf("expected the branched save to read as synced, got %v", standing)
 	}
