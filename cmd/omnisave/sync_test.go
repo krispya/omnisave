@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -153,6 +154,181 @@ func syncOnceGated(t *testing.T, server *remote.Client, fixture *bindingFixture,
 		t.Fatal(err)
 	}
 	return outcome
+}
+
+// rewriteInPlace replaces a file's bytes and restores the modification time
+// it had, so nothing a stat can see about the file has changed. It is how a
+// test asks whether a pass read the save or only looked at it.
+func rewriteInPlace(t *testing.T, path, content string) {
+	t.Helper()
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(len(content)) != before.Size() {
+		t.Fatalf("rewriting in place needs the same size, had %d and want %d", before.Size(), len(content))
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, before.ModTime(), before.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func revisionsOf(t *testing.T, server *remote.Client, omnisaveID string) []omnisave.Revision {
+	t.Helper()
+	history, err := server.ListRevisions(context.Background(), omnisaveID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return history
+}
+
+// A pass used to read every bound save in full every time it ran, which the
+// periodic pull and any other Device's commit both trigger. A save whose
+// files have not moved under an Omnisave that has not moved cannot need
+// anything, and the pass now settles it without opening it.
+func TestASettledSaveIsNotReadAgain(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "saved-game-content")
+	// The first pass seeds the save; the second proves it equal the reading
+	// way and remembers how its files stood.
+	syncOnce(t, server, &fixture, nil, 0)
+	syncOnce(t, server, &fixture, nil, 0)
+	bound, isBound := fixture.state.BindingFor(tracking.LocalSaveFrom(
+		fixture.scans[0], fixture.scans[0].Games[0], fixture.save))
+	if !isBound {
+		t.Fatal("expected the seeded save to be bound")
+	}
+
+	// Content the pass cannot see without reading the file.
+	rewriteInPlace(t, fixture.localPath, "secretly-rewritten")
+
+	outcome := syncOnce(t, server, &fixture, nil, 0)
+	if outcome.Pushed != 0 {
+		t.Fatalf("expected a save nothing touched to be settled unread, got %d pushed", outcome.Pushed)
+	}
+	if history := revisionsOf(t, server, bound.OmnisaveID); len(history) != 1 {
+		t.Fatalf("expected the history to stand at the seed, got %d revisions", len(history))
+	}
+}
+
+// The save's history is the other thing a pass spent on every bound save
+// every time: one request per Omnisave, to re-read a history that only
+// matters once something has moved.
+func TestASettledSaveCostsNoHistoryRequest(t *testing.T) {
+	var histories atomic.Int64
+	server := newObservedServer(t, func(request *http.Request) {
+		if strings.HasSuffix(request.URL.Path, "/revisions") && request.Method == http.MethodGet {
+			histories.Add(1)
+		}
+	})
+	fixture := newSyncFixture(t, "saved-game-content")
+	syncOnce(t, server, &fixture, nil, 0)
+	syncOnce(t, server, &fixture, nil, 0)
+
+	histories.Store(0)
+	syncOnce(t, server, &fixture, nil, 0)
+
+	if asked := histories.Load(); asked != 0 {
+		t.Fatalf("expected a settled save to ask the server for nothing, got %d history requests", asked)
+	}
+}
+
+// The live view spins the row a pass has in hand. A pass with nothing to do
+// must therefore take nothing in hand: a row that spins for a game the pass
+// only considered claims a sync is happening when none is, and at the speed
+// those decisions are made it claims it as a flicker down the table.
+func TestASettledPassTakesNoGameInHand(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "saved-game-content")
+	syncOnce(t, server, &fixture, nil, 0)
+	syncOnce(t, server, &fixture, nil, 0)
+
+	var held []string
+	report := &tui.TrackReport{OnWorking: func(title string) {
+		if title != "" {
+			held = append(held, title)
+		}
+	}}
+	ctx := context.Background()
+	outcome, confirmed := syncTracking(ctx, server, &fixture.state, fixture.scans, nil, report)
+	if err := reconcileSaves(ctx, server, &fixture.state, fixture.scans, confirmed,
+		&outcome, report, nil, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(held) != 0 {
+		t.Fatalf("expected a settled pass to work on nothing, got %v", held)
+	}
+}
+
+// Telling the server what it already knows is a request per game per pass,
+// and a tracked game that is still installed is not news.
+func TestASettledPassRestatesNoTracking(t *testing.T) {
+	var claims atomic.Int64
+	server := newObservedServer(t, func(request *http.Request) {
+		if strings.Contains(request.URL.Path, "/tracking/") && request.Method == http.MethodPut {
+			claims.Add(1)
+		}
+	})
+	fixture := newSyncFixture(t, "saved-game-content")
+	syncOnce(t, server, &fixture, nil, 0)
+	if claims.Load() == 0 {
+		t.Fatal("expected the first pass to state what this device tracks")
+	}
+
+	claims.Store(0)
+	syncOnce(t, server, &fixture, nil, 0)
+	if stated := claims.Load(); stated != 0 {
+		t.Fatalf("expected an unchanged claim to go unrepeated, got %d", stated)
+	}
+
+	// A game that stops being installed is a different claim, and the server
+	// hears it.
+	fixture.scans[0].Games = nil
+	syncOnce(t, server, &fixture, nil, 0)
+	if stated := claims.Load(); stated != 1 {
+		t.Fatalf("expected a changed claim to reach the server, got %d", stated)
+	}
+}
+
+// The summary is only ever an excuse to skip work, never a reason to miss
+// it: both halves of what it stands for are checked against.
+func TestASettledSaveIsReadAgainWhenEitherSideMoves(t *testing.T) {
+	t.Run("local files move", func(t *testing.T) {
+		server := newRealServer(t)
+		fixture := newSyncFixture(t, "saved-game-content")
+		syncOnce(t, server, &fixture, nil, 0)
+		syncOnce(t, server, &fixture, nil, 0)
+
+		if err := os.WriteFile(fixture.localPath, []byte("played-further"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if outcome := syncOnce(t, server, &fixture, nil, 0); outcome.Pushed != 1 {
+			t.Fatalf("expected local progress to commit, got %d pushed", outcome.Pushed)
+		}
+	})
+
+	t.Run("current revision moves", func(t *testing.T) {
+		server := newRealServer(t)
+		fixture := newSyncFixture(t, "saved-game-content")
+		syncOnce(t, server, &fixture, nil, 0)
+		syncOnce(t, server, &fixture, nil, 0)
+		bound, _ := fixture.state.BindingFor(tracking.LocalSaveFrom(
+			fixture.scans[0], fixture.scans[0].Games[0], fixture.save))
+
+		// Another Device commits: the local files are untouched and their
+		// summary still stands, but what it stood for has moved.
+		otherDeviceCommit(t, server, bound.OmnisaveID, "deck-progress")
+
+		if outcome := syncOnce(t, server, &fixture, nil, 0); outcome.Pulled != 1 {
+			t.Fatalf("expected the moved current revision to pull, got %+v", outcome)
+		}
+		if content, _ := os.ReadFile(fixture.localPath); string(content) != "deck-progress" {
+			t.Fatalf("expected the pull to land, got %q", content)
+		}
+	})
 }
 
 func TestWatchedPathsIncludeParentDirectoriesSoNewFilesTrigger(t *testing.T) {

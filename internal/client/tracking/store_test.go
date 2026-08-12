@@ -48,6 +48,53 @@ func TestTrackingSelectionsSurviveRestartsAndPreserveUnavailableGames(t *testing
 	}
 }
 
+// The verified summary is a claim about content, and every way a binding
+// moves invalidates it. Only the pass that proves the claim may make it, so
+// a summary can never outlive what it described.
+func TestAVerifiedSummaryNeverOutlivesWhatItDescribed(t *testing.T) {
+	local := tracking.LocalSave{
+		ID: "retroarch:chrono:battery", Adapter: "retroarch",
+		TargetID: "retroarch:default", GameID: "retroarch:chrono",
+	}
+	state := tracking.NewState()
+	if err := state.Bind(local, "save-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing has been proved equal to anything yet, so there is nothing a
+	// summary could stand for.
+	state.RecordVerified(local, "summary-1")
+	if bound, _ := state.BindingFor(local); bound.LocalSignature != "" {
+		t.Fatalf("expected an unsynced binding to claim nothing, got %q", bound.LocalSignature)
+	}
+
+	if err := state.RecordSynced(local, "save-a", "revision-a"); err != nil {
+		t.Fatal(err)
+	}
+	state.RecordVerified(local, "summary-2")
+	if bound, _ := state.BindingFor(local); bound.LocalSignature != "summary-2" {
+		t.Fatalf("expected the proved summary kept, got %q", bound.LocalSignature)
+	}
+
+	// A later sync moves the content, the revision, or both; whatever the
+	// summary described, it no longer describes it.
+	if err := state.RecordSynced(local, "save-a", "revision-b"); err != nil {
+		t.Fatal(err)
+	}
+	if bound, _ := state.BindingFor(local); bound.LocalSignature != "" {
+		t.Fatalf("expected a sync to drop the summary, got %q", bound.LocalSignature)
+	}
+
+	// Rebinding replaces the mapping outright, baseline and summary with it.
+	state.RecordVerified(local, "summary-3")
+	if err := state.Bind(local, "save-b"); err != nil {
+		t.Fatal(err)
+	}
+	if bound, _ := state.BindingFor(local); bound.LocalSignature != "" {
+		t.Fatalf("expected rebinding to drop the summary, got %q", bound.LocalSignature)
+	}
+}
+
 func TestOneLocalSaveBindsToOneOmnisaveWhileMachinesCanShareIt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "client.json")
 	store := tracking.NewStore(path)
