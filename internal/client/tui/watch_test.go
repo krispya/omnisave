@@ -203,6 +203,120 @@ func TestWatchMarksPlayingGamesWithTheirGlyph(t *testing.T) {
 	}
 }
 
+// A rewind on another device reaches this one as a pass, and the whole point
+// of watching is seeing which game it is working on: the row spins while the
+// table underneath it still reads as what the last pass settled.
+func TestWatchSpinsTheRowAPassHasInHand(t *testing.T) {
+	synced := time.Now().Add(-4 * time.Minute)
+	model := newWatchModel(WatchConfig{
+		ServerURL: "http://localhost:8081",
+		Initial: ReportSnapshot{Games: []GameStatus{
+			{Glyph: "✓", Title: "Slay the Spire 2", SyncedWith: "Save 1", SyncedAt: synced},
+			{Glyph: "✓", Title: "Project Zomboid", SyncedWith: "Save 2", SyncedAt: synced},
+		}},
+		Synced: synced,
+	}, make(chan WatchRequest, 1))
+
+	started, _ := model.Update(watchPassStartedMsg{at: time.Now()})
+	// The pass is playing the game it is syncing, which changes nothing:
+	// work outranks presence, or the row would look idle while it syncs.
+	present, _ := started.(watchModel).Update(watchPlayingMsg{"Slay the Spire 2"})
+	clocked, _ := present.(watchModel).Update(watchClockMsg(time.Now()))
+	working, _ := clocked.(watchModel).Update(watchWorkingMsg("Slay the Spire 2"))
+
+	view := ansi.Strip(working.(watchModel).View())
+	if !strings.Contains(view, "⠋ Slay the Spire 2") {
+		t.Fatalf("expected the worked row to wear the spinner, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Save 1 · synced 4m ago") {
+		t.Fatalf("expected the settled status to stay while the row spins, got:\n%s", view)
+	}
+	if !strings.Contains(view, "✓ Project Zomboid") {
+		t.Fatalf("expected only the worked row marked, got:\n%s", view)
+	}
+
+	// Nothing is in hand between games, so no row keeps the spinner.
+	between, _ := working.(watchModel).Update(watchWorkingMsg(""))
+	if view := ansi.Strip(between.(watchModel).View()); strings.Contains(view, "⠋ ") {
+		t.Fatalf("expected an idle pass to leave no row spinning, got:\n%s", view)
+	}
+}
+
+// A spinner says a row is busy; the phase says what it is busy with, which
+// is the difference between a sync working and a sync stuck.
+func TestTheWorkedRowSaysWhatThePassIsDoing(t *testing.T) {
+	model := newWatchModel(WatchConfig{
+		ServerURL: "http://localhost:8081",
+		Initial: ReportSnapshot{Games: []GameStatus{
+			{Glyph: "✓", Title: "Slay the Spire II", SyncedWith: "Save 1", SyncedAt: time.Now().Add(-4 * time.Minute)},
+			{Glyph: "✓", Title: "Chrono Trigger", SyncedWith: "Save 2", SyncedAt: time.Now().Add(-4 * time.Minute)},
+		}},
+	}, make(chan WatchRequest, 1))
+
+	// The pass has not reached a game yet, so its phase belongs to the header.
+	started, _ := model.Update(watchPassStartedMsg{at: time.Now()})
+	scanning, _ := started.(watchModel).Update(watchPhaseMsg("scanning"))
+	header, _, _ := strings.Cut(ansi.Strip(scanning.(watchModel).View()), "\n")
+	if header != "▲ Omnisave · watching ⠋ scanning" {
+		t.Fatalf("expected work between games to read in the header, got %q", header)
+	}
+
+	working, _ := scanning.(watchModel).Update(watchWorkingMsg("Slay the Spire II"))
+	if view := ansi.Strip(working.(watchModel).View()); strings.Contains(view, "scanning") {
+		t.Fatalf("expected the header's phase spent once a game is in hand, got:\n%s", view)
+	}
+
+	// The work names the game it is checking; the row already does, so the
+	// row says the verb alone.
+	checking, _ := working.(watchModel).Update(watchPhaseMsg("checking Slay the Spire II"))
+	view := ansi.Strip(checking.(watchModel).View())
+	if !strings.Contains(view, "⠋ Slay the Spire II  Save 1 · checking") {
+		t.Fatalf("expected the row to say what is happening to it, got:\n%s", view)
+	}
+	if !strings.Contains(view, "✓ Chrono Trigger     Save 2 · synced 4m ago") {
+		t.Fatalf("expected every other row left settled, got:\n%s", view)
+	}
+
+	downloading, _ := checking.(watchModel).Update(watchPhaseMsg("downloading (1/3)"))
+	if view := ansi.Strip(downloading.(watchModel).View()); !strings.Contains(view, "Save 1 · downloading (1/3)") {
+		t.Fatalf("expected the transfer's own words on the row, got:\n%s", view)
+	}
+
+	// A phase belongs to the game it was reported under and never carries
+	// over to the next one.
+	next, _ := downloading.(watchModel).Update(watchWorkingMsg("Chrono Trigger"))
+	view = ansi.Strip(next.(watchModel).View())
+	if strings.Contains(view, "downloading") {
+		t.Fatalf("expected the phase spent with its game, got:\n%s", view)
+	}
+	if !strings.Contains(view, "✓ Slay the Spire II  Save 1 · synced 4m ago") {
+		t.Fatalf("expected the settled status back once the pass moved on, got:\n%s", view)
+	}
+}
+
+// A pass that ends holds nothing, so the mark cannot outlive it — a lost
+// clear would otherwise leave a row spinning until the next pass.
+func TestAFinishedPassClearsTheWorkedRow(t *testing.T) {
+	model := newWatchModel(WatchConfig{
+		ServerURL: "http://localhost:8081",
+		Initial: ReportSnapshot{Games: []GameStatus{
+			{Glyph: "✓", Title: "Slay the Spire 2", SyncedWith: "Save 1", SyncedAt: time.Now()},
+		}},
+	}, make(chan WatchRequest, 1))
+
+	working, _ := model.Update(watchWorkingMsg("Slay the Spire 2"))
+	settled, _ := working.(watchModel).Update(watchPassFinishedMsg{result: PassResult{
+		Snapshot: ReportSnapshot{Games: []GameStatus{
+			{Glyph: "✓", Title: "Slay the Spire 2", SyncedWith: "Save 1", SyncedAt: time.Now()},
+		}},
+		At: time.Now(),
+	}})
+
+	if view := ansi.Strip(settled.(watchModel).View()); !strings.Contains(view, "✓ Slay the Spire 2") {
+		t.Fatalf("expected the state glyph back once the pass finished, got:\n%s", view)
+	}
+}
+
 func divergedSnapshot() ReportSnapshot {
 	return ReportSnapshot{Games: []GameStatus{
 		{Glyph: "✓", Title: "Slay the Spire 2", SyncedWith: "Save 1", SyncedAt: time.Now()},

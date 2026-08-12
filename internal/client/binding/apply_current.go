@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
@@ -100,6 +101,8 @@ func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, 
 	}
 	staged := make([]stagedFile, 0, len(current.Files))
 	currentTargets := make(map[string]bool, len(current.Files))
+	// Counted before the loop, where the revision is still what current means.
+	incoming := len(current.Files)
 	for index, file := range current.Files {
 		targetPath, root, err := layout.pathFor(file.Path)
 		if err != nil {
@@ -122,7 +125,13 @@ func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, 
 			return err
 		}
 		stagePath := filepath.Join(temporary, fmt.Sprintf("download-%d", index))
-		if err := downloadArtifact(ctx, source, file.Artifact, stagePath); err != nil {
+		// The transfer describes itself; this only says which file it is on,
+		// the way an upload's progress reads.
+		fetched, total := index+1, incoming
+		fetchCtx := activity.WithReporter(ctx, func(message string) {
+			activity.Report(ctx, fmt.Sprintf("%s (%d/%d)", message, fetched, total))
+		})
+		if err := downloadArtifact(fetchCtx, source, file.Artifact, stagePath); err != nil {
 			return err
 		}
 		staged = append(staged, stagedFile{target: targetPath, stage: stagePath, fresh: !current})
@@ -152,6 +161,7 @@ func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, 
 		backups = append(backups, backupFile{original: original, backup: backup})
 	}
 
+	activity.Report(ctx, "placing")
 	for _, file := range staged {
 		if err := os.MkdirAll(filepath.Dir(file.target), 0o700); err != nil {
 			return failRollback(fmt.Errorf("prepare local save directory: %w", err))

@@ -14,6 +14,7 @@ import (
 	"github.com/mattn/go-isatty"
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
+	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
 	"github.com/krisbaumgartner/omnisave/internal/client/running"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
@@ -28,6 +29,12 @@ type watchSink interface {
 	// Playing replaces the set of games this device currently sees being
 	// played, by display title; an empty set clears every marker.
 	Playing(titles []string)
+	// Working names the game the running pass has in hand, by display title;
+	// an empty title says the pass is between games.
+	Working(title string)
+	// Phase carries what the pass is doing right now, in the work's own
+	// words, for whatever it currently has in hand.
+	Phase(message string)
 	PassFinished(result tui.PassResult)
 	Requests() <-chan tui.WatchRequest
 }
@@ -303,13 +310,20 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			l.finish(sink, started, tui.ReportSnapshot{}, "", false, err)
 			return nil
 		}
-		report := &tui.TrackReport{}
+		// The pass names the game it has in hand as it goes; only the live
+		// view has anywhere to put that, and it marks the row rather than
+		// disturbing the table, which stays settled until the pass finishes.
+		report := &tui.TrackReport{OnWorking: sink.Working}
+		// The work already describes itself for the one-line spinner an
+		// interactive command shows; watch listens to the same reporting and
+		// lands it on whatever the pass has in hand.
+		passCtx := activity.WithReporter(ctx, sink.Phase)
 		// Answers are spent by the pass they are replayed into, whatever it
 		// makes of them. Holding one back for a later pass would let it apply
 		// to a divergence the user never saw.
 		prompts := replayedAnswers(answers)
 		clear(answers)
-		outcome, files, played, err := syncPass(ctx, l.scanner, l.server, l.detector, &state, report, l.floor, prompts)
+		outcome, files, played, err := syncPass(passCtx, l.scanner, l.server, l.detector, &state, report, l.floor, prompts)
 		// Preserve the last valid presence after a failed scan.
 		if played.presence.deviceID != "" {
 			presence = played.presence
@@ -508,6 +522,15 @@ func (plainWatchSink) PassStarted() {}
 // Playing is silent in plain mode: presence is a live marker, and reprinting
 // it every re-affirmation would be noise in a stream of one-time events.
 func (plainWatchSink) Playing([]string) {}
+
+// Working is silent for the same reason: what a pass is doing right now is a
+// marker on a row, and a log has no row to mark — only the outcome is worth
+// a line.
+func (plainWatchSink) Working(string) {}
+
+// Phase is silent too. Every step of every pass as its own log line would
+// bury the events that actually happened.
+func (plainWatchSink) Phase(string) {}
 
 func (plainWatchSink) PassFinished(result tui.PassResult) {
 	if result.Err != nil {

@@ -717,6 +717,7 @@ func syncTracking(
 			report.Pending(game.Title)
 			continue
 		}
+		report.Working(game.Title)
 		if game.ServerGameID == "" {
 			activity.Report(ctx, "looking up "+game.Title)
 			if !resolveIntoLibrary(ctx, server, state, &outcome, id, identity, report) {
@@ -745,6 +746,7 @@ func syncTracking(
 		}
 		confirmed[id] = true
 	}
+	report.Idle()
 	for _, game := range removed {
 		if game.ServerGameID == "" {
 			continue
@@ -859,6 +861,9 @@ func reconcileSaves(
 	pushFloor time.Duration,
 ) error {
 	activity.Report(ctx, "checking saves")
+	// Saves are worked one game at a time; however this pass leaves, it
+	// leaves no game marked as being worked on.
+	defer report.Idle()
 	type candidate struct {
 		local        tracking.LocalSave
 		save         target.Save
@@ -927,6 +932,9 @@ func reconcileSaves(
 	}
 
 	for _, candidate := range candidates {
+		// Marked before the phase is reported, so the phase lands on the row
+		// rather than in the header the pass had just been speaking from.
+		report.Working(candidate.local.GameTitle)
 		activity.Report(ctx, "checking "+candidate.local.GameTitle)
 		if _, tracked := state.Games[candidate.local.GameID]; !tracked {
 			// An earlier candidate's server-side deletion untracked this
@@ -1134,6 +1142,7 @@ func reconcileSaves(
 		if _, tracked := state.Games[candidate.discovered.Game.ID]; !tracked {
 			continue
 		}
+		report.Working(candidate.discovered.Game.Identity.DisplayTitle(candidate.discovered.Game.ID))
 		gameSaves := savesByGame[candidate.serverGameID]
 		if len(gameSaves) == 0 {
 			report.NoSave(candidate.discovered.Game.Identity.DisplayTitle(candidate.discovered.Game.ID))

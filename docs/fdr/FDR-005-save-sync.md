@@ -160,6 +160,11 @@ path, syncing-down built the read path; sync makes both routine.
   lines are the log.
 - A diverged save shows its condition alone — "Save 1 · diverged" — and
   the footer offers `r resolve` only while something is actually waiting.
+- A game's glyph carries what is most current about it: the game the
+  running pass has in hand spins, a game being played reads as ▶, and
+  otherwise the state the last pass settled stands. The spinning row says
+  what is being done to it — "Save 1 · downloading (1/3)" — and returns to
+  its settled status when the pass lets go (decision 17).
 - Watch is a plain foreground process. Keeping it alive across reboots
   belongs to the OS service manager; the service unit is deployment work,
   not part of this feature.
@@ -484,6 +489,38 @@ waiting saves are answered one at a time rather than picked from a list.
 And an answer given about a table that a concurrent `omnisave bind` has
 since changed is discarded rather than reconciled, which is the cautious
 half of the same validation.
+
+### 17. A running pass narrates itself on the row it is working
+
+**Decision:** While a pass runs it names the game it currently has in hand,
+and that game's row wears the spinner in place of its glyph — over the
+playing marker, over its settled state — and says what is being done to it
+instead of when it last succeeded: "Save 1 · downloading (1/3)",
+"Save 1 · placing". The words are the work's own, the same ones an
+interactive command shows on its one-line spinner; a phase that names the
+game is trimmed, since the row already does. Work between games — scanning,
+registering the device, reaching the server about all of them — has no row
+and reads beside the header spinner instead. The table itself is still
+replaced only when the pass finishes, so the settled status returns intact
+the moment the pass lets the row go, and a finished pass leaves neither a
+mark nor a phase. Plain mode has no row to mark and stays silent.
+**Why:** A rewind from the Dash arrives here as a pull that can take real
+time, and until it lands the view could only offer a header spinner, which
+says a pass is running but not what it is doing or to what. A watcher's
+whole job is to be believable while nothing appears to happen, and the
+difference between a sync in progress, one deferred behind a running game,
+and one that never triggered was not visible. A spinner alone says a row is
+busy; the phase is what separates working from stuck, since a spinner
+turning on "downloading (2/3)" reads nothing like one that has sat on
+"checking" for a minute. The phases already existed for the interactive
+commands' spinner — watch simply had nowhere to put them.
+**Tradeoff:** The phase displaces the settled status for as long as the row
+is held, so "synced 4m ago" is unavailable exactly while a sync is running;
+this is the trade that makes the row worth watching. Work is marked per
+game rather than per operation, so a quiet pass ripples one spinner down
+the table, and a game touched by both the library and the save phase is
+marked twice. Phases are live signals like presence, not part of the
+report: one missed costs nothing, because the next one replaces it.
 
 ## Related
 
