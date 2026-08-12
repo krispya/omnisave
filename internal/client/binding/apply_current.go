@@ -48,8 +48,9 @@ type backupFile struct {
 }
 
 // ApplyCurrent replaces a local save that still equals matched with the current
-// snapshot. Every artifact is downloaded and verified before local files move;
-// failures during the move restore the original snapshot.
+// snapshot. Every artifact is staged and verified before local files move —
+// from the local save where it already holds that exact content, and from the
+// server otherwise; failures during the move restore the original snapshot.
 func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, matched, current omnisave.Revision) error {
 	if matched.ID == "" || current.ID == "" {
 		return fmt.Errorf("apply needs a matched and a current revision")
@@ -103,6 +104,7 @@ func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, 
 	currentTargets := make(map[string]bool, len(current.Files))
 	// Counted before the loop, where the revision is still what current means.
 	incoming := len(current.Files)
+	held := heldArtifacts(layout, matched)
 	for index, file := range current.Files {
 		targetPath, root, err := layout.pathFor(file.Path)
 		if err != nil {
@@ -131,8 +133,27 @@ func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, 
 		fetchCtx := activity.WithReporter(ctx, func(message string) {
 			activity.Report(ctx, fmt.Sprintf("%s (%d/%d)", message, fetched, total))
 		})
-		if err := downloadArtifact(fetchCtx, source, file.Artifact, stagePath); err != nil {
-			return err
+		reused := false
+		if origin := held[file.Artifact.SHA256]; origin != "" {
+			activity.Report(ctx, fmt.Sprintf("copying (%d/%d)", fetched, total))
+			// A copy that fails for any reason — the file moved, or it is no
+			// longer the content the revision said it was — falls through to
+			// the download, which never depends on local state.
+			if err := copyArtifact(origin, stagePath, file.Artifact); err == nil {
+				reused = true
+			} else if err := os.Remove(stagePath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("stage current artifact: %w", err)
+			}
+		}
+		if !reused {
+			if err := downloadArtifact(fetchCtx, source, file.Artifact, stagePath); err != nil {
+				return err
+			}
+		}
+		// Content staged once serves every path the revision puts it at, so a
+		// revision carrying one file under several names transfers it once.
+		if _, known := held[file.Artifact.SHA256]; !known {
+			held[file.Artifact.SHA256] = stagePath
 		}
 		staged = append(staged, stagedFile{target: targetPath, stage: stagePath, fresh: !current})
 	}
@@ -512,11 +533,55 @@ func relativeEscapesRoot(relative string) bool {
 	return relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
+// heldArtifacts maps content the local save already holds to where it holds
+// it. A rewind or a fast-forward inside one lineage usually moves a few files
+// out of many and leaves the rest identical byte for byte, and the revision
+// says which those are: content is addressed by hash, so a file whose hash
+// appears in both revisions is already on this disk. Staging it from there
+// reads a local file where downloading it would fetch the whole save again.
+//
+// The local save is known to equal matched — the apply proved it just now —
+// which is what makes matched a truthful index of what is on disk.
+func heldArtifacts(layout localLayout, matched omnisave.Revision) map[string]string {
+	held := make(map[string]string, len(matched.Files))
+	for _, file := range matched.Files {
+		targetPath, _, err := layout.pathFor(file.Path)
+		if err != nil {
+			// A matched file this layout cannot place is simply not offered
+			// as a source; its artifact downloads exactly as before.
+			continue
+		}
+		if _, known := held[file.Artifact.SHA256]; !known {
+			held[file.Artifact.SHA256] = targetPath
+		}
+	}
+	return held
+}
+
 func downloadArtifact(ctx context.Context, source ArtifactSource, artifact omnisave.Artifact, destination string) error {
 	payload, err := source.OpenArtifact(ctx, artifact.SHA256)
 	if err != nil {
 		return fmt.Errorf("download current artifact: %w", err)
 	}
+	return stageArtifact(payload, destination, artifact, "downloaded current")
+}
+
+// copyArtifact stages content the local save already holds. It is checked
+// exactly as a download is: a local file is only a faster way to obtain the
+// bytes, never a reason to trust them, and one the game may have rewritten
+// since the apply looked.
+func copyArtifact(origin, destination string, artifact omnisave.Artifact) error {
+	payload, err := os.Open(origin)
+	if err != nil {
+		return fmt.Errorf("open local save file: %w", err)
+	}
+	return stageArtifact(payload, destination, artifact, "local")
+}
+
+// stageArtifact writes payload into destination and proves it is the artifact
+// before returning. What names the payload in errors, since staged content
+// comes from the server or from the local save.
+func stageArtifact(payload io.ReadCloser, destination string, artifact omnisave.Artifact, what string) error {
 	file, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		payload.Close()
@@ -531,7 +596,7 @@ func downloadArtifact(ctx context.Context, source ArtifactSource, artifact omnis
 	closeFileErr := file.Close()
 	closePayloadErr := payload.Close()
 	if copyErr != nil {
-		return fmt.Errorf("download current artifact: %w", copyErr)
+		return fmt.Errorf("read %s artifact: %w", what, copyErr)
 	}
 	if syncErr != nil {
 		return fmt.Errorf("stage current artifact: %w", syncErr)
@@ -540,11 +605,11 @@ func downloadArtifact(ctx context.Context, source ArtifactSource, artifact omnis
 		return fmt.Errorf("stage current artifact: %w", closeFileErr)
 	}
 	if closePayloadErr != nil {
-		return fmt.Errorf("close current artifact: %w", closePayloadErr)
+		return fmt.Errorf("close %s artifact: %w", what, closePayloadErr)
 	}
 	actualHash := hex.EncodeToString(digest.Sum(nil))
 	if size != artifact.Size || !strings.EqualFold(actualHash, artifact.SHA256) {
-		return fmt.Errorf("downloaded current artifact failed verification")
+		return fmt.Errorf("%s artifact failed verification", what)
 	}
 	return nil
 }

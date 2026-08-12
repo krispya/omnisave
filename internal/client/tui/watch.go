@@ -400,12 +400,6 @@ func (m watchModel) View() string {
 	// pass is running behind it to spin for.
 	if m.syncing && m.question == nil {
 		header += " " + m.spinner.View()
-		// Work between games — scanning, reaching the server about all of
-		// them — belongs to no row, so the header says it. Without this a
-		// pass's longest stretches are the ones it says least about.
-		if m.working == "" && m.phase != "" {
-			header += " " + mutedStyle.Render(m.phase)
-		}
 	}
 	view.WriteString(header + "\n\n")
 	if m.question != nil {
