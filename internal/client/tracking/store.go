@@ -25,6 +25,38 @@ type Game struct {
 	TargetID     string `json:"target_id"`
 	Title        string `json:"title"`
 	ServerGameID string `json:"server_game_id,omitempty"`
+	// TrackedAs and TrackedAt are what this Device last told the server about
+	// tracking this game, and when. Telling it the same thing again changes
+	// nothing, so a pass repeats the claim only when it has changed or gone
+	// stale — see TrackingIsCurrent.
+	TrackedAs string     `json:"tracked_as,omitempty"`
+	TrackedAt *time.Time `json:"tracked_at,omitempty"`
+}
+
+// trackingRefresh is how long a Device may go without restating what it
+// tracks. Nothing on the server forgets, so this is only a floor under how
+// long an unnoticed loss — a restored backup, a record deleted by hand —
+// can leave the server believing this Device stopped protecting a game.
+const trackingRefresh = time.Hour
+
+// TrackingIsCurrent reports whether the server already knows this exactly,
+// recently enough that repeating it would tell it nothing.
+func (s *State) TrackingIsCurrent(id, claim string, now time.Time) bool {
+	game, known := s.Games[id]
+	if !known || game.ServerGameID == "" || game.TrackedAs == "" || game.TrackedAs != claim {
+		return false
+	}
+	return game.TrackedAt != nil && now.Sub(*game.TrackedAt) < trackingRefresh
+}
+
+// RecordTracking remembers a claim the server accepted.
+func (s *State) RecordTracking(id, claim string, now time.Time) {
+	if game, known := s.Games[id]; known {
+		game.TrackedAs = claim
+		stamped := now.UTC()
+		game.TrackedAt = &stamped
+		s.Games[id] = game
+	}
 }
 
 // Device is this installation's self-minted identity (see FDR-002).
@@ -60,6 +92,11 @@ type Binding struct {
 	OmnisaveID           string     `json:"omnisave_id"`
 	LastSyncedRevisionID *string    `json:"last_synced_revision_id"`
 	LastSyncedAt         *time.Time `json:"last_synced_at,omitempty"`
+	// LocalSignature summarizes the local save's files as they stood when a
+	// pass last proved them equal to LastSyncedRevisionID. It is a hint that
+	// lets a later pass skip reading a save nothing has touched; empty means
+	// nothing is claimed, which is what every binding starts and ends at.
+	LocalSignature string `json:"local_signature,omitempty"`
 }
 
 // State contains this machine's tracked games and save bindings.
@@ -323,10 +360,35 @@ func (s *State) RecordSynced(local LocalSave, omnisaveID, revisionID string) err
 			now := time.Now().UTC()
 			s.Bindings[index].LastSyncedRevisionID = &revisionID
 			s.Bindings[index].LastSyncedAt = &now
+			// A sync just moved what is on disk, or what current means, and
+			// the old summary described neither. Dropping it costs the next
+			// pass one read of this save and keeps a stale summary from ever
+			// standing in for one.
+			s.Bindings[index].LocalSignature = ""
 			return nil
 		}
 	}
 	return fmt.Errorf("local save is not bound")
+}
+
+// RecordVerified remembers how the local save's files stood when a pass
+// proved them equal to the revision the binding is synced to. It reports
+// nothing: the summary is an optimization a later pass may use, so a
+// binding that has moved on since simply keeps none and that pass reads the
+// save exactly as it always did.
+func (s *State) RecordVerified(local LocalSave, signature string) {
+	probe := Binding{Adapter: local.Adapter, TargetID: local.TargetID, LocalSaveID: local.ID}
+	for index := range s.Bindings {
+		if sameLocalSave(s.Bindings[index], probe) {
+			if s.Bindings[index].LastSyncedRevisionID == nil {
+				// Nothing was proved equal to anything, so there is nothing
+				// this summary could later stand for.
+				return
+			}
+			s.Bindings[index].LocalSignature = signature
+			return
+		}
+	}
 }
 
 func (s State) validateBindings() error {

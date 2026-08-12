@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -17,8 +18,10 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
 	"github.com/krisbaumgartner/omnisave/internal/client/running"
+	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
+	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
 // watchSink receives the watch loop's lifecycle. The live view renders it;
@@ -544,6 +547,34 @@ func (plainWatchSink) PassFinished(result tui.PassResult) {
 
 func (plainWatchSink) Requests() <-chan tui.WatchRequest {
 	return nil
+}
+
+// saveSignature summarizes one save the way the watch loop's poll summarizes
+// every watched path. Sharing the summary is the point: a write the poll
+// would notice as a reason to run a pass is a write that pass will not
+// mistake for stillness.
+func saveSignature(save target.Save) string {
+	paths := make([]string, 0, len(save.Files))
+	for _, file := range save.Files {
+		paths = append(paths, file.Path)
+	}
+	// Adapters are free to discover a save's files in any order; the summary
+	// must describe the save, not the order it came back in.
+	sort.Strings(paths)
+	return statSignature(paths)
+}
+
+// settledSince reports that nothing can have happened to a bound save since
+// the pass that last verified it: its files carry the summary that pass
+// recorded, and the Omnisave still points at the revision they were proved
+// equal to. Both halves are needed — unchanged files under a moved current
+// is a pull, and moved files under an unchanged current is a commit.
+func settledSince(bound tracking.Binding, remoteSave omnisave.Omnisave, signature string) bool {
+	if bound.LocalSignature == "" || bound.LocalSignature != signature {
+		return false
+	}
+	return bound.LastSyncedRevisionID != nil && remoteSave.CurrentRevisionID != nil &&
+		*bound.LastSyncedRevisionID == *remoteSave.CurrentRevisionID
 }
 
 // statSignature summarizes the watched files' size and modification time;
