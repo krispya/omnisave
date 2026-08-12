@@ -78,6 +78,14 @@ path, syncing-down built the read path; sync makes both routine.
   an empty local save never commits over good server content, and each
   save has a spacing floor so continuously flushing saves (emulator SRAM)
   do not flood their history.
+- A pass reads a bound save only when something could have happened to it.
+  A save whose files stand exactly as they did when a pass last proved them
+  equal to the revision they are synced to, under an Omnisave whose current
+  revision has not moved since, is settled without being opened and without
+  asking the server for its history (decision 19). A pass also restates what
+  this Device tracks only when that has changed, or hourly, rather than once
+  per game per pass. A pass over a library where nothing has happened does
+  no work, says nothing, and moves no row.
 - Transfers are incremental in both directions even though revisions are
   complete. Committing attempts first and uploads only the content the
   server reports missing, so an unchanged file, or content another Device
@@ -518,13 +526,16 @@ busy; the phase is what separates working from stuck, since a spinner
 turning on "downloading (2/3)" reads nothing like one that has sat on
 "checking" for a minute. The phases already existed for the interactive
 commands' spinner — watch simply had nowhere to put them.
+A pass takes a game in hand only where work begins, never where it merely
+considers one: a settled pass marks nothing and the table sits still.
 **Tradeoff:** The phase displaces the settled status for as long as the row
 is held, so "synced 4m ago" is unavailable exactly while a sync is running;
 this is the trade that makes the row worth watching. Work is marked per
-game rather than per operation, so a quiet pass ripples one spinner down
-the table, and a game touched by both the library and the save phase is
-marked twice. Phases are live signals like presence, not part of the
-report: one missed costs nothing, because the next one replaces it.
+game rather than per operation, so a row spins the same way for a save
+being read as for one being uploaded, and a game the library phase and the
+save phase both do work for is marked twice. Phases are live signals like
+presence, not part of the report: one missed costs nothing, because the
+next one replaces it.
 
 ### 18. A sync down fetches only what this Device does not already hold
 
@@ -551,6 +562,43 @@ a network fetch, so the copy stays. The fallback to downloading cannot be
 reached in a test — it exists for a game rewriting a save between the match
 check and the copy — so it is defensive code that carries the guarantee
 rather than proven behavior.
+
+### 19. A pass proves a save settled by looking, not by reading
+
+**Decision:** When a pass proves a bound save equal to its Omnisave's current
+revision, it remembers how the save's files stood — the same size and
+modification-time summary the watch loop's poll compares between ticks.
+A later pass that finds the same summary, on an Omnisave still pointing at
+the revision that summary was proved against, settles the save without
+reading it and without fetching its history. Both halves are required:
+unchanged files under a moved current revision is a pull, and moved files
+under an unchanged current revision is a commit. The summary is only ever
+grounds to skip work — it is recorded solely by the pass that proved the
+equality, it is taken before the save is read so a write landing mid-pass
+invalidates it rather than being recorded as verified, and every sync drops
+it, since a sync moves exactly what it described.
+**Why:** Every pass read every bound save in full and asked for every
+Omnisave's history, and passes run on the periodic pull and on any Device's
+commit to anything — so another machine saving one game cost this one a
+full read of its whole library. Nothing about that work could change the
+answer for a save nothing had touched. Measured on one 32 MB save, the
+save phase of a settled pass falls from 13.3 ms to 0.15 ms, and the pass
+stops spending a request per Omnisave.
+The same holds for the library half of a pass: tracking is a claim this
+Device makes to the server — this game, this adapter, installed or not —
+and restating an unchanged claim tells it nothing, so the claim is repeated
+only when it changes, or once an hour so that an unnoticed loss on the
+server's side cannot outlive that. Deletion is not what this catches: a
+game gone from the Library is found by the one listing every pass already
+makes.
+**Tradeoff:** The summary is stat evidence, so content rewritten with its
+size and modification time preserved is not noticed until something else
+moves. That is not a new assumption — the poll already decides whether to
+run a pass at all on exactly this evidence (decision 2) — but it does
+extend it from choosing when to look to choosing whether to read. A sync
+drops the summary rather than updating it, so the pass after any real sync
+reads the save once to re-establish it; that pass had already done far more
+work than one read.
 
 ## Related
 

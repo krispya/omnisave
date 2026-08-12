@@ -709,6 +709,7 @@ func syncTracking(
 	outcome.Synced = true
 
 	identities := installedGameIdentities(scans)
+	now := time.Now()
 	for _, id := range sortedGameIDs(state.Games) {
 		game := state.Games[id]
 		identity, visible := identities[id]
@@ -717,19 +718,26 @@ func syncTracking(
 			report.Pending(game.Title)
 			continue
 		}
-		report.Working(game.Title)
 		if game.ServerGameID == "" {
+			report.Working(game.Title)
 			activity.Report(ctx, "looking up "+game.Title)
 			if !resolveIntoLibrary(ctx, server, state, &outcome, id, identity, report) {
 				continue
 			}
 			game = state.Games[id]
 		}
+		tracked := catalog.TrackGame{Adapter: game.Adapter, Installed: visible}
+		claim := trackingClaim(game.ServerGameID, tracked)
+		if state.TrackingIsCurrent(id, claim, now) {
+			// The server was told this, and nothing about it has changed. A
+			// game that is simply still installed and still tracked is not
+			// news, and saying it again is a round trip per game per pass.
+			confirmed[id] = true
+			continue
+		}
+		report.Working(game.Title)
 		activity.Report(ctx, "updating library")
-		trackErr := server.TrackGame(ctx, game.ServerGameID, device.ID, catalog.TrackGame{
-			Adapter:   game.Adapter,
-			Installed: visible,
-		})
+		trackErr := server.TrackGame(ctx, game.ServerGameID, device.ID, tracked)
 		if isNotFound(trackErr) {
 			// Untrack games whose stored Library identity was deleted by the server.
 			state.Untrack(id)
@@ -744,6 +752,7 @@ func syncTracking(
 			report.Failed(game.Title, trackErr)
 			continue
 		}
+		state.RecordTracking(id, claim, now)
 		confirmed[id] = true
 	}
 	report.Idle()
@@ -761,6 +770,14 @@ func syncTracking(
 		report.Removed(game.Title)
 	}
 	return outcome, confirmed
+}
+
+// trackingClaim is everything one tracking call tells the server, as one
+// string. Two claims that read the same say the same thing, so the second
+// of them is worth nothing — including the Library identity, since a game
+// re-resolved to a different one is a different claim entirely.
+func trackingClaim(serverGameID string, tracked catalog.TrackGame) string {
+	return fmt.Sprintf("%s|%s|%t", serverGameID, tracked.Adapter, tracked.Installed)
 }
 
 // resolveIntoLibrary resolves one tracked game's Library identity from this
@@ -848,6 +865,18 @@ func bindUnboundSaves(
 
 // reconcileSaves binds unbound saves and runs three-way sync for bound saves.
 // pushFloor spaces commits, and gate optionally defers pulls for running games.
+// working hands a game to the live view and says what is about to happen to
+// it. It is called where work begins, never where a pass merely considers a
+// game: a row that spins for something the pass decided not to do says a
+// sync is happening when none is, and at the speed those decisions are made
+// it says it as a flicker.
+func working(ctx context.Context, report *tui.TrackReport, title string) {
+	// Marked before the phase is reported, so the phase lands on the row
+	// rather than in the header the pass had just been speaking from.
+	report.Working(title)
+	activity.Report(ctx, "checking "+title)
+}
+
 func reconcileSaves(
 	ctx context.Context,
 	server *remote.Client,
@@ -932,10 +961,6 @@ func reconcileSaves(
 	}
 
 	for _, candidate := range candidates {
-		// Marked before the phase is reported, so the phase lands on the row
-		// rather than in the header the pass had just been speaking from.
-		report.Working(candidate.local.GameTitle)
-		activity.Report(ctx, "checking "+candidate.local.GameTitle)
 		if _, tracked := state.Games[candidate.local.GameID]; !tracked {
 			// An earlier candidate's server-side deletion untracked this
 			// game mid-pass; its remaining saves have nothing to bind to.
@@ -954,6 +979,7 @@ func reconcileSaves(
 				// authoritative server and no other lineage remains, so the
 				// deletion syncs back as untracking — reseeding here would
 				// resurrect the deleted content. Re-tracking starts fresh.
+				working(ctx, report, candidate.local.GameTitle)
 				state.Untrack(candidate.local.GameID)
 				if err := server.UntrackGame(ctx, candidate.serverGameID, state.Device.ID); err != nil && !isNotFound(err) {
 					outcome.Failed++
@@ -971,10 +997,13 @@ func reconcileSaves(
 
 		gameSaves := savesByGame[candidate.serverGameID]
 		if len(gameSaves) == 0 {
+			working(ctx, report, candidate.local.GameTitle)
 			seedCandidateSave(ctx, server, state, candidate.local, candidate.save, candidate.serverGameID, outcome, report)
 			continue
 		}
 
+		// Matching content against every lineage reads the save in full.
+		working(ctx, report, candidate.local.GameTitle)
 		lineages := make([]binding.Lineage, 0, len(gameSaves))
 		loadFailed := false
 		for _, remoteSave := range gameSaves {
@@ -1142,12 +1171,14 @@ func reconcileSaves(
 		if _, tracked := state.Games[candidate.discovered.Game.ID]; !tracked {
 			continue
 		}
-		report.Working(candidate.discovered.Game.Identity.DisplayTitle(candidate.discovered.Game.ID))
 		gameSaves := savesByGame[candidate.serverGameID]
 		if len(gameSaves) == 0 {
+			// A game with nothing local and nothing on the server is one line
+			// in the report and no work at all.
 			report.NoSave(candidate.discovered.Game.Identity.DisplayTitle(candidate.discovered.Game.ID))
 			continue
 		}
+		working(ctx, report, candidate.discovered.Game.Identity.DisplayTitle(candidate.discovered.Game.ID))
 		if err := syncSaveToDevice(ctx, server, state, candidate.scan, candidate.discovered,
 			gameSaves, loadHistory, outcome, report, prompts); err != nil {
 			return err
@@ -1345,6 +1376,22 @@ func syncBoundSave(
 	gate *pullGate,
 	pushFloor time.Duration,
 ) error {
+	name := omnisaveDisplayName(remoteSave)
+	// Summarized before the save is read, so a write landing mid-pass leaves
+	// a summary that no longer describes the content this pass verified;
+	// the next pass then reads the save rather than trusting the summary.
+	signature := saveSignature(save)
+	if settledSince(bound, remoteSave, signature) {
+		// Neither side has moved since a pass proved this save equal to the
+		// revision it is synced to, so there is nothing to commit and nothing
+		// to apply. Reading the save and its history would spend the whole
+		// save, and a round trip, to prove what is already known.
+		report.SyncedWith(local.GameTitle, name, lastSyncedAt(bound))
+		return nil
+	}
+	// Past here the save is read and its history fetched, so the row is the
+	// pass's from now until it settles.
+	working(ctx, report, local.GameTitle)
 	history, err := loadHistory(remoteSave.ID)
 	if err != nil {
 		outcome.Failed++
@@ -1363,7 +1410,6 @@ func syncBoundSave(
 		report.SaveFailed(local.GameTitle, errors.New("bound Omnisave has no readable current revision"))
 		return nil
 	}
-	name := omnisaveDisplayName(remoteSave)
 	var baseline omnisave.Revision
 	baselineOK := false
 	if bound.LastSyncedRevisionID != nil {
@@ -1377,6 +1423,9 @@ func syncBoundSave(
 
 	if current.ID == baseline.ID {
 		if binding.MatchesManifest(manifest, baseline) {
+			// Proved equal the expensive way; remember how the files stood so
+			// the next pass can reach the same answer by looking at them.
+			state.RecordVerified(local, signature)
 			report.SyncedWith(local.GameTitle, name, lastSyncedAt(bound))
 			return nil
 		}
