@@ -56,11 +56,15 @@ for ARCHIVE in "$@"; do
         echo "${ARCHIVE}: ${BINARY} is not executable" >&2
         exit 1
     fi
-    # An installer that unpacks more than the binary would leave files behind
-    # in ~/.local/bin, so the archive carries exactly one entry.
+    if [ ! -f "${ROOT}/LICENSE" ]; then
+        echo "${ARCHIVE}: missing LICENSE" >&2
+        exit 1
+    fi
+    # The installers unpack the archive whole and install the binary alone, so
+    # anything else in here is dead weight a reader would have to explain.
     ENTRIES=$(find "${ROOT}" -mindepth 1 | wc -l | tr -d ' ')
-    if [ "${ENTRIES}" != "1" ]; then
-        echo "${ARCHIVE}: archive must contain only ${BINARY}" >&2
+    if [ "${ENTRIES}" != "2" ]; then
+        echo "${ARCHIVE}: archive must contain only ${BINARY} and LICENSE" >&2
         exit 1
     fi
 

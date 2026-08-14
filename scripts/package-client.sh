@@ -61,6 +61,9 @@ for PLATFORM in ${PLATFORMS}; do
             -o "${PAYLOAD}/${BINARY}" ./cmd/omnisave
     )
     chmod 755 "${PAYLOAD}/${BINARY}"
+    # The license travels with the binary: ISC asks for the notice to appear
+    # in every copy, and an archive is one.
+    cp "${ROOT}/LICENSE" "${PAYLOAD}/LICENSE"
 
     # The version is enough to name a release archive: one release per version,
     # with the build number carried inside the binary rather than the filename.
@@ -68,10 +71,10 @@ for PLATFORM in ${PLATFORMS}; do
     if [ "${GOOS}" = "windows" ]; then
         ARCHIVE="${DIST}/${BASE}.zip"
         rm -f "${ARCHIVE}"
-        (cd "${PAYLOAD}" && zip -q -X "${ARCHIVE}" "${BINARY}")
+        (cd "${PAYLOAD}" && zip -q -X "${ARCHIVE}" "${BINARY}" LICENSE)
     else
         ARCHIVE="${DIST}/${BASE}.tar.gz"
-        tar -czf "${ARCHIVE}" -C "${PAYLOAD}" "${BINARY}"
+        tar -czf "${ARCHIVE}" -C "${PAYLOAD}" "${BINARY}" LICENSE
     fi
 
     printf '%s  %s\n' "$(sha256_of "${ARCHIVE}")" "$(basename "${ARCHIVE}")" >> "${CHECKSUMS}"
