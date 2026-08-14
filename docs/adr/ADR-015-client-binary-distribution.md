@@ -41,8 +41,14 @@ an interpreter, so neither reads standard input — the script is what standard
 input already holds, and a prompt would consume the rest of it. Everything a
 player might set is an environment variable instead. Both resolve the newest
 release, verify the download against the release's checksum file, refuse to
-install on a mismatch, and are safe to re-run: reinstalling is how a player
-upgrades until the client can upgrade itself.
+install on a mismatch, and are safe to re-run.
+
+An installed client upgrades itself with `omnisave upgrade`, reading that same
+release layout and applying the same verification, so the archives are the
+contract rather than the installers. It replaces the running binary in place and
+only ever moves forward unless asked for a version by name. Re-running an
+installer stays equivalent, which is what a player reaches for when a client is
+too old to know the command.
 
 Installation is per-user and needs no administrator: `~/.local/bin` on POSIX
 systems, `%LOCALAPPDATA%\omnisave` on Windows. This is what makes the Steam Deck
