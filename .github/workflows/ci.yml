@@ -31,7 +31,17 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: true
+          # The default setup-go cache key is shared with the go job, which
+          # finishes first and claims it, so the cross-compile artifacts built
+          # here would be discarded on every run. A job-scoped cache keeps them.
+          cache: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-cross-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: go-cross-
       - uses: pnpm/action-setup@v6
         with:
           version: 11.13.1
@@ -64,5 +74,12 @@ jobs:
         uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+      # Exposes the Actions runtime token so buildx can use the gha cache
+      # backend from a plain run step. Builds on main populate the cache the
+      # release workflow restores.
+      - uses: crazy-max/ghaction-github-runtime@v3
       - name: Build every published image platform
-        run: docker buildx build --file Containerfile --platform linux/amd64,linux/arm64 .
+        run: >
+          docker buildx build --file Containerfile
+          --platform linux/amd64,linux/arm64
+          --cache-from type=gha --cache-to type=gha,mode=max .
