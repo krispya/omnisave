@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -20,6 +19,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client"
 	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/binding"
+	"github.com/krisbaumgartner/omnisave/internal/client/host"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
 	"github.com/krisbaumgartner/omnisave/internal/client/running"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
@@ -172,7 +172,7 @@ func connectByPairing(
 	ticket, err := remote.RequestPairing(ctx, serverURL, access.RequestPairing{
 		DeviceID:   device.ID,
 		DeviceName: device.Name,
-		Platform:   runtime.GOOS,
+		Platform:   host.Platform(),
 	}, nil)
 	if err != nil {
 		tui.ConnectFailed(err)
@@ -254,7 +254,7 @@ func establishServer(ctx context.Context, store *tracking.Store, state *tracking
 		return nil, errReported
 	}
 	device := state.EnsureDevice(deviceName())
-	if err := server.RegisterDevice(ctx, device.ID, catalog.RegisterDevice{Name: device.Name, Platform: runtime.GOOS}); err != nil {
+	if err := server.RegisterDevice(ctx, device.ID, catalog.RegisterDevice{Name: device.Name, Platform: host.Platform()}); err != nil {
 		tui.ConnectFailed(err)
 		return nil, errReported
 	}
@@ -703,7 +703,7 @@ func syncTracking(
 	outcome := tui.TrackOutcome{Tracked: len(state.Games)}
 	confirmed := make(map[string]bool)
 	activity.Report(ctx, "registering device")
-	err := server.RegisterDevice(ctx, device.ID, catalog.RegisterDevice{Name: device.Name, Platform: runtime.GOOS})
+	err := server.RegisterDevice(ctx, device.ID, catalog.RegisterDevice{Name: device.Name, Platform: host.Platform()})
 	if err != nil {
 		report.SyncFailed(err)
 		return outcome, confirmed
