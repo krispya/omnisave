@@ -159,11 +159,18 @@ func (c *Client) streamServerEvents(ctx context.Context, stream *http.Client, ev
 			if !deliver {
 				continue
 			}
+			// Delivery waits on the consumer, not on the peer: the watch
+			// loop takes events between passes, and a pass can outlast the
+			// silence limit. The watchdog is held while the line waits, so a
+			// slow reader is not mistaken for a dead stream, and re-arms the
+			// moment listening resumes.
+			silence.Stop()
 			select {
 			case events <- delivered:
 			case <-ctx.Done():
 				return streamServed
 			}
+			silence.Reset(c.silenceLimit())
 		}
 	}
 	return streamServed

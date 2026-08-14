@@ -530,15 +530,17 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			exitFired = true
 			refresh()
 		case <-retryTimer.C:
-			if held {
-				// A question on screen holds every trigger. The retry re-arms
-				// rather than being spent, so a failure is not forgotten
-				// behind a modal nobody has answered yet.
+			if held || stillWriting() {
+				// A question on screen holds every trigger, and a retry that
+				// fired mid-write would commit a save the game is still
+				// streaming out — the retried pass is a full pass, whatever
+				// the failed one got done. Either way the retry re-arms
+				// rather than being spent, so a failure is not forgotten; a
+				// write that keeps it waiting hands the pass to the first
+				// quiet poll, the same place every settled write lands.
 				retryTimer.Reset(retryWait)
 				continue
 			}
-			// A failed pass did no work, so there is nothing for a write to
-			// interrupt: stillWriting is deliberately not consulted here.
 			refresh()
 		case <-pullTicker.C:
 			if held || stillWriting() {

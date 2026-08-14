@@ -1293,6 +1293,72 @@ func TestAFailedPassKeepsTheFilesItWasAlreadyWatching(t *testing.T) {
 	}
 }
 
+// The retry is automatic and the pass it repeats is a full pass: fired while
+// the game is streaming its save out, it would commit a half-written file. It
+// defers to the quiet-interval rule like every other automatic trigger, and
+// the failure it carries is not forgotten — the first quiet poll runs the
+// pass instead.
+func TestTheRetryWaitsOutASaveStillBeingWritten(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(fixture.state); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &failingScans{fixtureAdapter: fixtureAdapter{fixture: &fixture}}
+	adapter.failOnce()
+	movement := make(chan string)
+	loop := watchLoop{
+		scanner: client.NewScanner(nil, adapter),
+		server:  server,
+		store:   store,
+		// Only the retry can fire on its own here: every ticker is hours
+		// out, so a pass inside the window below could only be the retry
+		// ignoring the write in flight.
+		poll:   time.Hour,
+		pull:   time.Hour,
+		settle: time.Millisecond,
+		retry:  100 * time.Millisecond,
+		floor:  0,
+		events: newAnnouncer(),
+		movement: func(context.Context) <-chan string {
+			return movement
+		},
+		watched: []string{fixture.localPath},
+	}
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+
+	// The pass fails while the scan hiccups, arming the retry.
+	movement <- remote.LibraryChangedEvent
+	if result := waitForPass(t, sink); result.Err == nil {
+		t.Fatal("expected the broken scan to fail the pass")
+	}
+
+	// The game writes after the failed pass rebased its signature, so the
+	// retry finds the save moving.
+	time.Sleep(50 * time.Millisecond)
+	if err := os.WriteFile(fixture.localPath, []byte("mid-write"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Several retry intervals pass; every one must wait the write out.
+	select {
+	case result := <-sink.finished:
+		t.Fatalf("expected the retry to wait out the write, got a pass: %+v", result)
+	case <-time.After(400 * time.Millisecond):
+	}
+
+	// The user asks; theirs is the one trigger that never waits, and the
+	// loop must not be wedged behind the deferred retry.
+	sink.requests <- tui.WatchRequest{Kind: tui.WatchSyncNow}
+	if result := waitForPass(t, sink); result.Err != nil {
+		t.Fatalf("expected the asked-for pass to reconcile, got %v", result.Err)
+	}
+}
+
 func TestTheRetryGrowsFromItsFloorAndStopsAtThePullInterval(t *testing.T) {
 	floor, pull := 30*time.Second, 2*time.Minute
 	wait := nextPassRetry(0, floor, pull)
