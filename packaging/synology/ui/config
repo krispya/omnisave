@@ -2,7 +2,7 @@
   ".url": {
     "com.omnisave.Dashboard": {
       "type": "url",
-      "title": "Omnisave",
+      "title": "Omnisave Server",
       "desc": "Self-hosted, versioned game-save synchronization.",
       "icon": "images/omnisave-{0}.png",
       "protocol": "http",

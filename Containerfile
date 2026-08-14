@@ -29,7 +29,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/omnisave-server ./cmd/server
 
 FROM alpine:3.23
-LABEL org.opencontainers.image.title="Omnisave" \
+LABEL org.opencontainers.image.title="Omnisave Server" \
       org.opencontainers.image.description="Self-hosted, versioned game-save synchronization" \
       org.opencontainers.image.source="https://github.com/krispya/omnisave" \
       org.opencontainers.image.licenses="ISC"

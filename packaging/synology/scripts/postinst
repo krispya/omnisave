@@ -54,7 +54,7 @@ else
 fi
 
 cat > "${SYNOPKG_TEMP_LOGFILE}" << MESSAGE
-Omnisave is installed. Open the Dash to create your PIN.
+Omnisave Server is installed. Open the Dash to create your PIN.
 MESSAGE
 
 exit 0

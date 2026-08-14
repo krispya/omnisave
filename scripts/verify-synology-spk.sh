@@ -84,7 +84,7 @@ for SPK in "$@"; do
     if ! jq -e --arg APP_NAME "${APP_NAME}" '
         .[".url"][$APP_NAME] |
         .type == "url" and
-        .title == "Omnisave" and
+        .title == "Omnisave Server" and
         .icon == "images/omnisave-{0}.png" and
         .protocol == "http" and
         .port == "8080" and
