@@ -202,3 +202,7 @@ exits:
 
 The tracking prompt is preselected from local state. Space toggles a game,
 Enter saves the selection, and `/` filters the list.
+
+## License
+
+Omnisave is released under the [ISC License](LICENSE).
