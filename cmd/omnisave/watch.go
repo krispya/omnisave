@@ -208,6 +208,32 @@ const serverSettle = 2 * time.Second
 // presenceReaffirm stays within the server's presence-expiry window.
 const presenceReaffirm = time.Minute
 
+// passRetryFloor is how soon a failed pass is tried again. A pass fails for
+// reasons that pass: a network that is not up yet when the service starts at
+// boot, a handheld carried out of range, a server restarting. Every one of
+// them is over in well under the pull interval, and until the pass that
+// failed is repeated this device is protecting nothing — so the fallback
+// meant for a quiet server is far too long to be the answer to a failure.
+const passRetryFloor = 30 * time.Second
+
+// nextPassRetry grows the wait after each consecutive failure, from a floor
+// that recovers a blip quickly up to the pull interval. A device that has no
+// server at all ends up asking exactly as often as a device with a quiet one,
+// which is as often as either has reason to.
+func nextPassRetry(current, floor, pull time.Duration) time.Duration {
+	if floor <= 0 {
+		floor = passRetryFloor
+	}
+	next := current * 2
+	if current <= 0 {
+		next = floor
+	}
+	if pull > 0 {
+		return min(next, pull)
+	}
+	return next
+}
+
 type watchLoop struct {
 	scanner *client.Scanner
 	server  *remote.Client
@@ -219,7 +245,10 @@ type watchLoop struct {
 	pull     time.Duration
 	floor    time.Duration
 	settle   time.Duration
-	events   *announcer
+	// retry is how soon the first attempt after a failed pass runs; each
+	// consecutive failure doubles it up to pull. Zero takes the default.
+	retry  time.Duration
+	events *announcer
 	// movement subscribes to the server's change feed; nil leaves the
 	// periodic pull as the only way server-side movement is noticed.
 	movement func(context.Context) <-chan string
@@ -242,6 +271,7 @@ func newWatchLoop(scanner *client.Scanner, server *remote.Client, store *trackin
 		pull:     settings.pull,
 		floor:    settings.floor,
 		settle:   serverSettle,
+		retry:    passRetryFloor,
 		events:   events,
 		movement: server.ServerEvents,
 	}
@@ -305,13 +335,16 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	}
 	presenceTicker := time.NewTicker(nextAffirm())
 	defer presenceTicker.Stop()
-	pass := func() []string {
+	// pass reports the files it proved worth watching and whether it got far
+	// enough to have proved anything. A pass that failed knows nothing about
+	// this device that the pass before it did not.
+	pass := func() ([]string, bool) {
 		started := time.Now()
 		sink.PassStarted()
 		state, err := l.store.Load()
 		if err != nil {
 			l.finish(sink, started, tui.ReportSnapshot{}, "", false, err)
-			return nil
+			return nil, false
 		}
 		// The pass names the game it has in hand as it goes; only the live
 		// view has anywhere to put that, and it marks the row rather than
@@ -348,19 +381,38 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 		presenceTicker.Reset(nextAffirm())
 		if err != nil {
 			l.finish(sink, started, report.Snapshot(), "", false, err)
-			return files
+			return files, false
 		}
 		if err := l.store.Save(state); err != nil {
 			l.finish(sink, started, report.Snapshot(), "", false, err)
-			return files
+			return files, false
 		}
 		l.finish(sink, started, report.Snapshot(), tui.SummaryLine(outcome), outcome.Changed(), nil)
-		return files
+		return files, true
+	}
+
+	// retryTimer carries a failed pass forward. It starts stopped, and
+	// retryWait is both the current backoff and the record that a failure is
+	// outstanding: zero means the last pass reconciled.
+	retryTimer := time.NewTimer(time.Hour)
+	retryTimer.Stop()
+	defer retryTimer.Stop()
+	retryWait := time.Duration(0)
+	failed := func() {
+		retryWait = nextPassRetry(retryWait, l.retry, l.pull)
+		retryTimer.Reset(retryWait)
 	}
 
 	watched := l.watched
 	if watched == nil {
-		watched = pass()
+		files, reconciled := pass()
+		if reconciled {
+			watched = files
+		} else {
+			// Nothing is known about this device yet, so there is nothing to
+			// keep — only the failure, which is what the retry carries.
+			failed()
+		}
 	} else {
 		// Publish handoff presence before the first ticker interval.
 		affirmPresence()
@@ -387,8 +439,23 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	refresh := func() {
 		settleTimer.Stop()
 		settleArmed = false
-		watched = pass()
+		files, reconciled := pass()
+		if reconciled {
+			watched = files
+			retryTimer.Stop()
+			retryWait = 0
+		} else {
+			// A failed pass discovered nothing, and adopting its empty list
+			// would leave the poll with nothing to compare — a device that
+			// stops noticing its own saves being written for as long as the
+			// server is unreachable. The last list a pass proved still
+			// describes this device.
+			failed()
+		}
 		sink.Watching(len(watched))
+		// The signature is rebased even after a failure, so a write that
+		// landed during the failed pass is not counted twice. The retry
+		// commits it; the poll does not need to raise it again.
 		signature = statSignature(watched)
 		dirty = false
 	}
@@ -461,6 +528,17 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 				continue
 			}
 			exitFired = true
+			refresh()
+		case <-retryTimer.C:
+			if held {
+				// A question on screen holds every trigger. The retry re-arms
+				// rather than being spent, so a failure is not forgotten
+				// behind a modal nobody has answered yet.
+				retryTimer.Reset(retryWait)
+				continue
+			}
+			// A failed pass did no work, so there is nothing for a write to
+			// interrupt: stillWriting is deliberately not consulted here.
 			refresh()
 		case <-pullTicker.C:
 			if held || stillWriting() {
