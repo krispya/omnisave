@@ -77,14 +77,30 @@ type Omnisave struct {
 	// RevisionNameSources mirrors RevisionNames with each name's origin —
 	// omnisave.NameSourceLabeler or NameSourceManual — so a rebuilt database
 	// still knows which names automation may replace.
-	RevisionNameSources map[string]string    `json:"revision_name_sources,omitempty"`
-	ForkedFrom          *omnisave.ForkOrigin `json:"forked_from,omitempty"`
-	CreatedAt           time.Time            `json:"created_at"`
+	RevisionNameSources map[string]string `json:"revision_name_sources,omitempty"`
+	// Achievements records what a game unlocked while Omnisave watched it, and
+	// the revision each unlock landed on. They belong to the lineage rather
+	// than to a snapshot: an unlock is an account's event, not part of the
+	// bytes a manifest describes, and the same snapshot restored elsewhere has
+	// earned nothing.
+	Achievements []Achievement        `json:"achievements,omitempty"`
+	ForkedFrom   *omnisave.ForkOrigin `json:"forked_from,omitempty"`
+	CreatedAt    time.Time            `json:"created_at"`
 	// DeletedAt and DeletedRevisions are version-3 compatibility fields. Open
 	// migrates them to immutable deletion markers before recovery.
 	DeletedAt        *time.Time        `json:"deleted_at,omitempty"`
 	DeletedRevisions []string          `json:"deleted_revisions,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
+}
+
+// Achievement is one unlock and the revision it landed on. RevisionID is
+// empty while the unlock is still waiting for the next commit.
+type Achievement struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	UnlockedAt  time.Time `json:"unlocked_at"`
+	RevisionID  string    `json:"revision_id,omitempty"`
 }
 
 // Game records the catalog identity needed to identify a recovered save.

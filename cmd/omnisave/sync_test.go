@@ -149,7 +149,7 @@ func syncOnceGated(t *testing.T, server *remote.Client, fixture *bindingFixture,
 	if !outcome.Synced {
 		t.Fatal("expected the library sync to reach the server")
 	}
-	if err := reconcileSaves(ctx, server, &fixture.state, fixture.scans, confirmed,
+	if err := reconcileSaves(ctx, nil, server, &fixture.state, fixture.scans, confirmed,
 		&outcome, &tui.TrackReport{}, prompts, gate, floor); err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestASettledPassTakesNoGameInHand(t *testing.T) {
 	}}
 	ctx := context.Background()
 	outcome, confirmed := syncTracking(ctx, server, &fixture.state, fixture.scans, nil, report)
-	if err := reconcileSaves(ctx, server, &fixture.state, fixture.scans, confirmed,
+	if err := reconcileSaves(ctx, nil, server, &fixture.state, fixture.scans, confirmed,
 		&outcome, report, nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}

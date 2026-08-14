@@ -145,3 +145,26 @@ type Adapter interface {
 type Activity interface {
 	RunningGames(ctx context.Context, snapshot *running.Snapshot, discovered Target, games []InstalledGame) (map[string]bool, error)
 }
+
+// Achievement is one achievement a target's own records show unlocked, named
+// as the target names it. UnlockedAt is the target's time, not this machine's:
+// it is what makes the same unlock the same instant on every Device.
+type Achievement struct {
+	// ID is the target's stable key for the achievement, unique within its
+	// game — Steam's API name, for instance.
+	ID          string
+	Name        string
+	Description string
+	UnlockedAt  time.Time
+}
+
+// Achievements reports the achievements a target has recorded as unlocked for
+// one discovered save. It is optional: an adapter that cannot see achievements
+// simply does not implement it, and the save's history carries no marks.
+//
+// Implementations are best-effort. Anything unreadable — an absent record, a
+// format that moved on — reports no achievements rather than an error, because
+// a save syncs whether or not its achievements can be read.
+type Achievements interface {
+	UnlockedAchievements(ctx context.Context, discovered Target, game InstalledGame, save Save) ([]Achievement, error)
+}

@@ -196,6 +196,35 @@ func (c *Client) CommitRevision(ctx context.Context, omnisaveID string, input om
 	return &revision, nil
 }
 
+// ReportAchievements tells the server what this Device watched a game unlock.
+// The server decides which revision each unlock lands on and ignores any it
+// already holds, so repeating a report is safe. It answers with what the
+// report added.
+func (c *Client) ReportAchievements(ctx context.Context, omnisaveID string, unlocks []omnisave.AchievementUnlock) ([]omnisave.Achievement, error) {
+	var recorded struct {
+		Achievements []omnisave.Achievement `json:"achievements"`
+	}
+	path := "/api/v1/omnisaves/" + url.PathEscape(omnisaveID) + "/achievements"
+	input := struct {
+		Achievements []omnisave.AchievementUnlock `json:"achievements"`
+	}{Achievements: unlocks}
+	if err := c.postJSON(ctx, path, input, &recorded); err != nil {
+		return nil, err
+	}
+	return recorded.Achievements, nil
+}
+
+// ListAchievements returns a save's recorded unlocks and where each one
+// landed in its history.
+func (c *Client) ListAchievements(ctx context.Context, omnisaveID string) ([]omnisave.Achievement, error) {
+	var achievements []omnisave.Achievement
+	path := "/api/v1/omnisaves/" + url.PathEscape(omnisaveID) + "/achievements"
+	if err := c.getJSON(ctx, path, &achievements); err != nil {
+		return nil, err
+	}
+	return achievements, nil
+}
+
 // RestoreCurrentRevision moves an Omnisave's global current pointer to an
 // existing revision in its tree (FDR-005). The server rejects a stale
 // expectation with a CurrentRevisionConflict.

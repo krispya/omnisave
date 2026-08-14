@@ -137,6 +137,17 @@ func (r *Repository) rebuild(ctx context.Context, inventory recoveryInventory) (
 	imported.revisions += count
 	imported.missingObjects += missing
 
+	// Marks last, because each one names the revision it landed on and that
+	// node has to be in the database before it can be pointed at.
+	for _, id := range sortedKeys(inventory.saves) {
+		if _, deleted := inventory.deletedSaves[id]; deleted {
+			continue
+		}
+		if err := r.importAchievements(ctx, inventory.saves[id]); err != nil {
+			return false, err
+		}
+	}
+
 	if imported.games+imported.saves+imported.revisions > 0 {
 		log.Printf("save store: rebuilt index from the store: %d game(s), %d save(s), %d revision(s) imported",
 			imported.games, imported.saves, imported.revisions)
@@ -267,6 +278,44 @@ func (r *Repository) importGame(ctx context.Context, record store.Game, exists .
 		}
 	}
 	return tx.Commit()
+}
+
+// importAchievements restores a lineage's marks. Placement is deferred to the
+// revisions pass: a mark naming a revision the store no longer holds imports
+// unplaced, which the next commit on the save then claims.
+func (r *Repository) importAchievements(ctx context.Context, record store.Omnisave) error {
+	if len(record.Achievements) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, achievement := range record.Achievements {
+		if achievement.ID == "" || achievement.Name == "" || achievement.UnlockedAt.IsZero() {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO achievements(
+			omnisave_id, achievement_id, name, description, unlocked_at, revision_id
+		) VALUES (?, ?, ?, ?, ?, (SELECT id FROM revisions WHERE id = ?))
+		ON CONFLICT(omnisave_id, achievement_id) DO UPDATE SET
+			name = excluded.name, description = excluded.description,
+			unlocked_at = excluded.unlocked_at,
+			revision_id = COALESCE(achievements.revision_id, excluded.revision_id)`,
+			record.ID, achievement.ID, achievement.Name, achievement.Description,
+			achievement.UnlockedAt.Unix(), nullableID(achievement.RevisionID)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func nullableID(id string) any {
+	if id == "" {
+		return nil
+	}
+	return id
 }
 
 func (r *Repository) importOmnisave(ctx context.Context, record store.Omnisave) error {

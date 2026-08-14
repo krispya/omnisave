@@ -476,6 +476,10 @@ func (r *Repository) CommitRevision(ctx context.Context, expectedCurrentRevision
 		}
 		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: nullableStringPointer(actual)}
 	}
+	// Marks waiting on this save now have the snapshot they were waiting for.
+	if err := claimPendingAchievements(ctx, tx, revision); err != nil {
+		return err
+	}
 	if err := r.enqueueRevisionProjection(ctx, tx, revision.ID); err != nil {
 		return err
 	}
@@ -598,6 +602,106 @@ func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revi
 		return err
 	}
 	return r.projectStore(ctx)
+}
+
+// RecordAchievements files unlocks against a save. An achievement already
+// recorded keeps the placement it was first given, so a Device repeating a
+// report — after a crash, or from a second machine — never moves a mark.
+func (r *Repository) RecordAchievements(ctx context.Context, saveID string, achievements []omnisave.Achievement) ([]omnisave.Achievement, error) {
+	r.mutate.Lock()
+	defer r.mutate.Unlock()
+	if err := r.requireStoreReady(); err != nil {
+		return nil, err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var saveExists bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM omnisaves WHERE id = ?)`, saveID,
+	).Scan(&saveExists); err != nil {
+		return nil, err
+	}
+	if !saveExists {
+		return nil, storage.ErrNotFound
+	}
+
+	recorded := make([]omnisave.Achievement, 0, len(achievements))
+	for _, achievement := range achievements {
+		result, err := tx.ExecContext(ctx, `INSERT INTO achievements(
+			omnisave_id, achievement_id, name, description, unlocked_at, revision_id
+		) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(omnisave_id, achievement_id) DO NOTHING`,
+			saveID, achievement.ID, achievement.Name, achievement.Description,
+			achievement.UnlockedAt.Unix(), achievement.RevisionID)
+		if err != nil {
+			return nil, err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			recorded = append(recorded, achievement)
+		}
+	}
+	if len(recorded) == 0 {
+		return nil, tx.Commit()
+	}
+	if err := r.enqueueOmnisaveProjection(ctx, tx, saveID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return recorded, r.projectStore(ctx)
+}
+
+func (r *Repository) ListAchievements(ctx context.Context, saveID string) ([]omnisave.Achievement, error) {
+	if _, err := r.GetOmnisave(ctx, saveID); err != nil {
+		return nil, err
+	}
+	return listAchievementsFrom(ctx, r.db, saveID)
+}
+
+func listAchievementsFrom(ctx context.Context, queryer storeQueryer, saveID string) ([]omnisave.Achievement, error) {
+	rows, err := queryer.QueryContext(ctx, `SELECT achievement_id, name, description, unlocked_at, revision_id
+		FROM achievements WHERE omnisave_id = ? ORDER BY unlocked_at, achievement_id`, saveID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	achievements := make([]omnisave.Achievement, 0)
+	for rows.Next() {
+		var (
+			achievement omnisave.Achievement
+			unlockedAt  int64
+			revisionID  sql.NullString
+		)
+		if err := rows.Scan(&achievement.ID, &achievement.Name, &achievement.Description,
+			&unlockedAt, &revisionID); err != nil {
+			return nil, err
+		}
+		achievement.UnlockedAt = time.Unix(unlockedAt, 0).UTC()
+		if revisionID.Valid {
+			achievement.RevisionID = &revisionID.String
+		}
+		achievements = append(achievements, achievement)
+	}
+	return achievements, rows.Err()
+}
+
+// claimPendingAchievements gives a freshly committed revision every mark on
+// this save that is still waiting for one — an unlock reported before the
+// save was written, or one whose revision was later deleted.
+func claimPendingAchievements(ctx context.Context, tx *sql.Tx, revision omnisave.Revision) error {
+	_, err := tx.ExecContext(ctx, `UPDATE achievements SET revision_id = ?
+		WHERE omnisave_id = ? AND revision_id IS NULL AND unlocked_at <= ?`,
+		revision.ID, revision.OmnisaveID, revision.CreatedAt.Unix())
+	return err
 }
 
 // DeleteRevision removes a reachable leaf that is neither current nor a fork origin.

@@ -1,4 +1,4 @@
-import type { Omnisave, Revision } from '../../lib/omnisave-api.js';
+import type { Achievement, Omnisave, Revision } from '../../lib/omnisave-api.js';
 import { OptionsMenu } from '../../components/options-menu.js';
 import { defaultSaveName, displaySaveName } from './save-name.js';
 import { ForkIcon } from './fork-icon.js';
@@ -13,6 +13,8 @@ type SaveListProps = {
   expandedSaveID: string;
   /** Revisions of the expanded save; the list loads no history it does not show. */
   revisions: Revision[];
+  /** Unlocks recorded against the expanded save. */
+  achievements: Achievement[];
   loadingRevisions: boolean;
   revisionError: string;
   focus?: RevisionFocus;
@@ -71,6 +73,7 @@ export function SaveList({
   selectedSave,
   expandedSaveID,
   revisions,
+  achievements,
   loadingRevisions,
   revisionError,
   focus,
@@ -179,6 +182,7 @@ export function SaveList({
                   save={save}
                   saves={saves}
                   revisions={revisions}
+                  achievements={achievements}
                   loading={loadingRevisions}
                   error={revisionError}
                   focus={focus}

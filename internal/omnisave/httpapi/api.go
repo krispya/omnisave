@@ -82,6 +82,8 @@ func (api *API) guardedRoutes() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/{revisionID}", api.getRevision)
 	mux.HandleFunc("PATCH /api/v1/omnisaves/{id}/revisions/{revisionID}", api.updateRevision)
 	mux.HandleFunc("DELETE /api/v1/omnisaves/{id}/revisions/{revisionID}", api.deleteRevision)
+	mux.HandleFunc("POST /api/v1/omnisaves/{id}/achievements", api.recordAchievements)
+	mux.HandleFunc("GET /api/v1/omnisaves/{id}/achievements", api.listAchievements)
 	mux.HandleFunc("POST /api/v1/omnisaves/{id}/forks", api.fork)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/archive", api.archive)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/{revisionID}/archive", api.archiveRevision)
@@ -213,6 +215,45 @@ func (a *API) addRevision(w http.ResponseWriter, r *http.Request) {
 	a.publishLibraryChanged()
 	w.Header().Set("Location", "/api/v1/omnisaves/"+revision.OmnisaveID+"/revisions/"+revision.ID)
 	writeJSON(w, http.StatusCreated, revision)
+}
+
+// recordAchievements accepts one Device's report of what it watched unlock.
+// The response is what this report added, so a Device repeating itself can
+// tell that nothing was new.
+func (a *API) recordAchievements(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Achievements []omnisave.AchievementUnlock `json:"achievements"`
+	}
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, err)
+		return
+	}
+	recorded, err := a.saves.RecordAchievements(r.Context(), r.PathValue("id"), input.Achievements)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if recorded == nil {
+		recorded = []omnisave.Achievement{}
+	}
+	// A report that told the server nothing it did not know moves nothing, so
+	// it must not wake every watching Device into another pass.
+	if len(recorded) > 0 {
+		a.publishLibraryChanged()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"achievements": recorded})
+}
+
+func (a *API) listAchievements(w http.ResponseWriter, r *http.Request) {
+	achievements, err := a.saves.ListAchievements(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if achievements == nil {
+		achievements = []omnisave.Achievement{}
+	}
+	writeJSON(w, http.StatusOK, achievements)
 }
 
 func (a *API) getRevision(w http.ResponseWriter, r *http.Request) {

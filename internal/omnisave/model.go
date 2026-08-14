@@ -48,6 +48,31 @@ type Revision struct {
 	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
+// AchievementUnlock is one achievement a Device watched a game unlock, named
+// as that game's store names it. UnlockedAt is the store's own time, which is
+// what lets two Devices report the same unlock and mean the same instant; it
+// is recorded to the second, the precision every store publishes.
+type AchievementUnlock struct {
+	// ID is the store's stable key for the achievement, unique within its
+	// game. Two reports carrying the same ID are the same unlock.
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	UnlockedAt  time.Time `json:"unlocked_at"`
+}
+
+// Achievement is a recorded unlock together with where it falls in a save's
+// history: RevisionID is the first revision committed at or after the unlock,
+// which is the earliest snapshot known to carry it. Restoring anything before
+// that revision goes back to before the achievement existed.
+//
+// RevisionID is nil while no revision has been committed since — an unlock
+// reported between commits waits, and the next commit claims it.
+type Achievement struct {
+	AchievementUnlock
+	RevisionID *string `json:"revision_id"`
+}
+
 // RevisionFile maps a canonical save path to immutable content.
 type RevisionFile struct {
 	Path     string   `json:"path"`

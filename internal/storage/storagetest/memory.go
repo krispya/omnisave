@@ -26,14 +26,15 @@ type MemoryRepository struct {
 	// assume it is held.
 	mu sync.Mutex
 
-	saves     map[string]omnisave.Omnisave
-	revisions map[string][]omnisave.Revision
-	blobs     map[string][]byte
-	games     map[string]catalog.Game
-	roms      map[string]catalog.GameROM
-	media     map[string]catalog.GameMedia
-	devices   map[string]catalog.Device
-	tracking  map[string]map[string]catalog.GameTracking
+	saves        map[string]omnisave.Omnisave
+	revisions    map[string][]omnisave.Revision
+	achievements map[string][]omnisave.Achievement
+	blobs        map[string][]byte
+	games        map[string]catalog.Game
+	roms         map[string]catalog.GameROM
+	media        map[string]catalog.GameMedia
+	devices      map[string]catalog.Device
+	tracking     map[string]map[string]catalog.GameTracking
 
 	credentials map[string]storage.CredentialRecord
 	pairing     map[string]storage.PairingRecord
@@ -43,17 +44,18 @@ type MemoryRepository struct {
 
 func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{
-		saves:       make(map[string]omnisave.Omnisave),
-		revisions:   make(map[string][]omnisave.Revision),
-		blobs:       make(map[string][]byte),
-		games:       make(map[string]catalog.Game),
-		roms:        make(map[string]catalog.GameROM),
-		media:       make(map[string]catalog.GameMedia),
-		devices:     make(map[string]catalog.Device),
-		credentials: make(map[string]storage.CredentialRecord),
-		pairing:     make(map[string]storage.PairingRecord),
-		settings:    make(map[string]string),
-		tracking:    make(map[string]map[string]catalog.GameTracking),
+		saves:        make(map[string]omnisave.Omnisave),
+		revisions:    make(map[string][]omnisave.Revision),
+		achievements: make(map[string][]omnisave.Achievement),
+		blobs:        make(map[string][]byte),
+		games:        make(map[string]catalog.Game),
+		roms:         make(map[string]catalog.GameROM),
+		media:        make(map[string]catalog.GameMedia),
+		devices:      make(map[string]catalog.Device),
+		credentials:  make(map[string]storage.CredentialRecord),
+		pairing:      make(map[string]storage.PairingRecord),
+		settings:     make(map[string]string),
+		tracking:     make(map[string]map[string]catalog.GameTracking),
 	}
 }
 
@@ -126,6 +128,7 @@ func (r *MemoryRepository) deleteOmnisave(id string) error {
 		return storage.ErrNotFound
 	}
 	delete(r.saves, id)
+	delete(r.achievements, id)
 	all := r.allRevisions()
 	byID := make(map[string]omnisave.Revision, len(all))
 	retained := make(map[string]bool)
@@ -239,7 +242,50 @@ func (r *MemoryRepository) CommitRevision(_ context.Context, expectedCurrentRevi
 	r.revisions[revision.OmnisaveID] = append(r.revisions[revision.OmnisaveID], revision)
 	save.CurrentRevisionID = &revision.ID
 	r.saves[revision.OmnisaveID] = save
+	// Marks waiting on this save now have the snapshot they were waiting for,
+	// matching the SQL repository.
+	for index, achievement := range r.achievements[revision.OmnisaveID] {
+		if achievement.RevisionID == nil && achievement.UnlockedAt.Unix() <= revision.CreatedAt.Unix() {
+			id := revision.ID
+			r.achievements[revision.OmnisaveID][index].RevisionID = &id
+		}
+	}
 	return nil
+}
+
+func (r *MemoryRepository) RecordAchievements(_ context.Context, saveID string, achievements []omnisave.Achievement) ([]omnisave.Achievement, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.saves[saveID]; !ok {
+		return nil, storage.ErrNotFound
+	}
+	recorded := make([]omnisave.Achievement, 0, len(achievements))
+	for _, achievement := range achievements {
+		if slices.ContainsFunc(r.achievements[saveID], func(known omnisave.Achievement) bool {
+			return known.ID == achievement.ID
+		}) {
+			continue
+		}
+		r.achievements[saveID] = append(r.achievements[saveID], achievement)
+		recorded = append(recorded, achievement)
+	}
+	return recorded, nil
+}
+
+func (r *MemoryRepository) ListAchievements(_ context.Context, saveID string) ([]omnisave.Achievement, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.saves[saveID]; !ok {
+		return nil, storage.ErrNotFound
+	}
+	achievements := slices.Clone(r.achievements[saveID])
+	slices.SortFunc(achievements, func(left, right omnisave.Achievement) int {
+		if !left.UnlockedAt.Equal(right.UnlockedAt) {
+			return left.UnlockedAt.Compare(right.UnlockedAt)
+		}
+		return strings.Compare(left.ID, right.ID)
+	})
+	return achievements, nil
 }
 
 func (r *MemoryRepository) GetRevision(_ context.Context, saveID, revisionID string) (*omnisave.Revision, error) {
@@ -333,6 +379,15 @@ func (r *MemoryRepository) DeleteRevision(_ context.Context, saveID, revisionID 
 			delete(r.revisions, creator)
 		} else {
 			r.revisions[creator] = kept
+		}
+	}
+	// A mark placed on the deleted node goes back to waiting rather than
+	// vanishing with it, matching the SQL repository's ON DELETE SET NULL.
+	for saveID, achievements := range r.achievements {
+		for index, achievement := range achievements {
+			if achievement.RevisionID != nil && *achievement.RevisionID == revisionID {
+				r.achievements[saveID][index].RevisionID = nil
+			}
 		}
 	}
 	r.pruneUnusedBlobs()

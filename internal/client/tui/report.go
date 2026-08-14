@@ -174,6 +174,20 @@ func (r *TrackReport) Forked(title, omnisaveName string) {
 	r.event(title, "save forked as "+omnisaveName)
 }
 
+// Unlocked records achievements this pass watched a game unlock and reported.
+// One is named; more are counted, because a run that finishes several at once
+// would otherwise fill the report with them.
+func (r *TrackReport) Unlocked(title string, names []string) {
+	switch len(names) {
+	case 0:
+		return
+	case 1:
+		r.event(title, "unlocked "+names[0])
+	default:
+		r.event(title, fmt.Sprintf("unlocked %s and %d more", names[0], len(names)-1))
+	}
+}
+
 // UpToDate records a game whose saves needed nothing this pass, so every
 // tracked game still gets its line.
 func (r *TrackReport) UpToDate(title string) {
