@@ -72,6 +72,8 @@ func runWithOutput(ctx context.Context, arguments []string, output io.Writer) er
 		return runWatch(ctx, scanner, arguments[1:])
 	case "bind":
 		return runBind(ctx, scanner, arguments[1:])
+	case "upgrade":
+		return runUpgrade(ctx, arguments[1:])
 	case "help", "-h", "--help":
 		printUsage(output)
 		return nil
@@ -83,7 +85,7 @@ func runWithOutput(ctx context.Context, arguments []string, output io.Writer) er
 		if strings.HasPrefix(arguments[0], "-") {
 			return runApp(ctx, scanner, arguments)
 		}
-		return fmt.Errorf("unknown command %q; run omnisave with no command, or use track, sync, watch, connect, scan, or bind", arguments[0])
+		return fmt.Errorf("unknown command %q; run omnisave with no command, or use track, sync, watch, connect, scan, bind, or upgrade", arguments[0])
 	}
 }
 
@@ -1700,6 +1702,7 @@ Usage:
   omnisave connect [--server URL] [--state path]
   omnisave scan [--verbose]
   omnisave bind [--state path]
+  omnisave upgrade [--check] [--version 0.2.0]
 
 Run omnisave with no command to run Omnisave. It skips whatever this
 device already did: it connects this device only if it holds no credential,
@@ -1724,6 +1727,9 @@ Commands:
            when nothing announces, such as from outside the network.
   scan     Discover installed targets, games, and saves without changing state
   bind     Choose which Omnisave a discovered local save should synchronize with
+  upgrade  Replace this client with the newest published release, verified
+           against the release checksums before anything is installed. Use
+           --check to see whether one is available without installing it.
 
 Once connected, this device holds its own credential and later commands need
 no token or address. The connection can still be overridden per command with
