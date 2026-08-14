@@ -29,3 +29,4 @@ what the system does.
 | [ADR-014](ADR-014-durable-proof-before-forgetting.md)    | Require durable proof before forgetting data                   | 2026-08-09 |
 | [ADR-015](ADR-015-client-binary-distribution.md)         | Install the client from prebuilt release archives              | 2026-08-13 |
 | [ADR-016](ADR-016-synchronized-release-distributions.md) | Publish every distribution from one version tag                | 2026-08-13 |
+| [ADR-017](ADR-017-client-user-service.md)                | Run the client as a service the player owns                    | 2026-08-13 |

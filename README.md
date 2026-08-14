@@ -58,6 +58,25 @@ Choose the games to track when prompted. Omnisave performs an initial sync and k
 omnisave track
 ```
 
+## Keep syncing in the background
+
+Install Omnisave as a background service to keep syncing after you close the
+terminal:
+
+```sh
+omnisave service install
+omnisave service status
+omnisave service uninstall
+```
+
+Connect to your server and choose games before installing the service. It runs
+as your user, starts at boot on supported Linux systems, and starts when you
+sign in on macOS and Windows.
+
+On Steam Deck, complete setup in Desktop Mode and accept the background-syncing
+prompt before returning to Gaming Mode. Return to Desktop Mode to track newly
+installed games.
+
 ## Back up and update
 
 Your complete save history is in the Compose `data` volume, under `/data/store` inside the container. Back up that directory while the service is stopped when possible. The store is self-contained, and saves can be recovered without a running server; see [manual recovery](docs/RECOVERY.md).

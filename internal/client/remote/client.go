@@ -31,6 +31,9 @@ type Client struct {
 	// timeout would abort a large save transfer mid-flight, so transfers get
 	// a client bounded at the dial and response-header stages instead.
 	transferClient *http.Client
+	// eventSilence is how long the event stream may say nothing before it is
+	// treated as dead. Zero means the default.
+	eventSilence time.Duration
 }
 
 // ResolveGame maps local identity evidence to a server-owned catalog Game.

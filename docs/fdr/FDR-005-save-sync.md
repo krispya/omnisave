@@ -1,7 +1,7 @@
 # FDR-005: Save Sync
 
 **Status:** Experimental
-**Last reviewed:** 2026-08-11
+**Last reviewed:** 2026-08-13
 
 ## Overview
 
@@ -49,6 +49,12 @@ path, syncing-down built the read path; sync makes both routine.
   server's event stream announces movement — a Dash restore reaches a
   watching Device in seconds — and periodically as the fallback while the
   stream is down. It never prompts.
+- `omnisave service install` keeps watch running through the platform's native
+  per-user background manager. It requires a connected device, starts the
+  service immediately, and arranges for it to return at boot or login.
+  `service status` distinguishes running, stopped, and not installed;
+  `service uninstall` stops it and removes its definition. Linux, macOS, and
+  Windows expose the same commands.
 - Diverged saves are reported — "save diverged from …; run
   omnisave track to resolve" — and skipped until someone answers: fork
   here, and this Device's progress continues as a new lineage, or take
@@ -298,16 +304,18 @@ live view's line is what keeps it visible. And the pass a silent run does
 at startup leaves no record of itself; only what happens next is written
 down.
 
-### 8. Watch is a foreground process; the OS owns its lifetime
+### 8. Watch is a foreground process; the native manager owns its lifetime
 
-**Decision:** Watch runs in the foreground until stopped. Restarts,
-boot-time start, and logging belong to the service manager
-(systemd --user, launchd); a shipped service unit is deployment work.
+**Decision:** Watch runs in the foreground until stopped. Starting it again,
+starting it at boot or login, and logging belong to the platform's native
+per-user manager. The client installs the matching systemd user unit,
+LaunchAgent, or Scheduled Task ([ADR-017](../adr/ADR-017-client-user-service.md)).
 **Why:** Daemonization rituals are obsolete; service managers supervise
 better than any hand-rolled fork-and-pidfile dance, and a foreground
 process is trivially debuggable.
-**Tradeoff:** Until packaging lands, "install the watcher" is a second
-manual step after installing the binary.
+**Tradeoff:** Installing the service is still its own step, taken once. The
+client writes a native definition outside its own state directory and must
+keep three platform lifecycles behaviorally aligned.
 
 ### 9. Artifacts are compressed at rest and in transit
 
@@ -600,6 +608,35 @@ drops the summary rather than updating it, so the pass after any real sync
 reads the save once to re-establish it; that pass had already done far more
 work than one read.
 
+### 20. Every way a watcher goes quiet has to end on its own
+
+**Decision:** Watch recovers from its own failures without anything
+external prompting it. A failed pass is retried on a backoff that starts
+well inside the pull interval and grows to it, rather than waiting for the
+next scheduled pull. A failed pass keeps the file list the last successful
+pass proved, instead of adopting the empty one it just failed to build. And
+the event stream is ended by silence: a stream that says nothing at all for
+several of the server's keepalive intervals is redialed rather than read
+from forever.
+**Why:** Every trigger watch has assumes something still works. The poll
+notices local writes, but only among files a pass discovered — so a pass
+that failed and cleared that list leaves the poll comparing nothing, and
+the device stops noticing its own saves for as long as the server is
+unreachable. Server-side movement arrives on the event stream, but a
+device that suspends wakes holding a socket whose peer is gone without
+having said so: no bytes, no error, and a read that blocks for as long as
+the kernel keeps it. Both failures are invisible, both leave the periodic
+pull as the only remaining trigger, and the pull is spaced for a server
+with nothing to say rather than for a client that has lost track of it.
+On the devices this matters most for there is nobody watching a terminal to
+notice, so recovering has to be something the loop does rather than
+something a person does.
+**Tradeoff:** Three more pieces of timing to reason about, and a
+handheld that spends a day out of range wakes up to redial and retry on a
+schedule it cannot be told to skip. The retry ceiling is the pull interval
+precisely so that a device with no server ends up asking exactly as often
+as a device with a quiet one.
+
 ## Related
 
 - **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — heads move
@@ -610,7 +647,10 @@ work than one read.
   committed revision comes to rest, and why the content a sync-down replaces
   is recoverable from the store alone;
   [ADR-014](../adr/ADR-014-durable-proof-before-forgetting.md) — the durable
-  proof required before revision content can be forgotten.
+  proof required before revision content can be forgotten;
+  [ADR-017](../adr/ADR-017-client-user-service.md) — running watch with
+  nobody in front of it, which is what makes decision 20's recoveries the
+  only ones a device gets.
 - **FDRs:** [FDR-003](FDR-003-automatic-save-binding.md) — the binding
   pass whose automatic half sync re-runs and whose lineage philosophy
   divergence inherits; [FDR-004](FDR-004-sync-to-device.md) — joining a
