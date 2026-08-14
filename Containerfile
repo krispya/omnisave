@@ -3,7 +3,7 @@
 FROM node:26-alpine AS web-builder
 WORKDIR /src
 
-RUN npm install --global pnpm@11.13.0
+RUN npm install --global pnpm@11.13.1
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 COPY .config .config
 COPY apps/dash/package.json apps/dash/package.json
@@ -28,7 +28,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 FROM alpine:3.23
 LABEL org.opencontainers.image.title="Omnisave" \
       org.opencontainers.image.description="Self-hosted, versioned game-save synchronization" \
-      org.opencontainers.image.source="https://github.com/krisbaumgartner/omnisave"
+      org.opencontainers.image.source="https://github.com/krispya/omnisave" \
+      org.opencontainers.image.licenses="ISC"
 
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -S -g 10001 omnisave \
