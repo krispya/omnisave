@@ -632,7 +632,7 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 			return nil
 		}
 	} else if isatty.IsTerminal(os.Stdout.Fd()) {
-		suggestService(ctx)
+		suggestService(ctx, *statePath)
 	}
 	return keepTracking(ctx, scanner, server, store, &state, scans,
 		watchSeed{detector: detector, presence: presence, deferred: deferredPulls}, pass, *serverURL, *token)

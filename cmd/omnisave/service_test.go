@@ -34,6 +34,18 @@ func TestInstallingTheServiceRefusesAnUnconnectedDevice(t *testing.T) {
 	}
 }
 
+// A word the parse leaves over is a word about to be silently dropped — and
+// "service --state x install" dropping its action would report status, exit
+// zero, and let the player walk away believing the service is on.
+func TestServiceRefusesArgumentsItWouldOtherwiseDrop(t *testing.T) {
+	if err := runService(context.Background(), []string{"install", "now"}); err == nil {
+		t.Fatal("service ignored an argument after the action")
+	}
+	if err := runService(context.Background(), []string{"--state", "x", "install"}); err == nil {
+		t.Fatal("service accepted a flag it does not have")
+	}
+}
+
 func TestServiceRejectsAnUnknownAction(t *testing.T) {
 	err := runService(context.Background(), []string{"enable"})
 	if err == nil {

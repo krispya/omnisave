@@ -22,18 +22,9 @@ func serviceReport(sentences ...string) {
 
 // ServiceInstalled confirms a service that is now running. It says when the
 // service comes back on its own, because that is the whole reason to install
-// one, and the answer differs by whether linger was allowed.
+// one.
 func ServiceInstalled(status service.Status) {
-	sentences := []string{"Running", startsWhen(status)}
-	if !status.Lingering {
-		// Enabling linger can be refused — a policy that will not authorize it
-		// without a prompt there is nobody to answer. The service still works;
-		// it just waits for a session, so this names the one command that
-		// closes the gap rather than treating the install as incomplete.
-		sentences = append(sentences, "Run loginctl enable-linger to start it before anyone logs in")
-	}
-	sentences = append(sentences, "Defined in "+status.Definition)
-	serviceReport(sentences...)
+	serviceReport("Running", startsWhen(status), "Defined in "+status.Definition)
 }
 
 // ServiceUninstalled confirms a device with no service left on it.
@@ -68,10 +59,10 @@ func ServiceUnsupported() {
 // startsWhen says what brings the service back without anyone asking, which
 // is the difference between a service and a command someone remembered to run.
 func startsWhen(status service.Status) string {
-	switch {
-	case status.Enabled && status.Lingering:
+	switch status.Start {
+	case service.StartAtBoot:
 		return "Starts at boot"
-	case status.Enabled:
+	case service.StartAtLogin:
 		return "Starts when you log in"
 	default:
 		return "Does not start on its own"

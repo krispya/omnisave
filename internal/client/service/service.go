@@ -5,7 +5,7 @@
 // from and no session that outlives switching away.
 //
 // The service grants the client nothing. It runs as the same user, from the
-// same binary, with the same access a terminal would give it (ADR-016). What
+// same binary, with the same access a terminal would give it (ADR-017). What
 // it changes is that no one has to be there to start it.
 package service
 
@@ -34,6 +34,17 @@ type Config struct {
 	Executable string
 }
 
+// StartMode says when an enabled service comes back without being started by
+// the player. Login is the portable baseline; Linux can additionally start at
+// boot when the user's systemd manager is allowed to linger.
+type StartMode uint8
+
+const (
+	StartManually StartMode = iota
+	StartAtLogin
+	StartAtBoot
+)
+
 // Status is what a device can say about its own background service without
 // reading a log. Every field is false on a platform with no manager, so a
 // caller that only wants to know whether to suggest installing one needs no
@@ -46,10 +57,8 @@ type Status struct {
 	Enabled bool
 	// Running reports a live process right now.
 	Running bool
-	// Lingering reports that it starts before anyone logs in. A service that
-	// is enabled but not lingering still comes back on its own; it just waits
-	// for a session first.
-	Lingering bool
+	// Start reports when an enabled service comes back on its own.
+	Start StartMode
 	// Definition is where the service is written, for output that has to name
 	// a file the player can read.
 	Definition string

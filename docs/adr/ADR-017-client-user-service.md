@@ -34,10 +34,17 @@ The service runs as the player, from the player's own session manager, using
 the same binary [ADR-015](ADR-015-client-binary-distribution.md) installed.
 It grants the client nothing: the same UID, the same home directory, the same
 access a terminal would have given it. What it changes is that no one has to
-be there to start it. On Linux that is a systemd user unit at
-`~/.config/systemd/user/omnisave.service`; macOS and Windows have the same
-shape available — a launch agent and a scheduled task, both per-user and
-session-started — and are not implemented yet.
+be there to start it. Each platform uses its native per-user manager: a systemd
+user unit on Linux, a LaunchAgent on macOS, and a logon-triggered Scheduled Task
+on Windows. Their readable definitions live under the player's home directory,
+and none requires administrator access.
+
+The portable baseline is starting when the player signs in. Linux additionally
+asks logind to keep the user's manager alive without a session, which lets the
+service start at boot and carries a Steam Deck across the switch from Desktop
+Mode to Gaming Mode. A refused linger request leaves a working login-started
+service. LaunchAgents and interactive Scheduled Tasks intentionally wait for a
+login because they run with that user's session and access.
 
 Three actions, no more: `install` defines the service and starts it,
 `uninstall` stops and removes it, `status` says whether it is running. There
@@ -70,13 +77,6 @@ instead of proceeding to watch, because two watchers on one device would be
 two passes writing the same tracking state. Later runs do not ask again; they
 mention the command in one dim line and get on with the work.
 
-**Linger is an improvement, not a requirement.** `loginctl enable-linger`
-starts the user's manager at boot and keeps it alive with no session, which is
-what carries the service across the gap while a Steam Deck switches out of
-Desktop Mode. It can be refused by a policy with nobody there to authorize it,
-so a refusal does not fail the install — the service still starts with the
-session, and the status says which of the two the device has.
-
 ## Consequences
 
 Easier:
@@ -85,16 +85,19 @@ Easier:
   Mode, across mode switches and reboots, with no terminal.
 - The service survives a SteamOS update, because it is defined in `$HOME`
   alongside the binary.
+- macOS and Windows players get the same install, status, uninstall, and
+  upgrade behavior through their native per-user managers.
 - A player can ask a device with no display whether it is actually running,
   and get an answer that separates stopped from never installed.
 - Upgrading a headless device leaves it running the client it just installed.
 
 More difficult:
 
-- Three platforms will need three implementations of the same shape, and only
-  one exists; macOS and Windows say so plainly rather than pretending.
+- Three native managers implement the same lifecycle, and their definitions,
+  status models, failure messages, and restart rules must remain aligned.
 - The client now writes a file outside its own state directory, and a player
-  who edits that unit will have it overwritten by the next install.
+  who edits that native definition will have it overwritten by the next
+  install.
 - A device running the service and a player running `omnisave` by hand are two
   clients over one tracking state. The first-run offer ends its own run to
   avoid it, but nothing prevents it afterward.

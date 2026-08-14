@@ -74,6 +74,7 @@ func manager(t *testing.T) (*service.Systemd, *recorder) {
 func running(commands *recorder) {
 	commands.answers["systemctl --user is-enabled "+service.UnitName] = "enabled"
 	commands.answers["systemctl --user is-active "+service.UnitName] = "active"
+	commands.answers["systemctl --user show "+service.UnitName+" --property=ActiveState --value"] = "active"
 	commands.answers["loginctl show-user deck --property=Linger --value"] = "yes"
 }
 
@@ -116,7 +117,7 @@ func TestInstallWritesTheUnitAndStartsIt(t *testing.T) {
 	if commands.index("systemctl --user daemon-reload") > commands.index("systemctl --user enable "+service.UnitName) {
 		t.Errorf("enable ran before daemon-reload: %v", commands.commands)
 	}
-	if !status.Installed || !status.Enabled || !status.Running || !status.Lingering {
+	if !status.Installed || !status.Enabled || !status.Running || status.Start != service.StartAtBoot {
 		t.Errorf("install reported %+v; want a service that is on in every sense", status)
 	}
 }
@@ -161,6 +162,25 @@ func TestInstallQuotesAPathWithSpaces(t *testing.T) {
 	}
 }
 
+// ExecStart expands % specifiers and $ variables even inside quotes, so a
+// path carrying either would come out changed — or fail the unit outright on
+// an unknown specifier. Both are escaped so the service runs the client that
+// was asked for, wherever it was installed.
+func TestInstallEscapesSpecifiersAndVariablesInThePath(t *testing.T) {
+	systemd, commands := manager(t)
+	running(commands)
+	if _, err := systemd.Install(context.Background(), service.Config{Executable: "/home/deck/100% games/om$ave"}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	unit, err := os.ReadFile(systemd.UnitPath)
+	if err != nil {
+		t.Fatalf("read unit: %v", err)
+	}
+	if !strings.Contains(string(unit), `ExecStart="/home/deck/100%% games/om$$ave" watch`) {
+		t.Errorf("unit did not escape the path for systemd:\n%s", unit)
+	}
+}
+
 // Linger can be refused by policy with nobody there to authorize it. The
 // service still starts with the session, so the install stands and only the
 // status says the gap is there.
@@ -177,8 +197,11 @@ func TestInstallSurvivesRefusedLinger(t *testing.T) {
 	if !status.Running || !status.Enabled {
 		t.Errorf("install reported %+v; want a running, enabled service", status)
 	}
-	if status.Lingering {
+	if status.Start == service.StartAtBoot {
 		t.Error("install claimed linger after it was refused")
+	}
+	if status.Start != service.StartAtLogin {
+		t.Errorf("install reported start mode %v; want login after linger was refused", status.Start)
 	}
 }
 
@@ -303,7 +326,7 @@ func TestRestartOnlyRestartsARunningService(t *testing.T) {
 
 	// A service the player stopped stays stopped: an upgrade replacing a
 	// binary is no reason to start something that was turned off.
-	commands.answers["systemctl --user is-active "+service.UnitName] = "inactive"
+	commands.answers["systemctl --user show "+service.UnitName+" --property=ActiveState --value"] = "inactive"
 	commands.commands = nil
 	restarted, err = systemd.Restart(context.Background())
 	if err != nil {
@@ -322,6 +345,24 @@ func TestRestartWithNoServiceDoesNothing(t *testing.T) {
 	}
 	if restarted || len(commands.commands) != 0 {
 		t.Errorf("restart acted on a device with no service: %v", commands.commands)
+	}
+}
+
+// A manager that cannot be reached is not a service that is stopped: telling
+// an upgrade "nothing was running" would leave a lingering service executing
+// the binary it just replaced, silently, on the devices with nobody watching.
+func TestRestartReportsAManagerItCannotReach(t *testing.T) {
+	systemd, commands := manager(t)
+	running(commands)
+	if _, err := systemd.Install(context.Background(), service.Config{Executable: "/bin/omnisave"}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	commands.failures["systemctl --user show "+service.UnitName+" --property=ActiveState --value"] = "Failed to connect to bus: No such file or directory"
+
+	if _, err := systemd.Restart(context.Background()); err == nil {
+		t.Fatal("restart called an unreachable manager a stopped service")
+	} else if !strings.Contains(err.Error(), "Failed to connect to bus") {
+		t.Errorf("restart reported %q; want systemctl's own words", err)
 	}
 }
 
@@ -351,9 +392,13 @@ func TestUnsupportedPlatformsAnswerRatherThanFail(t *testing.T) {
 func TestSupportedMatchesTheManager(t *testing.T) {
 	// The two have to agree: every command branches on Supported and then
 	// acts through the manager.
-	_, isSystemd := service.PlatformManager().(*service.Systemd)
-	if isSystemd != service.Supported() {
+	manager := service.PlatformManager()
+	_, isSystemd := manager.(*service.Systemd)
+	_, isLaunchd := manager.(*service.Launchd)
+	_, isScheduledTask := manager.(*service.ScheduledTask)
+	implemented := isSystemd || isLaunchd || isScheduledTask
+	if implemented != service.Supported() {
 		t.Errorf("Supported() is %t but the manager is %s",
-			service.Supported(), fmt.Sprintf("%T", service.PlatformManager()))
+			service.Supported(), fmt.Sprintf("%T", manager))
 	}
 }

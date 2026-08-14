@@ -86,17 +86,23 @@ func runCommand(ctx context.Context, name string, arguments ...string) ([]byte, 
 }
 
 // systemctl runs one user-instance systemctl command, reporting the tool's own
-// words on failure: "Failed to connect to bus" is the whole diagnosis on a
-// machine with no user manager, and rephrasing it would lose that.
+// words on failure.
 func (s *Systemd) systemctl(ctx context.Context, arguments ...string) error {
 	output, err := s.Run(ctx, "systemctl", append([]string{"--user"}, arguments...)...)
 	if err != nil {
-		if detail := strings.TrimSpace(string(output)); detail != "" {
-			return fmt.Errorf("systemctl --user %s: %s", strings.Join(arguments, " "), detail)
-		}
-		return fmt.Errorf("systemctl --user %s: %w", strings.Join(arguments, " "), err)
+		return commandError(arguments, output, err)
 	}
 	return nil
+}
+
+// commandError reports a failed systemctl command in the tool's own words:
+// "Failed to connect to bus" is the whole diagnosis on a machine with no
+// user manager, and rephrasing it would lose that.
+func commandError(arguments []string, output []byte, err error) error {
+	if detail := strings.TrimSpace(string(output)); detail != "" {
+		return fmt.Errorf("systemctl --user %s: %s", strings.Join(arguments, " "), detail)
+	}
+	return fmt.Errorf("systemctl --user %s: %w", strings.Join(arguments, " "), err)
 }
 
 // query asks systemctl a question whose answer is its output. These commands
@@ -137,7 +143,20 @@ func (s *Systemd) Install(ctx context.Context, config Config) (Status, error) {
 	// requirement: without it the service still starts with the session, so
 	// a refusal here is reported by the status it returns, not raised.
 	s.enableLinger(ctx)
-	return s.Status(ctx)
+	status, err := s.Status(ctx)
+	if err != nil {
+		// Everything past the restart already happened: the service is
+		// running. A status that cannot be read back must not turn a
+		// completed install into a reported failure — the first-run offer
+		// treats failure as "keep watching from this run", which would put a
+		// second watcher beside the one this just started.
+		start := StartAtLogin
+		if s.lingering(ctx) {
+			start = StartAtBoot
+		}
+		return Status{Installed: true, Enabled: true, Running: true, Start: start, Definition: s.UnitPath}, nil
+	}
+	return status, nil
 }
 
 func (s *Systemd) enableLinger(ctx context.Context) {
@@ -179,7 +198,12 @@ func (s *Systemd) Status(ctx context.Context) (Status, error) {
 	status.Installed = true
 	status.Enabled = s.query(ctx, "is-enabled", UnitName) == "enabled"
 	status.Running = s.query(ctx, "is-active", UnitName) == "active"
-	status.Lingering = s.lingering(ctx)
+	if status.Enabled {
+		status.Start = StartAtLogin
+		if s.lingering(ctx) {
+			status.Start = StartAtBoot
+		}
+	}
 	return status, nil
 }
 
@@ -195,9 +219,25 @@ func (s *Systemd) lingering(ctx context.Context) bool {
 }
 
 func (s *Systemd) Restart(ctx context.Context) (bool, error) {
-	status, err := s.Status(ctx)
-	if err != nil || !status.Running {
+	if _, err := os.Stat(s.UnitPath); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
 		return false, err
+	}
+	// show answers for a stopped unit too and fails only when the manager
+	// itself cannot be reached — the difference between "not running", which
+	// is an answer, and "cannot tell", which must not be allowed to read as
+	// one: a caller told "nothing was running" would walk away from a
+	// lingering service still executing the binary it just replaced.
+	// is-active collapses the two into one non-zero exit.
+	arguments := []string{"show", UnitName, "--property=ActiveState", "--value"}
+	output, err := s.Run(ctx, "systemctl", append([]string{"--user"}, arguments...)...)
+	if err != nil {
+		return false, commandError(arguments, output, err)
+	}
+	if strings.TrimSpace(string(output)) != "active" {
+		return false, nil
 	}
 	if err := s.systemctl(ctx, "restart", UnitName); err != nil {
 		return false, err
@@ -205,16 +245,19 @@ func (s *Systemd) Restart(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// quoteArgument renders one path as systemd reads it. A bare path is left
+// quoteArgument renders one path as systemd reads it. Specifiers and
+// variables are escaped first, because ExecStart expands % and $ even inside
+// quotes and the path has to come out unchanged. A bare path is then left
 // bare — that is what every unit on the device looks like, and a reader
 // checking what the service runs should not have to see past quoting to do
 // it — and anything systemd's parser would split is quoted.
 func quoteArgument(path string) string {
-	if !strings.ContainsAny(path, " \t\"'\\") {
-		return path
+	escaped := strings.NewReplacer(`%`, `%%`, `$`, `$$`).Replace(path)
+	if !strings.ContainsAny(escaped, " \t\"'\\") {
+		return escaped
 	}
-	replacer := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
-	return `"` + replacer.Replace(path) + `"`
+	quoter := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	return `"` + quoter.Replace(escaped) + `"`
 }
 
 var _ Manager = (*Systemd)(nil)

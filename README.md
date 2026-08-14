@@ -60,8 +60,8 @@ omnisave track
 
 ## Keep syncing in the background
 
-On Linux and SteamOS, install Omnisave as a background service to keep syncing
-after you close the terminal:
+Install Omnisave as a background service to keep syncing after you close the
+terminal:
 
 ```sh
 omnisave service install
@@ -70,7 +70,8 @@ omnisave service uninstall
 ```
 
 Connect to your server and choose games before installing the service. It runs
-as your user and starts automatically after a reboot or crash.
+as your user, starts at boot on supported Linux systems, and starts when you
+sign in on macOS and Windows.
 
 On Steam Deck, complete setup in Desktop Mode and accept the background-syncing
 prompt before returning to Gaming Mode. Return to Desktop Mode to track newly

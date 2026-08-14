@@ -1,7 +1,7 @@
 # FDR-005: Save Sync
 
 **Status:** Experimental
-**Last reviewed:** 2026-08-11
+**Last reviewed:** 2026-08-13
 
 ## Overview
 
@@ -49,6 +49,12 @@ path, syncing-down built the read path; sync makes both routine.
   server's event stream announces movement — a Dash restore reaches a
   watching Device in seconds — and periodically as the fallback while the
   stream is down. It never prompts.
+- `omnisave service install` keeps watch running through the platform's native
+  per-user background manager. It requires a connected device, starts the
+  service immediately, and arranges for it to return at boot or login.
+  `service status` distinguishes running, stopped, and not installed;
+  `service uninstall` stops it and removes its definition. Linux, macOS, and
+  Windows expose the same commands.
 - Diverged saves are reported — "save diverged from …; run
   omnisave track to resolve" — and skipped until someone answers: fork
   here, and this Device's progress continues as a new lineage, or take
@@ -298,17 +304,18 @@ live view's line is what keeps it visible. And the pass a silent run does
 at startup leaves no record of itself; only what happens next is written
 down.
 
-### 8. Watch is a foreground process; the OS owns its lifetime
+### 8. Watch is a foreground process; the native manager owns its lifetime
 
-**Decision:** Watch runs in the foreground until stopped. Restarts,
-boot-time start, and logging belong to the service manager, and the client
-ships the unit for one rather than supervising itself
-([ADR-017](../adr/ADR-017-client-user-service.md)).
+**Decision:** Watch runs in the foreground until stopped. Starting it again,
+starting it at boot or login, and logging belong to the platform's native
+per-user manager. The client installs the matching systemd user unit,
+LaunchAgent, or Scheduled Task ([ADR-017](../adr/ADR-017-client-user-service.md)).
 **Why:** Daemonization rituals are obsolete; service managers supervise
 better than any hand-rolled fork-and-pidfile dance, and a foreground
 process is trivially debuggable.
-**Tradeoff:** Installing the service is still its own step, taken once, and
-the client now writes a file outside its own state directory to do it.
+**Tradeoff:** Installing the service is still its own step, taken once. The
+client writes a native definition outside its own state directory and must
+keep three platform lifecycles behaviorally aligned.
 
 ### 9. Artifacts are compressed at rest and in transit
 
