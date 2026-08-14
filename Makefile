@@ -25,9 +25,20 @@ build-server:
 	go build -trimpath -o bin/omnisave-server ./cmd/server
 
 build-client:
-	go build -ldflags="$(CLIENT_LDFLAGS)" -o bin/omnisave ./cmd/omnisave
+	go build -trimpath -ldflags="$(CLIENT_LDFLAGS)" -o bin/omnisave ./cmd/omnisave
 
 build-all: build-web build-server
+
+# ── Client release archives ───────────────────────────────────────────────────
+
+dist-client:
+	VERSION=$(VERSION) BUILD=$(BUILD) ./scripts/package-client.sh
+	./scripts/verify-client-archives.sh \
+		dist/omnisave-$(VERSION)-linux-amd64.tar.gz \
+		dist/omnisave-$(VERSION)-linux-arm64.tar.gz \
+		dist/omnisave-$(VERSION)-darwin-amd64.tar.gz \
+		dist/omnisave-$(VERSION)-darwin-arm64.tar.gz \
+		dist/omnisave-$(VERSION)-windows-amd64.zip
 
 test:
 	@if [ -n "$(F)" ] && [ -z "$(TEST_FILTER_PACKAGES)" ]; then \
@@ -71,4 +82,5 @@ build-spk-armv8: build-web
 	VERSION=$(VERSION) BUILD=$(BUILD) SPK_ARCH=armv8 ./scripts/package-synology.sh
 
 .PHONY: install install-client build-web build-server build-client build-all test \
-		build-oci push-oci export-oci build-spk build-spk-x86_64 build-spk-armv8
+		dist-client build-oci push-oci export-oci build-spk build-spk-x86_64 \
+		build-spk-armv8
