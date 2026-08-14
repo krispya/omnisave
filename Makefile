@@ -4,7 +4,7 @@ VERSION ?= 0.1.0
 BUILD ?= $(shell git rev-list --count HEAD)
 BUILD := $(BUILD)
 CLIENT_LDFLAGS = -X main.version=$(VERSION) -X main.buildNumber=$(BUILD)
-OCI_IMAGE ?= ghcr.io/krisbaumgartner/omnisave
+OCI_IMAGE ?= ghcr.io/krispya/omnisave
 OCI_PLATFORMS ?= linux/amd64,linux/arm64
 TEST_GOALS = $(filter-out test,$(MAKECMDGOALS))
 TEST_FILTER_PACKAGES = $(addsuffix /...,$(shell find . -type d -name '$(F)' 2>/dev/null))
@@ -25,9 +25,24 @@ build-server:
 	go build -trimpath -o bin/omnisave-server ./cmd/server
 
 build-client:
-	go build -ldflags="$(CLIENT_LDFLAGS)" -o bin/omnisave ./cmd/omnisave
+	go build -trimpath -ldflags="$(CLIENT_LDFLAGS)" -o bin/omnisave ./cmd/omnisave
 
 build-all: build-web build-server
+
+# ── Client release archives ───────────────────────────────────────────────────
+
+dist-client:
+	VERSION=$(VERSION) BUILD=$(BUILD) ./scripts/package-client.sh
+	./scripts/verify-client-archives.sh \
+		dist/omnisave-$(VERSION)-linux-amd64.tar.gz \
+		dist/omnisave-$(VERSION)-linux-arm64.tar.gz \
+		dist/omnisave-$(VERSION)-darwin-amd64.tar.gz \
+		dist/omnisave-$(VERSION)-darwin-arm64.tar.gz \
+		dist/omnisave-$(VERSION)-windows-amd64.zip
+
+# Build every downloadable artifact for one version. OCI images are published
+# separately because a multi-platform image has no single local archive.
+dist-release: dist-client build-spk
 
 test:
 	@if [ -n "$(F)" ] && [ -z "$(TEST_FILTER_PACKAGES)" ]; then \
@@ -71,4 +86,5 @@ build-spk-armv8: build-web
 	VERSION=$(VERSION) BUILD=$(BUILD) SPK_ARCH=armv8 ./scripts/package-synology.sh
 
 .PHONY: install install-client build-web build-server build-client build-all test \
-		build-oci push-oci export-oci build-spk build-spk-x86_64 build-spk-armv8
+		dist-client dist-release build-oci push-oci export-oci build-spk build-spk-x86_64 \
+		build-spk-armv8
