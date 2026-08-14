@@ -27,6 +27,17 @@ const (
 	// eventsMaxLine caps one SSE line. Real lines are tiny; the cap keeps a
 	// corrupt stream from growing the scanner without bound.
 	eventsMaxLine = 1 << 20
+	// eventsSilenceLimit is how long a stream may say nothing before it is
+	// treated as dead. The server sends a keepalive every 15 seconds, so a
+	// live stream is never quiet for long and this is several missed ones.
+	//
+	// It exists for the case a handheld makes ordinary: a device suspends,
+	// its peer goes away without ever saying so, and it wakes holding a
+	// socket that will never deliver another byte and will never report an
+	// error either. A read on that socket blocks for as long as the kernel
+	// keeps it, which is far longer than anyone waits for their save. Silence
+	// is the only evidence such a stream leaves, so silence is what ends it.
+	eventsSilenceLimit = 45 * time.Second
 )
 
 // streamOutcome is how one connection ended — what the retry loop needs to
@@ -43,6 +54,15 @@ const (
 	// cannot fix.
 	streamRefused
 )
+
+// silenceLimit is how long this client waits on a quiet stream before
+// redialing it.
+func (c *Client) silenceLimit() time.Duration {
+	if c.eventSilence > 0 {
+		return c.eventSilence
+	}
+	return eventsSilenceLimit
+}
 
 // ServerEvents delivers change types, reconnecting dropped streams with backoff.
 // Checkpoints cover missed changes and are suppressed when already delivered.
@@ -80,12 +100,20 @@ func (c *Client) ServerEvents(ctx context.Context) <-chan string {
 // lastEventID persists across connections: it is what recognizes a
 // reconnect's checkpoint as already delivered instead of as movement.
 func (c *Client) streamServerEvents(ctx context.Context, stream *http.Client, events chan<- string, lastEventID *uint64) streamOutcome {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/events", nil)
+	// Cancelling this request is the only way to end a read that will never
+	// return on its own, so the silence watchdog gets a context of its own to
+	// cancel. It is armed before the request rather than after it, because a
+	// dial that hangs is the same problem arriving one step earlier.
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	request, err := http.NewRequestWithContext(streamCtx, http.MethodGet, c.baseURL+"/api/v1/events", nil)
 	if err != nil {
 		return streamFailed
 	}
 	request.Header.Set("Authorization", "Bearer "+c.token)
 	request.Header.Set("Accept", "text/event-stream")
+	silence := time.AfterFunc(c.silenceLimit(), cancel)
+	defer silence.Stop()
 	response, err := stream.Do(request)
 	if err != nil {
 		return streamFailed
@@ -104,6 +132,9 @@ func (c *Client) streamServerEvents(ctx context.Context, stream *http.Client, ev
 	eventType := ""
 	eventID, hasEventID := uint64(0), false
 	for scanner.Scan() {
+		// Every line proves the stream is alive, keepalive comments included —
+		// that is what the server sends them for.
+		silence.Reset(c.silenceLimit())
 		line := scanner.Text()
 		switch {
 		case strings.HasPrefix(line, "id:"):
@@ -128,11 +159,18 @@ func (c *Client) streamServerEvents(ctx context.Context, stream *http.Client, ev
 			if !deliver {
 				continue
 			}
+			// Delivery waits on the consumer, not on the peer: the watch
+			// loop takes events between passes, and a pass can outlast the
+			// silence limit. The watchdog is held while the line waits, so a
+			// slow reader is not mistaken for a dead stream, and re-arms the
+			// moment listening resumes.
+			silence.Stop()
 			select {
 			case events <- delivered:
 			case <-ctx.Done():
 				return streamServed
 			}
+			silence.Reset(c.silenceLimit())
 		}
 	}
 	return streamServed

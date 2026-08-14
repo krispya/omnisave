@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/krisbaumgartner/omnisave/internal/client/service"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
 	"github.com/krisbaumgartner/omnisave/internal/client/upgrade"
 )
@@ -77,6 +78,21 @@ func runUpgrade(ctx context.Context, arguments []string) error {
 	if err := upgrade.Replace(path, binary); err != nil {
 		return err
 	}
-	tui.UpgradeApplied(previous, target, path)
+	// Replacing the binary renames the new one over the path, which leaves a
+	// running client executing the file it already opened. That is deliberate
+	// — nothing is interrupted mid-pass — but it means a background service
+	// keeps running the old client until something restarts it, and on the
+	// devices that most need a service there is nobody to notice. A service
+	// that is stopped stays stopped: the upgrade has no business starting
+	// something the player stopped.
+	restarted, err := service.PlatformManager().Restart(ctx)
+	if err != nil {
+		// The upgrade landed. A service that could not be restarted is worth
+		// saying out loud, but it is not a failed upgrade.
+		tui.UpgradeApplied(previous, target, path, false)
+		tui.ServiceFailed(err)
+		return nil
+	}
+	tui.UpgradeApplied(previous, target, path, restarted)
 	return nil
 }
