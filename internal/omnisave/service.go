@@ -59,6 +59,13 @@ type Service interface {
 	Fork(ctx context.Context, omnisaveID string, input ForkOmnisave) (*ForkResult, error)
 	Restore(ctx context.Context, omnisaveID string, input RestoreRevision) (*Omnisave, error)
 
+	// RecordAchievements files unlocks a Device observed against the revision
+	// each one lands on. Recording is idempotent: an ID already recorded for
+	// this save keeps the placement it was first given, so a Device may repeat
+	// a report without moving a mark. It returns only what this call added.
+	RecordAchievements(ctx context.Context, omnisaveID string, unlocks []AchievementUnlock) ([]Achievement, error)
+	ListAchievements(ctx context.Context, omnisaveID string) ([]Achievement, error)
+
 	CommitRevision(ctx context.Context, omnisaveID string, input CreateRevision) (*Revision, error)
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*Revision, error)
 	ListRevisions(ctx context.Context, omnisaveID string) ([]Revision, error)

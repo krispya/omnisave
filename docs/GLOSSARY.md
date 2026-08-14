@@ -32,6 +32,8 @@ User-facing concepts. If a user might say the word, it goes here.
 
 **Labeler**. A per-game script that names a revision from its save content at commit running on the server so every device sees the same name. A labeler with nothing to say leaves the revision unnamed, and a name a person chooses by hand always outranks the labeler's. See [FDR-007](fdr/FDR-007-revision-labeling.md).
 
+**Achievement Mark**. A game achievement placed on the first revision committed at or after it was unlocked, so a history shows where in a playthrough it happened: at that revision it was earned, and before it, not yet. Marks belong to an omnisave rather than to the snapshot, and cover only unlocks a Device watched happen. See [FDR-008](fdr/FDR-008-achievement-marks.md).
+
 **Restore**. Make any revision in an omnisave's tree current without creating or changing a revision. Moving to an ancestor is a **rewind**, moving to a descendant is a **fast-forward**, and moving between sibling branches is a **jump**.
 
 **Fork**. A new omnisave started at an existing revision. It shares that node, its name, and its ancestor path, then synchronizes independently. Later revisions belong only to the omnisave that creates them. Forks, rather than branches, are named and bound to Devices.

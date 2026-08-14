@@ -97,6 +97,19 @@ type Binding struct {
 	// lets a later pass skip reading a save nothing has touched; empty means
 	// nothing is claimed, which is what every binding starts and ends at.
 	LocalSignature string `json:"local_signature,omitempty"`
+	// Achievements is what this Device has already accounted for of the
+	// game's unlocked achievements. Its absence means no pass has looked yet.
+	Achievements *AchievementWatch `json:"achievements,omitempty"`
+}
+
+// AchievementWatch is a binding's place in its game's unlock history. Through
+// is the newest unlock this Device has accounted for; anything newer is
+// something it watched happen and reports. The first look only records where
+// the history already stood, because Omnisave can honestly mark a revision
+// only for an unlock it was there for — everything earned before it started
+// watching belongs to revisions that were never committed.
+type AchievementWatch struct {
+	Through time.Time `json:"through"`
 }
 
 // State contains this machine's tracked games and save bindings.
@@ -388,6 +401,34 @@ func (s *State) RecordVerified(local LocalSave, signature string) {
 			s.Bindings[index].LocalSignature = signature
 			return
 		}
+	}
+}
+
+// AchievementsSeen reports how far this binding has already accounted for the
+// game's unlock history, and whether any pass has looked at all.
+func (s State) AchievementsSeen(local LocalSave) (time.Time, bool) {
+	bound, isBound := s.BindingFor(local)
+	if !isBound || bound.Achievements == nil {
+		return time.Time{}, false
+	}
+	return bound.Achievements.Through, true
+}
+
+// RecordAchievementsSeen advances how far a binding has accounted for its
+// game's unlock history. It only ever moves forward: a report that failed
+// leaves the mark where it was, so the next pass tries again.
+func (s *State) RecordAchievementsSeen(local LocalSave, through time.Time) {
+	probe := Binding{Adapter: local.Adapter, TargetID: local.TargetID, LocalSaveID: local.ID}
+	for index := range s.Bindings {
+		if !sameLocalSave(s.Bindings[index], probe) {
+			continue
+		}
+		watch := s.Bindings[index].Achievements
+		if watch != nil && !through.After(watch.Through) {
+			return
+		}
+		s.Bindings[index].Achievements = &AchievementWatch{Through: through.UTC()}
+		return
 	}
 }
 

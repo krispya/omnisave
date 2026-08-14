@@ -253,6 +253,7 @@ export function GameDetail({
             selectedSave={selectedSave}
             expandedSaveID={selectedSave?.id ?? ''}
             revisions={history.revisions}
+            achievements={history.achievements}
             loadingRevisions={history.loading}
             revisionError={revisionError || history.error}
             focus={focus}

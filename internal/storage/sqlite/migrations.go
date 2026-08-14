@@ -498,6 +498,27 @@ var migrations = []string{
 	// Every name that exists today predates labelers and is therefore manual.
 	`ALTER TABLE revisions ADD COLUMN name_source TEXT NOT NULL DEFAULT '';
 	UPDATE revisions SET name_source = 'manual' WHERE display_name <> '';`,
+
+	// Achievements a Device watched a game unlock, placed on the first
+	// revision committed at or after each one. unlocked_at is whole seconds —
+	// the precision stores publish — and an integer so placement is an exact
+	// comparison rather than a comparison of formatted timestamps.
+	//
+	// revision_id is null while no revision has been committed since the
+	// unlock; the next commit on the save claims every such mark. The
+	// placement survives that revision's deletion by falling back to null,
+	// which the next commit then claims — a mark is never lost with a node.
+	`CREATE TABLE achievements (
+		omnisave_id    TEXT NOT NULL REFERENCES omnisaves(id) ON DELETE CASCADE,
+		achievement_id TEXT NOT NULL,
+		name           TEXT NOT NULL,
+		description    TEXT NOT NULL DEFAULT '',
+		unlocked_at    INTEGER NOT NULL,
+		revision_id    TEXT REFERENCES revisions(id) ON DELETE SET NULL,
+		PRIMARY KEY (omnisave_id, achievement_id)
+	);
+
+	CREATE INDEX achievements_by_revision ON achievements(revision_id);`,
 }
 
 func migrate(db *sql.DB) error {

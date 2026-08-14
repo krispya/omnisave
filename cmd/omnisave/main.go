@@ -589,7 +589,7 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 		if playing, sweepErr := playingNow(taskCtx, detector, presence.matchers); sweepErr == nil {
 			gate = &pullGate{playing: playing}
 		}
-		bindingErr = reconcileSaves(taskCtx, server, &state, scans, confirmed, &outcome, report, prompts, gate, 0)
+		bindingErr = reconcileSaves(taskCtx, scanner, server, &state, scans, confirmed, &outcome, report, prompts, gate, 0)
 		if gate != nil {
 			deferredPulls = gate.waiting
 		}
@@ -862,7 +862,7 @@ func bindUnboundSaves(
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 ) error {
-	return reconcileSaves(ctx, server, state, scans, confirmed, outcome, report, interactivePrompts(), nil, 0)
+	return reconcileSaves(ctx, nil, server, state, scans, confirmed, outcome, report, interactivePrompts(), nil, 0)
 }
 
 // reconcileSaves binds unbound saves and runs three-way sync for bound saves.
@@ -881,6 +881,7 @@ func working(ctx context.Context, report *tui.TrackReport, title string) {
 
 func reconcileSaves(
 	ctx context.Context,
+	scanner *client.Scanner,
 	server *remote.Client,
 	state *tracking.State,
 	scans []client.TargetScan,
@@ -896,8 +897,12 @@ func reconcileSaves(
 	// leaves no game marked as being worked on.
 	defer report.Idle()
 	type candidate struct {
-		local        tracking.LocalSave
-		save         target.Save
+		local tracking.LocalSave
+		save  target.Save
+		// discovered and game name where the save came from, which is what an
+		// adapter needs to answer anything about it beyond its files.
+		discovered   target.Target
+		game         target.InstalledGame
 		serverGameID string
 	}
 	var candidates []candidate
@@ -922,6 +927,8 @@ func reconcileSaves(
 				candidates = append(candidates, candidate{
 					local:        tracking.LocalSaveFrom(scan, discovered, save),
 					save:         save,
+					discovered:   scan.Target,
+					game:         discovered.Game,
 					serverGameID: game.ServerGameID,
 				})
 			}
@@ -1167,6 +1174,15 @@ func reconcileSaves(
 		default:
 			outcome.Unbound++
 			report.Unbound(candidate.local.GameTitle)
+		}
+	}
+	// Achievements are reported once every save this pass touched has settled,
+	// so a save seeded or committed a moment ago is already a revision the
+	// server can place an unlock on.
+	for _, candidate := range candidates {
+		if bound, isBound := state.BindingFor(candidate.local); isBound {
+			reportAchievements(ctx, scanner, server, state, candidate.local, candidate.save,
+				candidate.discovered, candidate.game, bound.OmnisaveID, report)
 		}
 	}
 	for _, candidate := range emptyCandidates {
