@@ -1,5 +1,5 @@
 [omnisave]
-title="Omnisave"
-desc="Omnisave server and Dashboard"
+title="Omnisave Server"
+desc="Omnisave Server and Dashboard"
 port_forward="no"
 dst.ports="8080/tcp"
