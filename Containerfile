@@ -28,7 +28,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 FROM alpine:3.23
 LABEL org.opencontainers.image.title="Omnisave" \
       org.opencontainers.image.description="Self-hosted, versioned game-save synchronization" \
-      org.opencontainers.image.source="https://github.com/krisbaumgartner/omnisave"
+      org.opencontainers.image.source="https://github.com/krispya/omnisave"
 
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -S -g 10001 omnisave \

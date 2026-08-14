@@ -2,7 +2,7 @@ name: omnisave
 
 services:
   server:
-    image: ghcr.io/krisbaumgartner/omnisave:${OMNISAVE_VERSION:-latest}
+    image: ghcr.io/krispya/omnisave:${OMNISAVE_VERSION:-latest}
     restart: unless-stopped
     environment:
       # Leave this empty and the server generates an owner token on first

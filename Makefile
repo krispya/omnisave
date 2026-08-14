@@ -4,7 +4,7 @@ VERSION ?= 0.1.0
 BUILD ?= $(shell git rev-list --count HEAD)
 BUILD := $(BUILD)
 CLIENT_LDFLAGS = -X main.version=$(VERSION) -X main.buildNumber=$(BUILD)
-OCI_IMAGE ?= ghcr.io/krisbaumgartner/omnisave
+OCI_IMAGE ?= ghcr.io/krispya/omnisave
 OCI_PLATFORMS ?= linux/amd64,linux/arm64
 TEST_GOALS = $(filter-out test,$(MAKECMDGOALS))
 TEST_FILTER_PACKAGES = $(addsuffix /...,$(shell find . -type d -name '$(F)' 2>/dev/null))
