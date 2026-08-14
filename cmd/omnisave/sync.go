@@ -95,7 +95,7 @@ func syncPass(
 		}
 	}
 	if outcome.Synced {
-		if err := reconcileSaves(ctx, server, state, scans, confirmed, &outcome, report, prompts, gate, pushFloor); err != nil {
+		if err := reconcileSaves(ctx, scanner, server, state, scans, confirmed, &outcome, report, prompts, gate, pushFloor); err != nil {
 			return outcome, nil, played, err
 		}
 	}

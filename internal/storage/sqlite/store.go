@@ -161,6 +161,22 @@ func (r *Repository) buildOmnisaveFrom(
 	if err := rows.Err(); err != nil {
 		return store.Omnisave{}, err
 	}
+	achievements, err := listAchievementsFrom(ctx, queryer, id)
+	if err != nil {
+		return store.Omnisave{}, err
+	}
+	for _, achievement := range achievements {
+		recorded := store.Achievement{
+			ID:          achievement.ID,
+			Name:        achievement.Name,
+			Description: achievement.Description,
+			UnlockedAt:  achievement.UnlockedAt,
+		}
+		if achievement.RevisionID != nil {
+			recorded.RevisionID = *achievement.RevisionID
+		}
+		record.Achievements = append(record.Achievements, recorded)
+	}
 	return record, nil
 }
 

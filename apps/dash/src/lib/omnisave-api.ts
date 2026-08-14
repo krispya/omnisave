@@ -34,6 +34,20 @@ export type Artifact = {
   size: number;
 };
 
+/**
+ * One achievement a device watched a game unlock, placed on the first revision
+ * committed at or after it — the earliest snapshot known to carry it. A null
+ * revision_id means nothing has been committed since, so the unlock is waiting
+ * for the next revision to claim it.
+ */
+export type Achievement = {
+  id: string;
+  name: string;
+  description?: string;
+  unlocked_at: string;
+  revision_id: string | null;
+};
+
 export class CurrentRevisionConflictError extends Error {
   expectedCurrentRevisionID: string | null;
   actualCurrentRevisionID: string | null;
@@ -413,6 +427,10 @@ export function createOmnisave(
 
 export function listRevisions(token: string, omnisaveID: string, signal?: AbortSignal) {
   return request<Revision[]>(`/api/v1/omnisaves/${omnisaveID}/revisions`, token, { signal });
+}
+
+export function listAchievements(token: string, omnisaveID: string, signal?: AbortSignal) {
+  return request<Achievement[]>(`/api/v1/omnisaves/${omnisaveID}/achievements`, token, { signal });
 }
 
 export function updateRevisionDisplayName(

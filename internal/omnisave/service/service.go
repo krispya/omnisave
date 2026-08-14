@@ -27,6 +27,12 @@ const (
 	maxDisplayNameLength  = 100
 	maxRevisionFiles      = 1024
 	maxRevisionPathLength = 1024
+	// A report carries what one Device saw unlock since its last report, which
+	// is a handful even after a long session away from the server.
+	maxAchievementsPerReport = 256
+	maxAchievementIDLength   = 200
+	maxAchievementNameLength = 500
+	maxAchievementDescLength = 2000
 )
 
 // RevisionNamer derives a display name for a freshly committed revision from
@@ -291,6 +297,89 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 		return nil, translateError(err)
 	}
 	return &revision, nil
+}
+
+// RecordAchievements places each unlock on the first revision committed at or
+// after it — the earliest snapshot in this save's history that is known to
+// carry the achievement. An unlock newer than every revision is stored with
+// no revision and waits: the commit that follows claims it, which is what
+// makes a report that arrives before the save is written land correctly.
+func (s *service) RecordAchievements(ctx context.Context, saveID string, unlocks []omnisave.AchievementUnlock) ([]omnisave.Achievement, error) {
+	if _, err := s.repository.GetOmnisave(ctx, saveID); err != nil {
+		return nil, translateError(err)
+	}
+	if len(unlocks) == 0 || len(unlocks) > maxAchievementsPerReport {
+		return nil, omnisave.ErrInvalid
+	}
+	// The history the marks are placed against is the one this save shows, so
+	// a mark can never name a revision the save's own log does not list.
+	history, err := s.repository.ListRevisions(ctx, saveID)
+	if err != nil {
+		return nil, translateError(err)
+	}
+	achievements := make([]omnisave.Achievement, 0, len(unlocks))
+	seen := make(map[string]bool, len(unlocks))
+	for _, unlock := range unlocks {
+		normalized, valid := normalizeUnlock(unlock)
+		if !valid {
+			return nil, omnisave.ErrInvalid
+		}
+		if seen[normalized.ID] {
+			return nil, omnisave.ErrInvalid
+		}
+		seen[normalized.ID] = true
+		achievements = append(achievements, omnisave.Achievement{
+			AchievementUnlock: normalized,
+			RevisionID:        firstRevisionAfter(history, normalized.UnlockedAt),
+		})
+	}
+	recorded, err := s.repository.RecordAchievements(ctx, saveID, achievements)
+	return recorded, translateError(err)
+}
+
+func (s *service) ListAchievements(ctx context.Context, saveID string) ([]omnisave.Achievement, error) {
+	achievements, err := s.repository.ListAchievements(ctx, saveID)
+	return achievements, translateError(err)
+}
+
+// firstRevisionAfter finds the earliest revision committed at or after an
+// unlock. Unlock times are whole seconds while commits are not, so a commit
+// within the same second as an unlock counts as after it: the alternative
+// would push a mark forward a whole revision over a fraction of a second.
+func firstRevisionAfter(history []omnisave.Revision, unlockedAt time.Time) *string {
+	var found *omnisave.Revision
+	for index, revision := range history {
+		if revision.CreatedAt.Unix() < unlockedAt.Unix() {
+			continue
+		}
+		if found == nil || revision.CreatedAt.Before(found.CreatedAt) ||
+			(revision.CreatedAt.Equal(found.CreatedAt) && revision.ID < found.ID) {
+			found = &history[index]
+		}
+	}
+	if found == nil {
+		return nil
+	}
+	id := found.ID
+	return &id
+}
+
+func normalizeUnlock(unlock omnisave.AchievementUnlock) (omnisave.AchievementUnlock, bool) {
+	unlock.ID = strings.TrimSpace(unlock.ID)
+	unlock.Name = strings.TrimSpace(unlock.Name)
+	unlock.Description = strings.TrimSpace(unlock.Description)
+	if unlock.ID == "" || unlock.Name == "" || unlock.UnlockedAt.IsZero() {
+		return omnisave.AchievementUnlock{}, false
+	}
+	if utf8.RuneCountInString(unlock.ID) > maxAchievementIDLength ||
+		utf8.RuneCountInString(unlock.Name) > maxAchievementNameLength ||
+		utf8.RuneCountInString(unlock.Description) > maxAchievementDescLength {
+		return omnisave.AchievementUnlock{}, false
+	}
+	// Whole seconds is the precision every store publishes, and storing more
+	// would imply a resolution the report never had.
+	unlock.UnlockedAt = time.Unix(unlock.UnlockedAt.Unix(), 0).UTC()
+	return unlock, true
 }
 
 func (s *service) GetRevision(ctx context.Context, saveID, revisionID string) (*omnisave.Revision, error) {
