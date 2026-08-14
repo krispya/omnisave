@@ -3,7 +3,7 @@
 FROM node:26-alpine AS web-builder
 WORKDIR /src
 
-RUN npm install --global pnpm@11.13.0
+RUN npm install --global pnpm@11.13.1
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 COPY .config .config
 COPY apps/dash/package.json apps/dash/package.json

@@ -40,6 +40,10 @@ dist-client:
 		dist/omnisave-$(VERSION)-darwin-arm64.tar.gz \
 		dist/omnisave-$(VERSION)-windows-amd64.zip
 
+# Build every downloadable artifact for one version. OCI images are published
+# separately because a multi-platform image has no single local archive.
+dist-release: dist-client build-spk
+
 test:
 	@if [ -n "$(F)" ] && [ -z "$(TEST_FILTER_PACKAGES)" ]; then \
 		echo "No directory named '$(F)' found"; exit 1; \
@@ -82,5 +86,5 @@ build-spk-armv8: build-web
 	VERSION=$(VERSION) BUILD=$(BUILD) SPK_ARCH=armv8 ./scripts/package-synology.sh
 
 .PHONY: install install-client build-web build-server build-client build-all test \
-		dist-client build-oci push-oci export-oci build-spk build-spk-x86_64 \
+		dist-client dist-release build-oci push-oci export-oci build-spk build-spk-x86_64 \
 		build-spk-armv8
