@@ -68,14 +68,6 @@ jobs:
       - name: Build and verify the downloadable artifacts
         run: make dist-release
 
-      - name: Attest the downloadable artifacts
-        uses: actions/attest@v4
-        with:
-          subject-path: |
-            dist/omnisave-${{ env.VERSION }}-*.tar.gz
-            dist/omnisave-${{ env.VERSION }}-*.zip
-            dist/omnisave-${{ env.VERSION }}-${{ env.BUILD }}-*.spk
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
@@ -98,6 +90,20 @@ jobs:
           make push-oci
           OCI_BUILD_ARGS="--cache-from type=gha --cache-to type=gha,mode=max"
 
+      # The pushed image's layers are already in the builder cache, so these
+      # exports only repackage them as downloadable archives.
+      - name: Export the OCI image archives
+        run: make export-oci
+
+      # The oci archives ride the *.tar.gz glob here and in the release below.
+      - name: Attest the downloadable artifacts
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/omnisave-${{ env.VERSION }}-*.tar.gz
+            dist/omnisave-${{ env.VERSION }}-*.zip
+            dist/omnisave-${{ env.VERSION }}-*.spk
+
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -107,5 +113,5 @@ jobs:
             --generate-notes \
             dist/omnisave-"${VERSION}"-*.tar.gz \
             dist/omnisave-"${VERSION}"-*.zip \
-            dist/omnisave-"${VERSION}"-"${BUILD}"-*.spk \
+            dist/omnisave-"${VERSION}"-*.spk \
             dist/omnisave-"${VERSION}"-checksums.txt
