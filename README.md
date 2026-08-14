@@ -38,6 +38,43 @@ docker compose pull
 docker compose up -d
 ```
 
+## Install the client
+
+Every device that plays runs the client. It needs no toolchain and no
+administrator: the installer puts one binary in a directory you own.
+
+macOS, Linux, and SteamOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/krispya/omnisave/main/scripts/install.sh | sh
+```
+
+Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/krispya/omnisave/main/scripts/install.ps1 | iex
+```
+
+The installer verifies the download against the release's checksums and refuses
+to install if they disagree. It installs to `~/.local/bin`
+(`%LOCALAPPDATA%\omnisave` on Windows) and adds that directory to your shell
+startup file if it is not already on `PATH`, naming the file it changed.
+Re-running it upgrades in place.
+
+| Variable                  | Purpose                                     |
+| ------------------------- | ------------------------------------------- |
+| `OMNISAVE_VERSION`        | Install a specific version instead of the newest |
+| `OMNISAVE_BIN`            | Install somewhere other than the default directory |
+| `OMNISAVE_NO_MODIFY_PATH` | Print the `PATH` line instead of writing it |
+
+On a Steam Deck, run the installer from Desktop Mode's Konsole. It writes only
+under `/home`, which SteamOS preserves across system updates — the read-only
+root filesystem is never touched.
+
+Prebuilt archives for every supported platform are attached to each
+[release](https://github.com/krispya/omnisave/releases) if you would rather
+install one by hand.
+
 ## The save store
 
 Everything needed to recover your saves lives in one directory — `/data/store`
@@ -96,6 +133,22 @@ make push-oci VERSION=0.1.0
 
 This publishes `linux/amd64` and `linux/arm64` manifests by default. Override
 `OCI_IMAGE` to publish under another registry name.
+
+## Client releases
+
+Pushing a `v`-prefixed tag builds the client for every supported platform,
+verifies the archives, and publishes them as a GitHub release. The tag is the
+version; `VERSION` in the Makefile is only the development default.
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+Build the same archives locally without publishing:
+
+```sh
+make dist-client
+```
 
 ## Structure
 
