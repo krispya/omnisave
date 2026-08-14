@@ -166,9 +166,10 @@ type passSink struct {
 	playing  chan []string
 	requests chan tui.WatchRequest
 
-	mutex   sync.Mutex
-	working []string
-	phases  []string
+	mutex    sync.Mutex
+	working  []string
+	phases   []string
+	watching []int
 }
 
 func newPassSink() *passSink {
@@ -179,7 +180,12 @@ func newPassSink() *passSink {
 	}
 }
 
-func (s *passSink) Watching(int)                       {}
+func (s *passSink) Watching(files int) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.watching = append(s.watching, files)
+}
+
 func (s *passSink) PassStarted()                       {}
 func (s *passSink) Playing(titles []string)            { s.playing <- titles }
 func (s *passSink) PassFinished(result tui.PassResult) { s.finished <- result }
@@ -194,6 +200,14 @@ func (s *passSink) Phase(message string) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	s.phases = append(s.phases, message)
+}
+
+// watchedCounts is how many files the loop said it was watching, after each
+// pass, in order.
+func (s *passSink) watchedCounts() []int {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return append([]int(nil), s.watching...)
 }
 
 // reported is every phase the pass described, in order.
@@ -622,6 +636,8 @@ type failingScans struct {
 	fixtureAdapter
 	mu     sync.Mutex
 	broken bool
+	// heals clears the break as the scan it fails is attempted.
+	heals bool
 }
 
 func (a *failingScans) fail() {
@@ -630,9 +646,22 @@ func (a *failingScans) fail() {
 	a.broken = true
 }
 
+// failOnce breaks the next scan and heals on its own, which is the shape of
+// every reason a pass fails on a handheld: a network that is not up yet, a
+// server restarting, a device carried out of range.
+func (a *failingScans) failOnce() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.broken = true
+	a.heals = true
+}
+
 func (a *failingScans) DiscoverTargets(ctx context.Context) ([]target.Target, error) {
 	a.mu.Lock()
 	broken := a.broken
+	if broken && a.heals {
+		a.broken, a.heals = false, false
+	}
 	a.mu.Unlock()
 	if broken {
 		return nil, errors.New("target unreadable")
@@ -1168,5 +1197,183 @@ func TestSteadyServerEventsCoalesceIntoAPassInsteadOfStarvingIt(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out: steady events starved the settle window")
+	}
+}
+
+// A pass fails for reasons that pass: a service started before the network is
+// up, a handheld carried out of range, a server restarting. Until the failed
+// pass is repeated this device is protecting nothing, so a failure has to be
+// worth less than the pull interval — which is the fallback for a quiet
+// server, not the answer to a broken pass.
+func TestAFailedPassIsRetriedWithoutWaitingForThePullInterval(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(fixture.state); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &failingScans{fixtureAdapter: fixtureAdapter{fixture: &fixture}}
+	adapter.failOnce()
+	loop := watchLoop{
+		scanner: client.NewScanner(nil, adapter),
+		server:  server,
+		store:   store,
+		// Every scheduled trigger is an hour away, so a second pass can only
+		// have come from the retry.
+		poll:   time.Hour,
+		pull:   time.Hour,
+		settle: time.Hour,
+		retry:  10 * time.Millisecond,
+		floor:  0,
+		events: newAnnouncer(),
+	}
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+
+	if result := waitForPass(t, sink); result.Err == nil {
+		t.Fatal("expected the opening pass to fail on the broken scan")
+	}
+	if result := waitForPass(t, sink); result.Err != nil {
+		t.Fatalf("expected the retry to reconcile, got %v", result.Err)
+	}
+}
+
+// A failed pass discovered nothing about this device. Adopting its empty file
+// list would leave the poll with nothing to compare, so a save written while
+// the server was unreachable would go unnoticed even after it came back.
+func TestAFailedPassKeepsTheFilesItWasAlreadyWatching(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(fixture.state); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &failingScans{fixtureAdapter: fixtureAdapter{fixture: &fixture}}
+	movement := make(chan string)
+	loop := watchLoop{
+		scanner: client.NewScanner(nil, adapter),
+		server:  server,
+		store:   store,
+		poll:    time.Hour,
+		pull:    time.Hour,
+		settle:  time.Millisecond,
+		// The retry must not run during the assertion: this is about what a
+		// failed pass leaves behind, not about it being repeated.
+		retry:  time.Hour,
+		floor:  0,
+		events: newAnnouncer(),
+		movement: func(context.Context) <-chan string {
+			return movement
+		},
+	}
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+
+	if result := waitForPass(t, sink); result.Err != nil {
+		t.Fatalf("expected the opening pass to succeed, got %v", result.Err)
+	}
+	counts := sink.watchedCounts()
+	if len(counts) == 0 || counts[0] == 0 {
+		t.Fatalf("expected the opening pass to watch files, got %v", counts)
+	}
+	established := counts[0]
+
+	adapter.fail()
+	movement <- remote.LibraryChangedEvent
+	if result := waitForPass(t, sink); result.Err == nil {
+		t.Fatal("expected the broken scan to fail the pass")
+	}
+	counts = sink.watchedCounts()
+	if last := counts[len(counts)-1]; last != established {
+		t.Errorf("a failed pass left %d files watched; want the %d it had proved", last, established)
+	}
+}
+
+// The retry is automatic and the pass it repeats is a full pass: fired while
+// the game is streaming its save out, it would commit a half-written file. It
+// defers to the quiet-interval rule like every other automatic trigger, and
+// the failure it carries is not forgotten — the first quiet poll runs the
+// pass instead.
+func TestTheRetryWaitsOutASaveStillBeingWritten(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "first-progress")
+	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(fixture.state); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &failingScans{fixtureAdapter: fixtureAdapter{fixture: &fixture}}
+	adapter.failOnce()
+	movement := make(chan string)
+	loop := watchLoop{
+		scanner: client.NewScanner(nil, adapter),
+		server:  server,
+		store:   store,
+		// Only the retry can fire on its own here: every ticker is hours
+		// out, so a pass inside the window below could only be the retry
+		// ignoring the write in flight.
+		poll:   time.Hour,
+		pull:   time.Hour,
+		settle: time.Millisecond,
+		retry:  100 * time.Millisecond,
+		floor:  0,
+		events: newAnnouncer(),
+		movement: func(context.Context) <-chan string {
+			return movement
+		},
+		watched: []string{fixture.localPath},
+	}
+	sink := newPassSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.run(ctx, sink)
+
+	// The pass fails while the scan hiccups, arming the retry.
+	movement <- remote.LibraryChangedEvent
+	if result := waitForPass(t, sink); result.Err == nil {
+		t.Fatal("expected the broken scan to fail the pass")
+	}
+
+	// The game writes after the failed pass rebased its signature, so the
+	// retry finds the save moving.
+	time.Sleep(50 * time.Millisecond)
+	if err := os.WriteFile(fixture.localPath, []byte("mid-write"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Several retry intervals pass; every one must wait the write out.
+	select {
+	case result := <-sink.finished:
+		t.Fatalf("expected the retry to wait out the write, got a pass: %+v", result)
+	case <-time.After(400 * time.Millisecond):
+	}
+
+	// The user asks; theirs is the one trigger that never waits, and the
+	// loop must not be wedged behind the deferred retry.
+	sink.requests <- tui.WatchRequest{Kind: tui.WatchSyncNow}
+	if result := waitForPass(t, sink); result.Err != nil {
+		t.Fatalf("expected the asked-for pass to reconcile, got %v", result.Err)
+	}
+}
+
+func TestTheRetryGrowsFromItsFloorAndStopsAtThePullInterval(t *testing.T) {
+	floor, pull := 30*time.Second, 2*time.Minute
+	wait := nextPassRetry(0, floor, pull)
+	if wait != floor {
+		t.Fatalf("the first retry waited %s; want the floor %s", wait, floor)
+	}
+	for _, want := range []time.Duration{time.Minute, 2 * time.Minute, 2 * time.Minute} {
+		wait = nextPassRetry(wait, floor, pull)
+		if wait != want {
+			t.Fatalf("the retry grew to %s; want %s", wait, want)
+		}
+	}
+	// A pull interval shorter than the floor is the ceiling either way: there
+	// is nothing to gain from retrying more often than the fallback asks.
+	if wait := nextPassRetry(0, time.Minute, 10*time.Second); wait != 10*time.Second {
+		t.Errorf("the first retry waited %s; want the shorter pull interval", wait)
 	}
 }
