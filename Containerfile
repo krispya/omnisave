@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:26-alpine AS web-builder
+# Both builder stages run on the build host: the web output is
+# platform-independent and Go cross-compiles, so neither needs QEMU when
+# building the multi-platform image. Only the final stage runs per-platform.
+FROM --platform=$BUILDPLATFORM node:26-alpine AS web-builder
 WORKDIR /src
 
 RUN npm install --global pnpm@11.13.1
@@ -13,7 +16,7 @@ COPY apps/dash apps/dash
 COPY assets/icons assets/icons
 RUN pnpm --filter @omnisave/dash run build
 
-FROM golang:1.26-alpine AS server-builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS server-builder
 ARG TARGETOS=linux
 ARG TARGETARCH
 WORKDIR /src
