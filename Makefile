@@ -14,6 +14,10 @@ TEST_PACKAGES = $(if $(F),$(TEST_FILTER_PACKAGES),$(TEST_GOAL_PACKAGES))
 install:
 	pnpm install
 
+# Refresh the pruned Ludusavi manifest embedded in the client binary.
+refresh-save-profiles:
+	go run ./scripts/ludusavi-manifest
+
 install-client:
 	GOBIN="$(HOME)/.local/bin" go install -ldflags="$(CLIENT_LDFLAGS)" ./cmd/omnisave
 
@@ -92,6 +96,6 @@ build-spk-x86_64: build-web
 build-spk-armv8: build-web
 	VERSION=$(VERSION) BUILD=$(BUILD) SPK_ARCH=armv8 ./scripts/package-synology.sh
 
-.PHONY: install install-client build-web build-server build-client build-all test \
+.PHONY: install refresh-save-profiles install-client build-web build-server build-client build-all test \
 		dist-client dist-release build-oci push-oci export-oci build-spk build-spk-x86_64 \
 		build-spk-armv8

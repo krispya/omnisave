@@ -98,6 +98,75 @@ Example:
 	}
 }
 
+func TestDuplicateSteamIdsKeepTheFirstTitle(t *testing.T) {
+	profiles, err := ludusavi.New([]byte(`
+Alpha:
+  files:
+    <home>/.config/Alpha:
+      tags: [save]
+  steam:
+    id: 123
+Alpha Deluxe:
+  files:
+    <home>/.config/AlphaDeluxe:
+      tags: [save]
+  steam:
+    id: 123
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "123"}}}
+	profile, err := profiles.Find(context.Background(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Title != "Alpha" || len(profile.Rules) != 1 || profile.Rules[0].Path != "<home>/.config/Alpha" {
+		t.Fatalf("expected the first sorted title to win, got %+v", profile)
+	}
+}
+
+func TestStoreUserIdMatchesAnyAccountDirectory(t *testing.T) {
+	home := t.TempDir()
+	accountDirectory := filepath.Join(home, "AppData", "Roaming", "Example", "76561198000000000")
+	if err := os.MkdirAll(accountDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	savePath := filepath.Join(accountDirectory, "progress.sav")
+	if err := os.WriteFile(savePath, []byte("progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	game := target.InstalledGame{
+		ID:       "steam:123",
+		TargetID: "steam",
+		Identity: target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "123"}}},
+		Environment: target.Environment{
+			HostOS:  saveprofile.OSWindows,
+			Runtime: target.RuntimeNative,
+			Home:    home,
+		},
+	}
+	profile := saveprofile.Profile{
+		Provider:   "ludusavi",
+		ProviderID: "Example",
+		Rules: []saveprofile.Rule{{
+			ID: "1", Path: "<winAppData>/Example/<storeUserId>", OS: saveprofile.OSWindows, Store: "steam", Kind: "save",
+		}},
+	}
+
+	saves, err := saveprofile.Resolve(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 || len(saves[0].Files) != 1 || saves[0].Files[0].Path != savePath {
+		t.Fatalf("expected the account directory to match, got %+v", saves)
+	}
+	if saves[0].Files[0].RelativePath != filepath.Join("76561198000000000", "progress.sav") {
+		t.Fatalf("expected an account-scoped relative path, got %+v", saves[0].Files[0])
+	}
+}
+
 func TestProfileResolvesAProspectiveDestinationBeforeItsPathsExist(t *testing.T) {
 	home := t.TempDir()
 	game := target.InstalledGame{

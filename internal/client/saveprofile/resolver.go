@@ -123,11 +123,14 @@ func expand(template string, game target.InstalledGame) string {
 	home := environment.Home
 	_, storeGameID, _ := game.Identity.StoreIdentifier()
 	values := map[string]string{
-		"base":            game.InstallRoot,
-		"game":            filepath.Base(game.InstallRoot),
-		"home":            home,
-		"root":            environment.StoreRoot,
-		"storeGameId":     storeGameID,
+		"base":        game.InstallRoot,
+		"game":        filepath.Base(game.InstallRoot),
+		"home":        home,
+		"root":        environment.StoreRoot,
+		"storeGameId": storeGameID,
+		// The store account owning a save is unknown at discovery time, so
+		// the placeholder matches any account directory, as Ludusavi does.
+		"storeUserId":     "*",
 		"winAppData":      environment.Variables["APPDATA"],
 		"winLocalAppData": environment.Variables["LOCALAPPDATA"],
 		"winProgramData":  environment.Variables["PROGRAMDATA"],

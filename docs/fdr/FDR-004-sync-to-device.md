@@ -119,7 +119,10 @@ fast-forward, forking, and manual bind cover it.
   from the authoritative copy; the client places but never arbitrates;
   [ADR-012](../adr/ADR-012-portable-save-store.md) — the store the
   authoritative copy is read from, whose manifests carry the paths this
-  record materializes.
+  record materializes;
+  [ADR-018](../adr/ADR-018-embedded-save-profiles.md) — where the
+  save-location rules this record expands come from: a pruned Ludusavi
+  manifest compiled into the client.
 - **FDRs:** [FDR-003](FDR-003-automatic-save-binding.md) — the binding pass
   this extends, whose open question about fresh Devices this resolves, and
   whose fast-forward staging this shares;
