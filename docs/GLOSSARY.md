@@ -98,7 +98,7 @@ Infrastructure jargon. If only contributors say the word, it goes here.
 
 **Environment**. Where an installed game runs: host OS, runtime (native or Proton), home, store root, and prefix root. Save-location rules expand against the environment. Under Proton, Windows paths resolve inside the prefix (`drive_c/…`).
 
-**Save Profile**. Provider-neutral save-location knowledge for one game, expressed as **rules**. Each rule is a templated path plus the OS/store where it applies (Windows rules also apply under Proton). Currently sourced from the community Ludusavi manifest, keyed by Steam ID (`internal/client/saveprofile`).
+**Save Profile**. Provider-neutral save-location knowledge for one game, expressed as **rules**. Each rule is a templated path plus the OS/store where it applies (Windows rules also apply under Proton). Currently sourced from the community Ludusavi manifest, keyed by Steam ID (`internal/client/saveprofile`), pruned and compiled into the client binary (see [ADR-018](adr/ADR-018-embedded-save-profiles.md)).
 
 **Catalog**. The provider-hosted universe of known games: what exists and can be matched against, not what the user has (that's the _Library_, Product). `internal/catalog` currently names the server's local cache of resolved identity and metadata. This includes Games, exact ROM signatures (**GameROM**), and provider media with attribution. The code is pending rename.
 

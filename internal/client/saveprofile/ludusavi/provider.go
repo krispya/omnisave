@@ -36,8 +36,11 @@ func New(data []byte) (*Provider, error) {
 		if !ok {
 			continue
 		}
+		// The community manifest reuses a Steam id when wiki pages split or a
+		// game is renamed. Titles arrive sorted, so the first entry wins
+		// deterministically, and a base title outranks its longer variants.
 		if _, exists := provider.bySteamID[steamID]; exists {
-			return nil, fmt.Errorf("duplicate Ludusavi Steam id %s", steamID)
+			continue
 		}
 		provider.bySteamID[steamID] = saveprofile.Profile{
 			Provider:   "ludusavi",
@@ -94,6 +97,12 @@ func rules(paths map[string]*manifestPath) []saveprofile.Rule {
 	for _, template := range templates {
 		path := paths[template]
 		if path != nil && !isSave(path.Tags) {
+			continue
+		}
+		// Steam Cloud's userdata directories already belong to the steam
+		// adapter, which attributes them to an account. A profile rule over
+		// the same files would report every Cloud save a second time.
+		if strings.HasPrefix(template, "<root>/userdata") {
 			continue
 		}
 		constraints := []manifestWhen{{}}

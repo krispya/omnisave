@@ -11,6 +11,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client"
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/ludusavi"
+	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/ludusavi/embedded"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/retroarch"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/retroarch/locator"
 	steamtarget "github.com/krisbaumgartner/omnisave/internal/client/target/steam"
@@ -246,6 +247,40 @@ Local Save Game:
 	}
 	if save.Metadata["profile_provider"] != "ludusavi" {
 		t.Fatalf("expected Ludusavi provenance, got %+v", save.Metadata)
+	}
+}
+
+func TestScanFindsDarkSoulsIIISavesUnderProtonFromTheEmbeddedManifest(t *testing.T) {
+	steamRoot := t.TempDir()
+	writeSteamApp(t, steamRoot, "374320", "DARK SOULS III", "DARK SOULS III")
+	accountDirectory := filepath.Join(steamRoot, "steamapps", "compatdata", "374320", "pfx",
+		"drive_c", "users", "steamuser", "AppData", "Roaming", "DarkSoulsIII", "76561198000000000")
+	if err := os.MkdirAll(accountDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(accountDirectory, "DS30000.sl2"), []byte("bonfires"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := client.NewScanner(embedded.Provider(), steamtarget.New(steamlocator.NewInstaller(steamRoot)))
+	scans, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scans) != 1 || len(scans[0].Games) != 1 || len(scans[0].Games[0].Saves) != 1 {
+		t.Fatalf("expected the embedded profile to find one local save, got %+v", scans)
+	}
+	save := scans[0].Games[0].Saves[0]
+	if save.Kind != "local" || save.Metadata["profile_provider_id"] != "374320" {
+		t.Fatalf("expected a Ludusavi profile save for Dark Souls III, got %+v", save)
+	}
+	if len(save.Files) != 1 || save.Files[0].RelativePath != filepath.Join("76561198000000000", "DS30000.sl2") {
+		t.Fatalf("expected the account-scoped save file, got %+v", save.Files)
+	}
+	destinations := scans[0].Games[0].Destinations
+	if len(destinations) != 1 || len(destinations[0].Locations) != 1 ||
+		filepath.Base(destinations[0].Locations[0].Path) != "DarkSoulsIII" {
+		t.Fatalf("expected the DarkSoulsIII directory as the prospective destination, got %+v", destinations)
 	}
 }
 
