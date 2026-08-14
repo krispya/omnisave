@@ -60,26 +60,21 @@ omnisave track
 
 ## Keep syncing in the background
 
-Running `omnisave` keeps watching until you close it. On a device you do not
-sit in front of — a Steam Deck in Gaming Mode, a machine under the TV — install
-it as a background service instead:
+On Linux and SteamOS, install Omnisave as a background service to keep syncing
+after you close the terminal:
 
 ```sh
-omnisave service install    # run in the background from now on
-omnisave service status     # is it actually running?
-omnisave service uninstall  # stop and remove it
+omnisave service install
+omnisave service status
+omnisave service uninstall
 ```
 
-The service runs as you, from the binary you installed, and starts again on its
-own after a reboot or a crash. It grants the client nothing a terminal would
-not have; it just means nobody has to be there to start it. Connect the device
-first — the service has no way to ask you for a server. Linux only for now;
-macOS and Windows say so when asked.
+Connect to your server and choose games before installing the service. It runs
+as your user and starts automatically after a reboot or crash.
 
-On a Steam Deck the whole setup is one Desktop Mode session: run `omnisave`,
-approve the pairing code in the dashboard, pick your games, and say yes when it
-asks whether to keep syncing. Then go back to Gaming Mode. Games you install
-later still need a Desktop Mode visit to start tracking them.
+On Steam Deck, complete setup in Desktop Mode and accept the background-syncing
+prompt before returning to Gaming Mode. Return to Desktop Mode to track newly
+installed games.
 
 ## Back up and update
 
