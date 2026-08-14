@@ -60,7 +60,9 @@ cp "${ICON_DIR}/omnisave-256.png" "${PACKAGE}/PACKAGE_ICON_256.PNG"
 chmod 755 "${PACKAGE}/scripts/"*
 
 mkdir -p "${ROOT}/dist"
-OUTPUT="${ROOT}/dist/omnisave-${VERSION}-${BUILD}-${SPK_ARCH}.spk"
+# Like the client archives, the filename carries only the version and the
+# arch; the build number lives in INFO, which is what DSM actually reads.
+OUTPUT="${ROOT}/dist/omnisave-${VERSION}-${SPK_ARCH}.spk"
 tar -cf "${OUTPUT}" -C "${PACKAGE}" \
     INFO package.tgz scripts conf PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG
 
