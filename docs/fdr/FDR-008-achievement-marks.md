@@ -15,8 +15,10 @@ an orientation aid for choosing where to go back to, not a trophy case.
 
 - A Device watching a game notices when its store records an achievement and
   tells the server, which places the unlock on the first revision committed at
-  or after it — the earliest snapshot known to carry it. The Dash marks that
-  revision's row with the achievement's name.
+  or after it — the earliest snapshot known to carry it. The Dash places a
+  compact trophy beside that revision's name. One trophy represents the first
+  achievement, `+1`, `+2`, and so on count any others on the same revision,
+  and hovering or focusing the badge reveals their names.
 - Only unlocks a Device watched happen are marked. The first pass over a
   bound save records where the game's unlock history already stood and reports
   nothing, because achievements earned before Omnisave was watching belong to
@@ -113,6 +115,18 @@ it was, which is what makes the next pass retry.
 Device afterwards carries its true, older time and is therefore never
 reported — correctly, since Omnisave did not watch it happen.
 
+### 6. Revision rows show compact marks and reveal names on demand
+
+**Decision:** A marked revision shows a trophy-only badge beside its name,
+plus the number of additional achievements when several landed there. Hovering
+or focusing the badge opens the achievement-name list.
+**Why:** The mark should orient someone scanning history without letting long
+or numerous achievement names compete with revision names and status. The
+generic trophy remains recognizable at a glance, while the popover keeps the
+specific unlocks one interaction away.
+**Tradeoff:** Achievement names are not visible until the badge is inspected,
+and the generic mark does not carry a store's achievement artwork.
+
 ## Related
 
 - **FDRs:** [FDR-005](FDR-005-save-sync.md) (the sync pass is where unlocks are
@@ -125,10 +139,10 @@ reported — correctly, since Omnisave did not watch it happen.
 
 ## Open Questions
 
-- Achievement icons. Steam's schema carries an icon hash whose image lives on
-  Valve's CDN; showing one means either a request from the Dash to a third
-  party or storing the image as an artifact. Neither has been argued yet, so
-  marks are currently text.
+- Store artwork. Marks use a generic trophy. Steam's schema carries an icon
+  hash whose image lives on Valve's CDN; showing the store-specific image
+  means either a request from the Dash to a third party or storing it as an
+  artifact. Neither has been argued yet.
 - Whether a mark should be visible on a revision's descendants rather than
   only on the one that first carried it. The rail's order already says
   "everything below predates this", so it has not been needed.

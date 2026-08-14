@@ -134,23 +134,31 @@ function TrophyIcon({ className }: { className?: string }) {
  * they landed in the history: everything below it predates them.
  */
 function AchievementMarks({ achievements }: { achievements: Achievement[] }) {
-  const [first, ...rest] = achievements;
-  const summary = achievements
-    .map((achievement) =>
-      achievement.description
-        ? `${achievement.name}: ${achievement.description} (${formatDateTime(achievement.unlocked_at)})`
-        : `${achievement.name} (${formatDateTime(achievement.unlocked_at)})`
-    )
-    .join('\n');
+  const popoverID = useId();
+  const additional = achievements.length - 1;
 
   return (
-    <span
-      title={`Unlocked before this save was written\n${summary}`}
-      className="inline-flex min-w-0 shrink items-center gap-1 rounded-sm bg-accent/12 px-1.5 py-0.5 text-[10px] text-accent"
-    >
-      <TrophyIcon className="size-2.5 shrink-0" />
-      <span className="max-w-40 truncate">{first.name}</span>
-      {rest.length > 0 ? <span className="shrink-0">+{rest.length}</span> : null}
+    <span className="group/achievements relative inline-flex shrink-0">
+      <button
+        type="button"
+        aria-label={`${achievements.length} ${achievements.length === 1 ? 'achievement' : 'achievements'} on this revision`}
+        aria-describedby={popoverID}
+        className="inline-flex h-5 min-w-5 items-center justify-center gap-0.5 rounded-full bg-accent/12 px-1.5 text-[10px] font-medium text-accent outline-none transition duration-120 hover:bg-accent/20 focus-visible:ring-2 focus-visible:ring-text"
+      >
+        <TrophyIcon className="size-3 shrink-0" />
+        {additional > 0 ? <span>+{additional}</span> : null}
+      </button>
+      <span
+        id={popoverID}
+        role="tooltip"
+        className="pointer-events-none absolute top-full left-0 z-30 mt-1.5 hidden w-max max-w-64 rounded-md border border-outline bg-surface px-2.5 py-2 text-left text-xs text-text shadow-lg group-hover/achievements:block group-focus-within/achievements:block"
+      >
+        {achievements.map((achievement) => (
+          <span key={achievement.id} className="block not-last:mb-1">
+            {achievement.name}
+          </span>
+        ))}
+      </span>
     </span>
   );
 }
@@ -321,6 +329,7 @@ export function RevisionLog({
                 >
                   <div className="flex h-9 items-center gap-2.5">
                     <div className="relative flex h-full min-w-0 flex-1 items-center gap-2.5 px-1.5">
+                      {rowMarks.length > 0 ? <AchievementMarks achievements={rowMarks} /> : null}
                       <RevisionNameEditor
                         revision={revision}
                         fallbackName={shortID(revision.id)}
@@ -336,7 +345,6 @@ export function RevisionLog({
                           shared fork point
                         </span>
                       ) : null}
-                      {rowMarks.length > 0 ? <AchievementMarks achievements={rowMarks} /> : null}
                       {forkLinks.map((link) => (
                         <button
                           key={link.save.id}
