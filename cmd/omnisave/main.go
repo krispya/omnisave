@@ -72,6 +72,8 @@ func runWithOutput(ctx context.Context, arguments []string, output io.Writer) er
 		return runWatch(ctx, scanner, arguments[1:])
 	case "bind":
 		return runBind(ctx, scanner, arguments[1:])
+	case "service":
+		return runService(ctx, arguments[1:])
 	case "upgrade":
 		return runUpgrade(ctx, arguments[1:])
 	case "help", "-h", "--help":
@@ -85,7 +87,7 @@ func runWithOutput(ctx context.Context, arguments []string, output io.Writer) er
 		if strings.HasPrefix(arguments[0], "-") {
 			return runApp(ctx, scanner, arguments)
 		}
-		return fmt.Errorf("unknown command %q; run omnisave with no command, or use track, sync, watch, connect, scan, bind, or upgrade", arguments[0])
+		return fmt.Errorf("unknown command %q; run omnisave with no command, or use track, sync, watch, connect, scan, bind, upgrade, or service", arguments[0])
 	}
 }
 
@@ -621,6 +623,16 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 	if asked {
 		// The report is scrollback now; the live block gets its own space.
 		fmt.Println()
+		// The run that set tracking up is the one moment worth interrupting
+		// to ask, and on a device that is about to stop having a terminal it
+		// is the last one. Taking the offer ends the run: the service is
+		// watching from here, and a foreground loop beside it would be a
+		// second pass writing the same tracking state.
+		if isatty.IsTerminal(os.Stdout.Fd()) && offerService(ctx, *statePath) {
+			return nil
+		}
+	} else if isatty.IsTerminal(os.Stdout.Fd()) {
+		suggestService(ctx)
 	}
 	return keepTracking(ctx, scanner, server, store, &state, scans,
 		watchSeed{detector: detector, presence: presence, deferred: deferredPulls}, pass, *serverURL, *token)
@@ -1703,6 +1715,7 @@ Usage:
   omnisave scan [--verbose]
   omnisave bind [--state path]
   omnisave upgrade [--check] [--version 0.2.0]
+  omnisave service install | uninstall | status
 
 Run omnisave with no command to run Omnisave. It skips whatever this
 device already did: it connects this device only if it holds no credential,
@@ -1719,8 +1732,8 @@ Commands:
            progress downloads, and anything needing a decision is reported
            for the next track run. Never prompts.
   watch    Keep syncing continuously: commits shortly after the game stops
-           writing its save and checks the server periodically. Run it under
-           your service manager to survive reboots.
+           writing its save and checks the server periodically. This is what
+           the background service runs; omnisave service installs it.
   connect  Connect this device to your Omnisave server. With no arguments it
            looks for a server announcing itself on the local network, then
            shows a code to approve in the Dash's server settings. Use --server
@@ -1730,6 +1743,10 @@ Commands:
   upgrade  Replace this client with the newest published release, verified
            against the release checksums before anything is installed. Use
            --check to see whether one is available without installing it.
+  service  Run watch in the background, started by your session and restarted
+           if it stops, so a device with no terminal keeps syncing. install
+           needs this device connected first; status is how a device with
+           nowhere to print says whether it is actually running.
 
 Once connected, this device holds its own credential and later commands need
 no token or address. The connection can still be overridden per command with
