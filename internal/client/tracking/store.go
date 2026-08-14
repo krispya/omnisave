@@ -103,13 +103,17 @@ type Binding struct {
 }
 
 // AchievementWatch is a binding's place in its game's unlock history. Through
-// is the newest unlock this Device has accounted for; anything newer is
-// something it watched happen and reports. The first look only records where
-// the history already stood, because Omnisave can honestly mark a revision
-// only for an unlock it was there for — everything earned before it started
-// watching belongs to revisions that were never committed.
+// is the newest unlock time this Device has accounted for, and IDs records
+// every achievement accounted for at that exact second. The IDs are needed
+// because stores publish whole-second times and several unlocks may tie.
+//
+// The first look only records where the history already stood, because
+// Omnisave can honestly mark a revision only for an unlock it was there for —
+// everything earned before it started watching belongs to revisions that
+// were never committed.
 type AchievementWatch struct {
 	Through time.Time `json:"through"`
+	IDs     []string  `json:"ids,omitempty"`
 }
 
 // State contains this machine's tracked games and save bindings.
@@ -406,28 +410,44 @@ func (s *State) RecordVerified(local LocalSave, signature string) {
 
 // AchievementsSeen reports how far this binding has already accounted for the
 // game's unlock history, and whether any pass has looked at all.
-func (s State) AchievementsSeen(local LocalSave) (time.Time, bool) {
+func (s State) AchievementsSeen(local LocalSave) (AchievementWatch, bool) {
 	bound, isBound := s.BindingFor(local)
 	if !isBound || bound.Achievements == nil {
-		return time.Time{}, false
+		return AchievementWatch{}, false
 	}
-	return bound.Achievements.Through, true
+	watch := *bound.Achievements
+	watch.Through = time.Unix(watch.Through.Unix(), 0).UTC()
+	watch.IDs = slices.Clone(watch.IDs)
+	return watch, true
 }
 
 // RecordAchievementsSeen advances how far a binding has accounted for its
-// game's unlock history. It only ever moves forward: a report that failed
-// leaves the mark where it was, so the next pass tries again.
-func (s *State) RecordAchievementsSeen(local LocalSave, through time.Time) {
+// game's unlock history. IDs are the achievements accepted at through; when
+// another pass finds more at that same second they are merged into the
+// boundary. A report that failed never calls this, so the next pass retries.
+func (s *State) RecordAchievementsSeen(local LocalSave, through time.Time, ids []string) {
+	through = time.Unix(through.Unix(), 0).UTC()
+	ids = append([]string(nil), ids...)
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
 	probe := Binding{Adapter: local.Adapter, TargetID: local.TargetID, LocalSaveID: local.ID}
 	for index := range s.Bindings {
 		if !sameLocalSave(s.Bindings[index], probe) {
 			continue
 		}
 		watch := s.Bindings[index].Achievements
-		if watch != nil && !through.After(watch.Through) {
-			return
+		if watch != nil {
+			watchedThrough := time.Unix(watch.Through.Unix(), 0).UTC()
+			if through.Before(watchedThrough) {
+				return
+			}
+			if through.Equal(watchedThrough) {
+				ids = append(ids, watch.IDs...)
+				slices.Sort(ids)
+				ids = slices.Compact(ids)
+			}
 		}
-		s.Bindings[index].Achievements = &AchievementWatch{Through: through.UTC()}
+		s.Bindings[index].Achievements = &AchievementWatch{Through: through, IDs: ids}
 		return
 	}
 }

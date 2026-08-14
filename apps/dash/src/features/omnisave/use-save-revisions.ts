@@ -18,11 +18,30 @@ type History = {
   achievements: Achievement[];
 };
 
-// Keyed by save and current revision, so commits and restores revalidate history.
-const histories = createPromiseCache<string, History>();
+type HistoryKey = {
+  saveID: string;
+  currentRevisionID: string | null;
+};
+
+// A fresh save object means the Library was reloaded after server movement.
+// Give that snapshot a fresh key even when its current revision did not move:
+// an achievement report can change history while leaving the save unchanged.
+const keys = new WeakMap<Omnisave, HistoryKey>();
+
+/** Returns the stable history-cache generation for one Library save snapshot. */
+export function saveHistoryKey(save: Omnisave): HistoryKey {
+  let key = keys.get(save);
+  if (!key) {
+    key = { saveID: save.id, currentRevisionID: save.current_revision_id };
+    keys.set(save, key);
+  }
+  return key;
+}
+
+const histories = createPromiseCache<HistoryKey, History>();
 // Retains the last history while a moved current pointer revalidates.
 const shown = new Map<string, History>();
-const shownKeys = new Map<string, string>();
+const shownKeys = new Map<string, HistoryKey>();
 
 export type SaveHistory = {
   revisions: Revision[];
@@ -35,42 +54,32 @@ export type SaveHistory = {
 };
 
 type Snapshot = {
-  key: string;
+  key?: HistoryKey;
   history?: History;
   error: string;
 };
 
-function historyKey(save: Omnisave) {
-  return `${save.id}:${save.current_revision_id ?? ''}`;
-}
-
-function saveID(key: string) {
-  return key.slice(0, key.indexOf(':'));
-}
-
-async function load(token: string, key: string): Promise<History> {
+async function load(token: string, key: HistoryKey): Promise<History> {
   return histories.load(key, async () => {
-    const id = saveID(key);
     const [revisions, achievements] = await Promise.all([
-      listRevisions(token, id),
-      listAchievements(token, id),
+      listRevisions(token, key.saveID),
+      listAchievements(token, key.saveID),
     ]);
     return { revisions, achievements };
   });
 }
 
-function record(key: string, history: History) {
-  const id = saveID(key);
-  const previous = shownKeys.get(id);
+function record(key: HistoryKey, history: History) {
+  const previous = shownKeys.get(key.saveID);
   // One history per save stays cached while another save is open.
   if (previous && previous !== key) histories.delete(previous);
-  shownKeys.set(id, key);
-  shown.set(id, history);
+  shownKeys.set(key.saveID, key);
+  shown.set(key.saveID, history);
 }
 
-function read(key: string): Snapshot {
+function read(key?: HistoryKey): Snapshot {
   if (!key) return { key, error: '' };
-  return { key, history: histories.get(key) ?? shown.get(saveID(key)), error: '' };
+  return { key, history: histories.get(key) ?? shown.get(key.saveID), error: '' };
 }
 
 // Shared revisions must be renamed in every cached sibling history.
@@ -108,7 +117,7 @@ function dropFromCaches(revisionID: string) {
 
 /** Warms the cache so expanding a save can paint its history with no loading step. */
 export function prefetchSaveRevisions(token: string, save: Omnisave) {
-  const key = historyKey(save);
+  const key = saveHistoryKey(save);
   if (!token || histories.get(key)) return;
   void load(token, key).then(
     (history) => record(key, history),
@@ -118,7 +127,7 @@ export function prefetchSaveRevisions(token: string, save: Omnisave) {
 
 /** Loads one save's revision history and initializes synchronously from cache. */
 export function useSaveRevisions(token: string, save?: Omnisave): SaveHistory {
-  const key = save ? historyKey(save) : '';
+  const key = save ? saveHistoryKey(save) : undefined;
   const [snapshot, setSnapshot] = useState(() => read(key));
 
   // Switch cached histories before paint when the selected save changes.
@@ -130,8 +139,8 @@ export function useSaveRevisions(token: string, save?: Omnisave): SaveHistory {
     let active = true;
     load(token, key).then(
       (history) => {
-        record(key, history);
         if (!active) return;
+        record(key, history);
         setSnapshot((current) =>
           current.key === key && current.history === history ? current : { key, history, error: '' }
         );
@@ -151,7 +160,7 @@ export function useSaveRevisions(token: string, save?: Omnisave): SaveHistory {
 
   const current = snapshot.key === key ? snapshot : read(key);
   function apply(history: History | undefined) {
-    if (!history) return;
+    if (!history || !key) return;
     histories.delete(key);
     record(key, history);
     setSnapshot({ key, history, error: '' });

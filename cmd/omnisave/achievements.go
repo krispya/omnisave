@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
@@ -52,22 +53,34 @@ func reportAchievements(
 	if err != nil || len(unlocked) == 0 {
 		return
 	}
+	// Store timestamps are whole seconds. Normalize optional adapters here so
+	// cursor comparisons use the same precision the server persists.
+	unlocked = slices.Clone(unlocked)
+	for index := range unlocked {
+		unlocked[index].UnlockedAt = time.Unix(unlocked[index].UnlockedAt.Unix(), 0).UTC()
+	}
 	slices.SortFunc(unlocked, func(left, right target.Achievement) int {
 		if !left.UnlockedAt.Equal(right.UnlockedAt) {
 			return left.UnlockedAt.Compare(right.UnlockedAt)
 		}
 		return strings.Compare(left.ID, right.ID)
 	})
-	through, hasLooked := state.AchievementsSeen(local)
+	watch, hasLooked := state.AchievementsSeen(local)
 	if !hasLooked {
-		state.RecordAchievementsSeen(local, unlocked[len(unlocked)-1].UnlockedAt)
+		latest := unlocked[len(unlocked)-1].UnlockedAt
+		state.RecordAchievementsSeen(local, latest, achievementIDsAt(unlocked, latest))
 		return
 	}
-	// An unlock is new when it happened strictly after everything this Device
-	// had already accounted for.
+	seenAtBoundary := make(map[string]bool, len(watch.IDs))
+	for _, id := range watch.IDs {
+		seenAtBoundary[id] = true
+	}
+	// An unlock is new when it happened after the watermark, or shares its
+	// whole-second time but has not itself been accounted for yet.
 	unlocks := make([]omnisave.AchievementUnlock, 0, len(unlocked))
 	for _, achievement := range unlocked {
-		if !achievement.UnlockedAt.After(through) {
+		if achievement.UnlockedAt.Before(watch.Through) ||
+			(achievement.UnlockedAt.Equal(watch.Through) && seenAtBoundary[achievement.ID]) {
 			continue
 		}
 		unlocks = append(unlocks, omnisave.AchievementUnlock{
@@ -91,7 +104,8 @@ func reportAchievements(
 	if err != nil {
 		return
 	}
-	state.RecordAchievementsSeen(local, unlocks[len(unlocks)-1].UnlockedAt)
+	latest := unlocks[len(unlocks)-1].UnlockedAt
+	state.RecordAchievementsSeen(local, latest, unlockIDsAt(unlocks, latest))
 	// Only what the server had not already recorded is worth a line: another
 	// Device may have reported the same unlock first.
 	names := make([]string, 0, len(recorded))
@@ -99,4 +113,24 @@ func reportAchievements(
 		names = append(names, achievement.Name)
 	}
 	report.Unlocked(local.GameTitle, names)
+}
+
+func achievementIDsAt(achievements []target.Achievement, at time.Time) []string {
+	ids := make([]string, 0)
+	for _, achievement := range achievements {
+		if achievement.UnlockedAt.Equal(at) {
+			ids = append(ids, achievement.ID)
+		}
+	}
+	return ids
+}
+
+func unlockIDsAt(unlocks []omnisave.AchievementUnlock, at time.Time) []string {
+	ids := make([]string, 0)
+	for _, unlock := range unlocks {
+		if unlock.UnlockedAt.Equal(at) {
+			ids = append(ids, unlock.ID)
+		}
+	}
+	return ids
 }

@@ -103,17 +103,21 @@ trusting if it means what it says.
 **Tradeoff:** A library adopted mid-playthrough shows no marks for what came
 before, and rebinding a save starts its watch over.
 
-### 5. The client keeps one timestamp per binding, not a list
+### 5. The client keeps a bounded watermark per binding, not a full history
 
-**Decision:** A binding remembers the newest unlock it has accounted for.
-Anything strictly newer is reported.
-**Why:** It is one field instead of a set that grows with every achievement in
-a library, and the server deduplicates by identity anyway, so the watermark
-only has to be conservative rather than exact. A failed report leaves it where
-it was, which is what makes the next pass retry.
+**Decision:** A binding remembers the newest unlock time it has accounted for
+and the achievement identities seen at that exact second. Anything later, or
+anything new at the boundary second, is reported.
+**Why:** Store times have whole-second precision, so several achievements may
+tie and a report-size boundary may split them across passes. Remembering the
+identities only at the newest second prevents those ties from being skipped
+without growing state with every achievement in a library. A failed report
+leaves the watermark where it was, which is what makes the next pass retry.
 **Tradeoff:** An achievement earned before the watch began but synced to this
 Device afterwards carries its true, older time and is therefore never
-reported — correctly, since Omnisave did not watch it happen.
+reported — correctly, since Omnisave did not watch it happen. The binding may
+briefly retain several identities when a game unlocks many achievements in
+one second.
 
 ### 6. Revision rows show compact marks and reveal names on demand
 

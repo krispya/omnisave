@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -151,5 +152,33 @@ func TestAnUnreportedUnlockIsTriedAgainOnTheNextPass(t *testing.T) {
 	syncWithAchievements(t, scanner, server, &fixture)
 	if marks := achievementsOf(t, server, &fixture); len(marks) != 1 || marks[0].ID != "VG_DAY2" {
 		t.Fatalf("expected the unlock reported again once the server answered, got %+v", marks)
+	}
+}
+
+// Whole-second store timestamps are not unique cursors. If a report-size
+// boundary cuts through a group earned in the same second, later passes still
+// have to carry the rest of that group.
+func TestSameSecondUnlocksContinueAcrossReports(t *testing.T) {
+	server := newRealServer(t)
+	fixture, game, scanner := newAchievingFixture(t, "saved-game-content")
+	game.unlock("BEFORE_WATCH", "Before watch", time.Now().Add(-time.Hour))
+	syncWithAchievements(t, scanner, server, &fixture)
+
+	unlockedAt := time.Now()
+	for index := range maxUnlocksPerReport + 1 {
+		id := fmt.Sprintf("ACHIEVEMENT_%03d", index)
+		game.unlock(id, id, unlockedAt)
+	}
+
+	syncWithAchievements(t, scanner, server, &fixture)
+	if marks := achievementsOf(t, server, &fixture); len(marks) != maxUnlocksPerReport {
+		t.Fatalf("expected the first report-size batch, got %d marks", len(marks))
+	}
+	// Cache synchronization may reveal another tied unlock later, even one
+	// whose ID sorts before the cursor's last accepted ID.
+	game.unlock("000_LATE_CACHE_ENTRY", "Late cache entry", unlockedAt)
+	syncWithAchievements(t, scanner, server, &fixture)
+	if marks := achievementsOf(t, server, &fixture); len(marks) != maxUnlocksPerReport+2 {
+		t.Fatalf("expected every new tied unlock after the boundary, got %d marks", len(marks))
 	}
 }
