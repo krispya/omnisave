@@ -61,8 +61,9 @@ test:
 build-oci:
 	docker build -f Containerfile -t $(OCI_IMAGE):$(VERSION) -t $(OCI_IMAGE):latest .
 
+# OCI_BUILD_ARGS lets CI pass cache flags without affecting local builds.
 push-oci:
-	docker buildx build -f Containerfile --platform $(OCI_PLATFORMS) \
+	docker buildx build -f Containerfile --platform $(OCI_PLATFORMS) $(OCI_BUILD_ARGS) \
 		-t $(OCI_IMAGE):$(VERSION) -t $(OCI_IMAGE):latest --push .
 
 # Export image as a .tar file for manual import into Synology Container Manager.

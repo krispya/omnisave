@@ -41,9 +41,9 @@ mkdir -p "${DIST}"
 CHECKSUMS="${DIST}/omnisave-${VERSION}-checksums.txt"
 : > "${CHECKSUMS}"
 
-for PLATFORM in ${PLATFORMS}; do
-    GOOS=${PLATFORM%/*}
-    GOARCH=${PLATFORM#*/}
+build_platform() {
+    GOOS=${1%/*}
+    GOARCH=${1#*/}
 
     BINARY=omnisave
     if [ "${GOOS}" = "windows" ]; then
@@ -64,6 +64,28 @@ for PLATFORM in ${PLATFORMS}; do
     # The license travels with the binary: ISC asks for the notice to appear
     # in every copy, and an archive is one.
     cp "${ROOT}/LICENSE" "${PAYLOAD}/LICENSE"
+}
+
+# The cross-compiles are independent, so they run concurrently. Archiving
+# stays serial below so the checksum file keeps a stable platform order.
+PIDS=
+for PLATFORM in ${PLATFORMS}; do
+    build_platform "${PLATFORM}" &
+    PIDS="${PIDS} $!"
+done
+for PID in ${PIDS}; do
+    wait "${PID}"
+done
+
+for PLATFORM in ${PLATFORMS}; do
+    GOOS=${PLATFORM%/*}
+    GOARCH=${PLATFORM#*/}
+
+    BINARY=omnisave
+    if [ "${GOOS}" = "windows" ]; then
+        BINARY=omnisave.exe
+    fi
+    PAYLOAD="${STAGE}/${GOOS}-${GOARCH}"
 
     # The version is enough to name a release archive: one release per version,
     # with the build number carried inside the binary rather than the filename.

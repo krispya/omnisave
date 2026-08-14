@@ -33,7 +33,16 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: true
+          # Shares the CI packaging job's cache key, so a release restores the
+          # cross-compile artifacts CI already built for this commit.
+          cache: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-cross-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: go-cross-
 
       - uses: pnpm/action-setup@v6
         with:
@@ -80,8 +89,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      # Exposes the Actions runtime token so buildx can use the gha cache
+      # backend from a plain run step.
+      - uses: crazy-max/ghaction-github-runtime@v3
+
       - name: Publish the OCI image
-        run: make push-oci
+        run: >
+          make push-oci
+          OCI_BUILD_ARGS="--cache-from type=gha --cache-to type=gha,mode=max"
 
       - name: Publish the release
         env:
