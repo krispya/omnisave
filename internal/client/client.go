@@ -136,6 +136,28 @@ func progress(report func(ScanProgress), event ScanProgress) {
 	}
 }
 
+// UnlockedAchievements asks the save's own adapter which achievements its
+// target records as unlocked. An adapter that cannot see achievements reports
+// none, which is how every save on such a target stays unmarked.
+func (s *Scanner) UnlockedAchievements(
+	ctx context.Context,
+	discovered target.Target,
+	game target.InstalledGame,
+	save target.Save,
+) ([]target.Achievement, error) {
+	for _, adapter := range s.adapters {
+		if adapter.Name() != discovered.Adapter {
+			continue
+		}
+		source, supported := adapter.(target.Achievements)
+		if !supported {
+			return nil, nil
+		}
+		return source.UnlockedAchievements(ctx, discovered, game, save)
+	}
+	return nil, nil
+}
+
 // PlayingMatchers builds activity matchers for tracked games on supported targets.
 func (s *Scanner) PlayingMatchers(scans []TargetScan, tracked func(gameID string) bool) []running.Matcher {
 	adapters := make(map[string]target.Adapter, len(s.adapters))

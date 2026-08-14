@@ -61,6 +61,13 @@ type OmnisaveRepository interface {
 	ForkOmnisave(ctx context.Context, save omnisave.Omnisave) error
 	RestoreOmnisave(ctx context.Context, id, revisionID string, expectedCurrentRevisionID *string) error
 
+	// RecordAchievements stores unlocks against a save, keeping the placement
+	// an achievement was first given: an ID already recorded is left alone.
+	// It returns only the achievements this call added.
+	RecordAchievements(ctx context.Context, omnisaveID string, achievements []omnisave.Achievement) ([]omnisave.Achievement, error)
+	// ListAchievements returns a save's achievements in unlock order.
+	ListAchievements(ctx context.Context, omnisaveID string) ([]omnisave.Achievement, error)
+
 	CommitRevision(ctx context.Context, expectedCurrentRevisionID *string, revision omnisave.Revision) error
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*omnisave.Revision, error)
 	ListRevisions(ctx context.Context, omnisaveID string) ([]omnisave.Revision, error)

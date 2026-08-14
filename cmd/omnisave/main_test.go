@@ -173,7 +173,7 @@ func TestTrackingCanJumpAStaleLocalSaveToTheCurrentRevision(t *testing.T) {
 		return tui.StaleBindingJump, nil
 	}
 
-	err = reconcileSaves(context.Background(), remoteClient, &fixture.state, fixture.scans,
+	err = reconcileSaves(context.Background(), nil, remoteClient, &fixture.state, fixture.scans,
 		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, testPrompts(choose, failingAmbiguousChooser(t), t), nil, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -236,7 +236,7 @@ func TestTrackingCanForkAStaleLocalSaveAtItsMatchingRevision(t *testing.T) {
 		return tui.StaleBindingFork, nil
 	}
 
-	err = reconcileSaves(context.Background(), remoteClient, &fixture.state, fixture.scans,
+	err = reconcileSaves(context.Background(), nil, remoteClient, &fixture.state, fixture.scans,
 		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, testPrompts(choose, failingAmbiguousChooser(t), t), nil, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -293,7 +293,7 @@ func TestAReverseStaleSaveGetsTheStalePromptAndCanAdoptTheOlderCurrent(t *testin
 		return tui.StaleBindingJump, nil
 	}
 
-	err = reconcileSaves(context.Background(), remoteClient, &fixture.state, fixture.scans,
+	err = reconcileSaves(context.Background(), nil, remoteClient, &fixture.state, fixture.scans,
 		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, testPrompts(choose, failingAmbiguousChooser(t), t), nil, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -359,7 +359,7 @@ func TestAReverseStaleSaveCanForkToKeepItsDescendantContent(t *testing.T) {
 		return tui.StaleBindingFork, nil
 	}
 
-	err = reconcileSaves(context.Background(), remoteClient, &fixture.state, fixture.scans,
+	err = reconcileSaves(context.Background(), nil, remoteClient, &fixture.state, fixture.scans,
 		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, testPrompts(choose, failingAmbiguousChooser(t), t), nil, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -514,7 +514,7 @@ func TestFreshDeviceCanChooseAndMaterializeAnExistingServerSave(t *testing.T) {
 
 	// A headless pass sees the available save but never writes into the game.
 	outcome := tui.TrackOutcome{Tracked: 1, Synced: true}
-	if err := reconcileSaves(context.Background(), remoteClient, &state, scans, confirmed,
+	if err := reconcileSaves(context.Background(), nil, remoteClient, &state, scans, confirmed,
 		&outcome, &tui.TrackReport{}, nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +531,7 @@ func TestFreshDeviceCanChooseAndMaterializeAnExistingServerSave(t *testing.T) {
 		return tui.SyncToDeviceChoice{}, nil
 	}
 	outcome = tui.TrackOutcome{Tracked: 1, Synced: true}
-	if err := reconcileSaves(context.Background(), remoteClient, &state, scans, confirmed,
+	if err := reconcileSaves(context.Background(), nil, remoteClient, &state, scans, confirmed,
 		&outcome, &tui.TrackReport{}, prompts, nil, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -544,7 +544,7 @@ func TestFreshDeviceCanChooseAndMaterializeAnExistingServerSave(t *testing.T) {
 		return tui.SyncToDeviceChoice{OmnisaveID: remoteSave.ID}, nil
 	}
 	outcome = tui.TrackOutcome{Tracked: 1, Synced: true}
-	if err := reconcileSaves(context.Background(), remoteClient, &state, scans, confirmed,
+	if err := reconcileSaves(context.Background(), nil, remoteClient, &state, scans, confirmed,
 		&outcome, &tui.TrackReport{}, prompts, nil, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -705,7 +705,7 @@ func TestAmbiguousSaveCanBindToAChosenOmnisaveWithNothingSyncedYet(t *testing.T)
 		return tui.AmbiguousBindingChoice{OmnisaveID: "omnisave-2"}, nil
 	}
 
-	err = reconcileSaves(context.Background(), remoteClient, &fixture.state, fixture.scans,
+	err = reconcileSaves(context.Background(), nil, remoteClient, &fixture.state, fixture.scans,
 		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{},
 		testPrompts(failingStaleChooser(t), chooseAmbiguous, t), nil, 0)
 	if err != nil {
@@ -755,7 +755,7 @@ func TestASaveMatchingTwoForkedLineagesBindsAtTheChosenRevision(t *testing.T) {
 		return tui.AmbiguousBindingChoice{OmnisaveID: "omnisave-2"}, nil
 	}
 
-	err = reconcileSaves(context.Background(), remoteClient, &fixture.state, fixture.scans,
+	err = reconcileSaves(context.Background(), nil, remoteClient, &fixture.state, fixture.scans,
 		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{},
 		testPrompts(failingStaleChooser(t), chooseAmbiguous, t), nil, 0)
 	if err != nil {
@@ -800,7 +800,7 @@ func TestAnAmbiguousSaveCanSeedANewOmnisaveOrStayUnbound(t *testing.T) {
 	deferring := func(string, []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error) {
 		return tui.AmbiguousBindingChoice{}, nil
 	}
-	err = reconcileSaves(context.Background(), remoteClient, &fixture.state, fixture.scans,
+	err = reconcileSaves(context.Background(), nil, remoteClient, &fixture.state, fixture.scans,
 		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, testPrompts(failingStaleChooser(t), deferring, t), nil, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -813,7 +813,7 @@ func TestAnAmbiguousSaveCanSeedANewOmnisaveOrStayUnbound(t *testing.T) {
 	seeding := func(string, []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error) {
 		return tui.AmbiguousBindingChoice{Seed: true}, nil
 	}
-	err = reconcileSaves(context.Background(), remoteClient, &fixture.state, fixture.scans,
+	err = reconcileSaves(context.Background(), nil, remoteClient, &fixture.state, fixture.scans,
 		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, testPrompts(failingStaleChooser(t), seeding, t), nil, 0)
 	if err != nil {
 		t.Fatal(err)
