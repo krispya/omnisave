@@ -185,6 +185,9 @@ func TestManualScanFindsOneMultiFileSteamCloudSave(t *testing.T) {
 	if !ok || steamID != "413150" || game.Identity.Title != "Stardew Valley" {
 		t.Fatalf("unexpected installed game: %+v", game)
 	}
+	if game.Identity.Platform != "PC" {
+		t.Fatalf("expected the store-level PC platform, got %q", game.Identity.Platform)
+	}
 	save := scans[0].Games[0].Saves[0]
 	if save.Kind != "cloud" || save.GameID != game.ID {
 		t.Fatalf("unexpected discovered save: %+v", save)
@@ -275,6 +278,10 @@ func TestScanFindsDarkSoulsIIISavesUnderProtonFromTheEmbeddedManifest(t *testing
 	save := scans[0].Games[0].Saves[0]
 	if save.Kind != "local" || save.Metadata["profile_provider_id"] != "374320" {
 		t.Fatalf("expected a Ludusavi profile save for Dark Souls III, got %+v", save)
+	}
+	// A Proton install is still the same Steam purchase, so it claims PC too.
+	if platform := scans[0].Games[0].Game.Identity.Platform; platform != "PC" {
+		t.Fatalf("expected the store-level PC platform, got %q", platform)
 	}
 	foundSave := false
 	for _, file := range save.Files {

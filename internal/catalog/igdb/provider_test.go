@@ -77,7 +77,7 @@ func TestProviderResolvesSteamAndCachesSearches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first) != 1 || len(second) != 1 || first[0].SelectionToken != "17000" || searchRequests.Load() != 1 {
+	if len(first) != 1 || len(second) != 1 || first[0].SelectionToken != "17000|PC" || searchRequests.Load() != 1 {
 		t.Fatalf("search was not cached: first=%v second=%v requests=%d", first, second, searchRequests.Load())
 	}
 	selected, err := provider.Match(context.Background(), first[0].SelectionToken)
@@ -92,6 +92,87 @@ func TestProviderResolvesSteamAndCachesSearches(t *testing.T) {
 	contents, _ := io.ReadAll(image)
 	if format != "image/jpeg" || string(contents) != "cover" || tokenRequests.Load() != 1 {
 		t.Fatalf("unexpected media or token reuse: format=%q image=%q tokens=%d", format, contents, tokenRequests.Load())
+	}
+}
+
+// A game reached through its Steam listing is the store-level "PC" release,
+// not whichever console IGDB lists first, and the matcher shows the same
+// vocabulary: one selectable row per platform, Steam's OSes collapsed into
+// one "PC" row whose selection stamps the same platform resolution does.
+func TestSteamResolutionAndMatcherAgreeOnPC(t *testing.T) {
+	undertale := func() map[string]any {
+		game := gameResponse()
+		game["name"] = "Undertale"
+		game["platforms"] = []any{
+			map[string]any{"name": "PlayStation 4"},
+			map[string]any{"name": "Nintendo Switch"},
+			map[string]any{"name": "Linux"},
+			map[string]any{"name": "Mac"},
+			map[string]any{"name": "PC (Microsoft Windows)"},
+		}
+		return game
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/token":
+			writeJSON(response, map[string]any{"access_token": "access", "expires_in": 3600})
+		case "/v4/external_games":
+			writeJSON(response, []any{map[string]any{"uid": "391540", "game": undertale()}})
+		case "/v4/games":
+			writeJSON(response, []any{undertale()})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	provider, err := igdb.New(igdb.Config{
+		ClientID: "client", ClientSecret: "secret",
+		BaseURL: server.URL + "/v4", TokenURL: server.URL + "/token",
+	}, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	match, err := provider.Resolve(context.Background(), catalog.ResolveGame{
+		Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "391540"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if match.Platform != "PC" || match.PlatformCompany != "" {
+		t.Fatalf("Steam resolution did not claim the store platform: %+v", match)
+	}
+
+	candidates, err := provider.Search(context.Background(), catalog.SearchGames{Title: "Undertale", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var platforms []string
+	for _, candidate := range candidates {
+		platforms = append(platforms, candidate.Platform)
+	}
+	expected := []string{"PlayStation 4", "Nintendo Switch", "PC"}
+	if len(platforms) != 3 || platforms[0] != expected[0] || platforms[1] != expected[1] || platforms[2] != expected[2] {
+		t.Fatalf("expected one row per platform with Steam's OSes as PC, got %v", platforms)
+	}
+	if candidates[2].SelectionToken != "17000|PC" {
+		t.Fatalf("PC row does not carry its platform: %q", candidates[2].SelectionToken)
+	}
+
+	selected, err := provider.Match(context.Background(), candidates[2].SelectionToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Platform != "PC" || selected.PlatformCompany != "" {
+		t.Fatalf("choosing the PC row did not stamp PC: %+v", selected)
+	}
+	console, err := provider.Match(context.Background(), candidates[0].SelectionToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if console.Platform != "PlayStation 4" {
+		t.Fatalf("choosing a console row did not stamp it: %+v", console)
 	}
 }
 
