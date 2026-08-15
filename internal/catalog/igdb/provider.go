@@ -124,7 +124,7 @@ func (p *Provider) Resolve(ctx context.Context, evidence catalog.ResolveGame) (*
 		if err != nil {
 			return nil, err
 		}
-		return game.match(nil), nil
+		return game.match(nil, evidence.PlatformHint), nil
 	}
 	steamID := identifierValue(evidence.Identifiers, "steam.app")
 	if steamID == "" {
@@ -141,7 +141,14 @@ func (p *Provider) Resolve(ctx context.Context, evidence catalog.ResolveGame) (*
 	if len(results) == 0 || results[0].Game.ID == 0 {
 		return nil, catalog.ErrNotFound
 	}
-	return results[0].Game.match([]catalog.GameIdentifier{{Namespace: "steam.app", Value: steamID}}), nil
+	// A game reached through its Steam listing is one purchase and one cloud
+	// save across every OS Steam ships on, so its platform is the store's
+	// "PC" — never a console the game also appeared on, and not the scanning
+	// host's OS, which would let devices disagree about the same Game.
+	match := results[0].Game.match([]catalog.GameIdentifier{{Namespace: "steam.app", Value: steamID}}, "")
+	match.Platform = "PC"
+	match.PlatformCompany = ""
+	return match, nil
 }
 
 func (p *Provider) Search(ctx context.Context, input catalog.SearchGames) ([]catalog.GameCandidate, error) {
@@ -163,14 +170,15 @@ func (p *Provider) Search(ctx context.Context, input catalog.SearchGames) ([]cat
 		if game.ID == 0 || strings.TrimSpace(game.Name) == "" {
 			continue
 		}
-		candidates = append(candidates, game.candidate(input.Platform))
+		candidates = append(candidates, game.candidates(input.Platform)...)
 	}
 	p.storeCached(cacheKey, candidates)
 	return slices.Clone(candidates), nil
 }
 
 func (p *Provider) Match(ctx context.Context, selectionToken string) (*catalog.ProviderMatch, error) {
-	gameID, valid := positiveID(strings.TrimSpace(selectionToken))
+	id, platform, _ := strings.Cut(strings.TrimSpace(selectionToken), "|")
+	gameID, valid := positiveID(id)
 	if !valid {
 		return nil, catalog.ErrInvalid
 	}
@@ -178,7 +186,14 @@ func (p *Provider) Match(ctx context.Context, selectionToken string) (*catalog.P
 	if err != nil {
 		return nil, err
 	}
-	return game.match(nil), nil
+	match := game.match(nil, "")
+	// The token's platform is the row the user chose in search, already in
+	// the vocabulary resolution stamps, so it is stored as chosen rather
+	// than re-derived from IGDB's platform list.
+	if platform = strings.TrimSpace(platform); platform != "" {
+		match.PlatformCompany, match.Platform = catalog.SplitPlatform(platform)
+	}
+	return match, nil
 }
 
 // imageSizes maps a media kind to the IGDB image size that suits it. Artwork
@@ -417,7 +432,7 @@ type involvedCompany struct {
 	Publisher bool       `json:"publisher"`
 }
 
-func (g game) match(additional []catalog.GameIdentifier) *catalog.ProviderMatch {
+func (g game) match(additional []catalog.GameIdentifier, platformHint string) *catalog.ProviderMatch {
 	identifiers := append([]catalog.GameIdentifier{{Namespace: "igdb.game", Value: strconv.FormatInt(g.ID, 10)}}, additional...)
 	metadata := make(map[string]any)
 	if g.FirstReleaseDate > 0 {
@@ -427,7 +442,7 @@ func (g game) match(additional []catalog.GameIdentifier) *catalog.ProviderMatch 
 	if len(genres) > 0 {
 		metadata["genres"] = genres
 	}
-	platformCompany, platformName := catalog.SplitPlatform(choosePlatform(g.Platforms, ""))
+	platformCompany, platformName := catalog.SplitPlatform(choosePlatform(g.Platforms, platformHint))
 	match := &catalog.ProviderMatch{
 		Source:          "igdb",
 		Identifiers:     identifiers,
@@ -462,21 +477,62 @@ func (g game) match(additional []catalog.GameIdentifier) *catalog.ProviderMatch 
 	return match
 }
 
-func (g game) candidate(platformHint string) catalog.GameCandidate {
+// candidates returns one selectable row per platform the game shipped on, so
+// choosing a row chooses a platform. The row naming the hinted platform is
+// listed first; a game IGDB lists no platforms for is still one row.
+func (g game) candidates(platformHint string) []catalog.GameCandidate {
 	year := ""
 	if g.FirstReleaseDate > 0 {
 		year = strconv.Itoa(time.Unix(g.FirstReleaseDate, 0).UTC().Year())
 	}
 	id := strconv.FormatInt(g.ID, 10)
-	return catalog.GameCandidate{
+	base := catalog.GameCandidate{
 		Provider:       "igdb",
 		ProviderID:     id,
 		Title:          strings.TrimSpace(g.Name),
-		Platform:       choosePlatform(g.Platforms, platformHint),
 		Publisher:      publisher(g.Companies),
 		Year:           year,
 		SelectionToken: id,
 	}
+	platforms := displayPlatforms(g.Platforms)
+	if len(platforms) == 0 {
+		return []catalog.GameCandidate{base}
+	}
+	if hint := canonicalPlatform(platformHint); hint != "" {
+		for index, platform := range platforms {
+			if canonicalPlatform(platform) == hint {
+				platforms[0], platforms[index] = platforms[index], platforms[0]
+				break
+			}
+		}
+	}
+	candidates := make([]catalog.GameCandidate, 0, len(platforms))
+	for _, platform := range platforms {
+		candidate := base
+		candidate.Platform = platform
+		candidate.SelectionToken = id + "|" + platform
+		candidates = append(candidates, candidate)
+	}
+	return candidates
+}
+
+// displayPlatforms names a game's platforms as resolution stamps them, with
+// the OSes one Steam purchase covers collapsed into a single "PC" entry.
+func displayPlatforms(platforms []namedValue) []string {
+	result := make([]string, 0, len(platforms))
+	for _, platform := range platforms {
+		name := strings.Join(strings.Fields(platform.Name), " ")
+		if name == "" {
+			continue
+		}
+		if steamFamily[canonicalPlatform(name)] {
+			name = "PC"
+		}
+		if !slices.Contains(result, name) {
+			result = append(result, name)
+		}
+	}
+	return result
 }
 
 func gameFields(prefix string) string {
@@ -509,11 +565,44 @@ func escapeQuery(value string) string {
 	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value)
 }
 
+// steamFamily are the canonical platforms one Steam purchase covers, which
+// resolution and search both present as the store-level "PC".
+var steamFamily = map[string]bool{
+	"pc (microsoft windows)": true,
+	"mac":                    true,
+	"linux":                  true,
+	"steamos":                true,
+}
+
+// platformAliases maps how clients and hosts name a platform to how IGDB
+// names it, so a scan reporting "macOS" selects IGDB's "Mac".
+var platformAliases = map[string]string{
+	"darwin":  "mac",
+	"macos":   "mac",
+	"os x":    "mac",
+	"osx":     "mac",
+	"windows": "pc (microsoft windows)",
+	"pc":      "pc (microsoft windows)",
+}
+
+func canonicalPlatform(name string) string {
+	name = strings.ToLower(strings.Join(strings.Fields(name), " "))
+	if alias, known := platformAliases[name]; known {
+		return alias
+	}
+	return name
+}
+
+// choosePlatform selects one of a game's platforms: the hint's platform when
+// the game shipped on it, otherwise whatever IGDB lists first. The hint is
+// the caller's own claim, so it stands alone when IGDB lists no platforms.
 func choosePlatform(platforms []namedValue, hint string) string {
 	hint = strings.TrimSpace(hint)
-	for _, platform := range platforms {
-		if hint != "" && strings.EqualFold(strings.TrimSpace(platform.Name), hint) {
-			return strings.TrimSpace(platform.Name)
+	if hint != "" {
+		for _, platform := range platforms {
+			if canonicalPlatform(platform.Name) == canonicalPlatform(hint) {
+				return strings.TrimSpace(platform.Name)
+			}
 		}
 	}
 	if len(platforms) > 0 {
