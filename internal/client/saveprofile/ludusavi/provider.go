@@ -88,21 +88,42 @@ type manifestWhen struct {
 }
 
 func rules(paths map[string]*manifestPath) []saveprofile.Rule {
-	templates := make([]string, 0, len(paths))
+	originals := make([]string, 0, len(paths))
 	for path := range paths {
-		templates = append(templates, path)
+		originals = append(originals, path)
+	}
+	sort.Strings(originals)
+	normalized := make(map[string]*manifestPath, len(paths))
+	templates := make([]string, 0, len(paths))
+	for _, original := range originals {
+		template := original
+		// The manifest spells some Windows rules from the drive root as
+		// C:/Users/<osUserName>/…. That directory is what <home> already
+		// names on every runtime, and a Proton prefix spells users in
+		// lowercase, so the literal path would never match there.
+		if rest, ok := strings.CutPrefix(template, "C:/Users/<osUserName>/"); ok {
+			template = "<home>/" + rest
+		}
+		// A rewrite that collides with an entry the manifest already
+		// spells home-relative defers to it; home-relative sorts first.
+		if _, exists := normalized[template]; exists {
+			continue
+		}
+		normalized[template] = paths[original]
+		templates = append(templates, template)
 	}
 	sort.Strings(templates)
 	var result []saveprofile.Rule
 	for _, template := range templates {
-		path := paths[template]
+		path := normalized[template]
 		if path != nil && !isSave(path.Tags) {
 			continue
 		}
 		// Steam Cloud's userdata directories already belong to the steam
 		// adapter, which attributes them to an account. A profile rule over
-		// the same files would report every Cloud save a second time.
-		if strings.HasPrefix(template, "<root>/userdata") {
+		// the same files would report every Cloud save a second time. The
+		// manifest also spells the directory as userData.
+		if strings.HasPrefix(strings.ToLower(template), "<root>/userdata") {
 			continue
 		}
 		constraints := []manifestWhen{{}}
