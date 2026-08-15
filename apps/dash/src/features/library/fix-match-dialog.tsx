@@ -126,7 +126,7 @@ export function FixMatchDialog({ game, token, onCancel, onMatched }: FixMatchDia
             <ul className="space-y-1">
               {candidates.map((candidate) => {
                 return (
-                  <li key={`${candidate.provider}:${candidate.provider_id}`}>
+                  <li key={`${candidate.provider}:${candidate.selection_token}`}>
                     <button
                       type="button"
                       onClick={() => void select(candidate)}
