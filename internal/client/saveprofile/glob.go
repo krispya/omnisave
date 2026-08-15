@@ -8,79 +8,106 @@ import (
 )
 
 // expandGlob matches an absolute pattern against the filesystem like
-// filepath.Glob, with one extension the Ludusavi manifest relies on: a `**`
-// segment matches zero or more directories. Like Glob, it ignores filesystem
-// errors while walking. Symlinked directories are never descended into.
-func expandGlob(pattern string) ([]string, error) {
-	segments := strings.Split(filepath.ToSlash(pattern), "/")
+// filepath.Glob, with the extensions the Ludusavi manifest relies on: a `**`
+// segment matches zero or more directories, and matching is case-insensitive
+// because community-authored casing is unreliable. Filesystem errors and
+// unmatchable pattern segments make a rule find nothing rather than fail.
+// Symlinked directories are followed for named segments, like Glob, but
+// never during `**` recursion, which unbounded traversal could loop.
+func expandGlob(pattern string) []string {
+	segments := splitPattern(pattern)
 	anchor := 0
-	for anchor < len(segments) && !strings.ContainsAny(segments[anchor], "*?[") {
+	for anchor < len(segments) && !hasMeta(segments[anchor]) {
 		anchor++
 	}
 	if anchor == len(segments) {
-		return []string{pattern}, nil
+		return []string{pattern}
 	}
 	root := strings.Join(segments[:anchor], "/")
 	if root == "" || strings.HasSuffix(root, ":") {
 		root += "/"
 	}
 	var matches []string
-	var walk func(directory string, remaining []string) error
-	walk = func(directory string, remaining []string) error {
-		if len(remaining) == 0 {
-			matches = append(matches, directory)
-			return nil
-		}
+	var walk func(directory string, remaining []string)
+	walk = func(directory string, remaining []string) {
 		head, rest := remaining[0], remaining[1:]
-		if head == "**" {
-			if len(rest) == 0 {
-				matches = append(matches, directory)
-				return nil
-			}
-			if err := walk(directory, rest); err != nil {
-				return err
-			}
-			entries, err := os.ReadDir(directory)
-			if err != nil {
-				return nil
-			}
-			for _, entry := range entries {
-				if entry.IsDir() {
-					if err := walk(filepath.Join(directory, entry.Name()), remaining); err != nil {
-						return err
-					}
-				}
-			}
-			return nil
+		if head == "**" && len(rest) == 0 {
+			matches = append(matches, directory)
+			return
 		}
 		entries, err := os.ReadDir(directory)
 		if err != nil {
-			return nil
+			return
 		}
-		for _, entry := range entries {
-			matched, err := filepath.Match(head, entry.Name())
-			if err != nil {
-				return err
-			}
-			if !matched {
-				continue
-			}
-			path := filepath.Join(directory, entry.Name())
-			if len(rest) == 0 {
-				matches = append(matches, path)
-				continue
-			}
-			if entry.IsDir() {
-				if err := walk(path, rest); err != nil {
-					return err
+		if head == "**" {
+			// Zero directories consumed: match the rest right here, then
+			// keep `**` alive one level down. splitPattern collapsed runs
+			// of `**`, so rest never begins with another one.
+			matchEntries(directory, entries, rest, &matches, walk)
+			for _, entry := range entries {
+				if entry.IsDir() {
+					walk(filepath.Join(directory, entry.Name()), remaining)
 				}
 			}
+			return
 		}
-		return nil
+		matchEntries(directory, entries, remaining, &matches, walk)
 	}
-	if err := walk(filepath.FromSlash(root), segments[anchor:]); err != nil {
-		return nil, err
-	}
+	walk(filepath.FromSlash(root), segments[anchor:])
 	sort.Strings(matches)
-	return matches, nil
+	return matches
+}
+
+// matchEntries matches one directory's entries against the head segment,
+// collecting final matches and descending for the rest.
+func matchEntries(directory string, entries []os.DirEntry, remaining []string, matches *[]string, walk func(string, []string)) {
+	head, rest := remaining[0], remaining[1:]
+	for _, entry := range entries {
+		if !matchSegment(head, entry.Name()) {
+			continue
+		}
+		path := filepath.Join(directory, entry.Name())
+		if len(rest) == 0 {
+			*matches = append(*matches, path)
+			continue
+		}
+		if descendable(path, entry) {
+			walk(path, rest)
+		}
+	}
+}
+
+// matchSegment compares case-insensitively and treats a malformed pattern
+// segment as matching nothing.
+func matchSegment(pattern, name string) bool {
+	matched, err := filepath.Match(strings.ToLower(pattern), strings.ToLower(name))
+	return err == nil && matched
+}
+
+// descendable reports whether a matched entry is a directory to walk into,
+// following symlinks the way filepath.Glob does.
+func descendable(path string, entry os.DirEntry) bool {
+	if entry.IsDir() {
+		return true
+	}
+	if entry.Type()&os.ModeSymlink == 0 {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+// splitPattern breaks a pattern into slash-separated segments, collapsing
+// runs of `**`: zero-or-more directories twice is still zero-or-more, and
+// the collapse keeps the walk from revisiting whole subtrees.
+func splitPattern(pattern string) []string {
+	segments := strings.Split(filepath.ToSlash(pattern), "/")
+	collapsed := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		if segment == "**" && len(collapsed) > 0 && collapsed[len(collapsed)-1] == "**" {
+			continue
+		}
+		collapsed = append(collapsed, segment)
+	}
+	return collapsed
 }

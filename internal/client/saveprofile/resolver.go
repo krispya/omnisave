@@ -1,7 +1,6 @@
 package saveprofile
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,7 +10,10 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 )
 
-// Resolve finds the existing files described by a save profile.
+// Resolve finds the existing files described by a save profile. Filesystem
+// trouble along one rule's path — permissions, files where directories were
+// expected — makes that rule find less, never fails the pass: discovery only
+// ever reports what it could actually read.
 func Resolve(game target.InstalledGame, profile Profile) ([]target.Save, error) {
 	seen := make(map[string]bool)
 	var files []target.File
@@ -23,11 +25,7 @@ func Resolve(game target.InstalledGame, profile Profile) ([]target.Save, error) 
 		if pattern == "" {
 			continue
 		}
-		resolved, err := collect(pattern, rule.ID)
-		if err != nil {
-			return nil, fmt.Errorf("resolve rule %s: %w", rule.ID, err)
-		}
-		for _, file := range resolved {
+		for _, file := range collect(pattern, rule.ID, templateGlobs(rule.Path)) {
 			if !seen[file.Path] {
 				seen[file.Path] = true
 				files = append(files, file)
@@ -70,7 +68,7 @@ func ResolveDestinations(game target.InstalledGame, profile Profile) ([]target.S
 			continue
 		}
 		location := target.SaveLocation{ID: rule.ID, Path: expanded, Kind: target.SaveLocationUnknown}
-		if hasMeta(expanded) {
+		if templateGlobs(rule.Path) && hasMeta(expanded) {
 			location.Path = globBase(expanded)
 			location.Kind = target.SaveLocationDirectory
 		} else if info, err := os.Lstat(expanded); err == nil {
@@ -85,7 +83,7 @@ func ResolveDestinations(game target.InstalledGame, profile Profile) ([]target.S
 				continue
 			}
 		} else if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("inspect rule %s: %w", rule.ID, err)
+			continue
 		}
 		seen[rule.ID] = true
 		locations = append(locations, location)
@@ -118,6 +116,14 @@ func applies(rule Rule, game target.InstalledGame) bool {
 	return rule.OS == "" || rule.OS == game.Environment.HostOS
 }
 
+// templateGlobs reports whether a rule's template asks for glob matching:
+// its own metacharacters, or the any-account placeholder. Metacharacters
+// that arrive through expanded environment values (a library named with
+// brackets, say) stay literal.
+func templateGlobs(template string) bool {
+	return hasMeta(template) || strings.Contains(template, "<storeUserId>")
+}
+
 func expand(template string, game target.InstalledGame) string {
 	environment := game.Environment
 	home := environment.Home
@@ -131,10 +137,11 @@ func expand(template string, game target.InstalledGame) string {
 		// The store account owning a save is unknown at discovery time, so
 		// the placeholder matches any account directory, as Ludusavi does.
 		"storeUserId": "*",
-		// A rule may name the OS account owning the save. Native
-		// environments derive it from the home directory; Proton prefixes
-		// always call the account steamuser.
-		"osUserName":      filepath.Base(home),
+		// Games write to the shell's idea of Documents and Saved Games,
+		// which OneDrive's folder move can relocate; on Windows the
+		// environment reports the known-folder paths.
+		"winDocuments":    environment.Variables["DOCUMENTS"],
+		"winSavedGames":   environment.Variables["SAVED_GAMES"],
 		"winAppData":      environment.Variables["APPDATA"],
 		"winLocalAppData": environment.Variables["LOCALAPPDATA"],
 		"winProgramData":  environment.Variables["PROGRAMDATA"],
@@ -145,15 +152,25 @@ func expand(template string, game target.InstalledGame) string {
 		"macAppSupport":   filepath.Join(home, "Library", "Application Support"),
 		"macPreferences":  filepath.Join(home, "Library", "Preferences"),
 	}
+	if home != "" {
+		// A rule may name the OS account owning the save. Native
+		// environments derive it from the home directory; Proton prefixes
+		// always call the account steamuser.
+		values["osUserName"] = filepath.Base(home)
+	}
 	if values["winAppData"] == "" {
 		values["winAppData"] = filepath.Join(home, "AppData", "Roaming")
 	}
 	if values["winLocalAppData"] == "" {
 		values["winLocalAppData"] = filepath.Join(home, "AppData", "Local")
 	}
+	if values["winDocuments"] == "" {
+		values["winDocuments"] = filepath.Join(home, "Documents")
+	}
+	if values["winSavedGames"] == "" {
+		values["winSavedGames"] = filepath.Join(home, "Saved Games")
+	}
 	values["winLocalAppDataLow"] = filepath.Join(home, "AppData", "LocalLow")
-	values["winDocuments"] = filepath.Join(home, "Documents")
-	values["winSavedGames"] = filepath.Join(home, "Saved Games")
 	if values["xdgData"] == "" {
 		values["xdgData"] = filepath.Join(home, ".local", "share")
 	}
@@ -188,41 +205,42 @@ func expand(template string, game target.InstalledGame) string {
 	if strings.Contains(expanded, "<") || strings.Contains(expanded, ">") {
 		return ""
 	}
-	return filepath.Clean(filepath.FromSlash(expanded))
+	cleaned := filepath.Clean(filepath.FromSlash(expanded))
+	// The manifest carries the occasional prose or relative entry; only an
+	// absolute path can honestly be searched or offered as a destination.
+	if !filepath.IsAbs(cleaned) {
+		return ""
+	}
+	return cleaned
 }
 
-func collect(pattern, locationID string) ([]target.File, error) {
+// collect gathers the regular files a resolved pattern names. Unreadable
+// entries are skipped rather than reported: a rule can only speak for what
+// discovery can see.
+func collect(pattern, locationID string, globby bool) []target.File {
 	matches := []string{pattern}
 	base := pattern
-	if hasMeta(pattern) {
-		var err error
-		matches, err = expandGlob(pattern)
-		if err != nil {
-			return nil, err
-		}
+	if globby {
+		matches = expandGlob(pattern)
 		base = globBase(pattern)
 	}
 
 	var files []target.File
 	for _, match := range matches {
 		info, err := os.Lstat(match)
-		if os.IsNotExist(err) {
-			continue
-		}
 		if err != nil {
-			return nil, err
+			continue
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			continue
 		}
 		if info.IsDir() {
-			relativeBase := match
-			if hasMeta(pattern) {
-				relativeBase = base
-			}
-			err := filepath.WalkDir(match, func(path string, entry fs.DirEntry, walkErr error) error {
+			filepath.WalkDir(match, func(path string, entry fs.DirEntry, walkErr error) error {
 				if walkErr != nil {
-					return walkErr
+					if entry != nil && entry.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
 				}
 				if entry.Type()&os.ModeSymlink != 0 {
 					if entry.IsDir() {
@@ -235,43 +253,32 @@ func collect(pattern, locationID string) ([]target.File, error) {
 				}
 				entryInfo, err := entry.Info()
 				if err != nil {
-					return err
+					return nil
 				}
 				if !entryInfo.Mode().IsRegular() {
 					return nil
 				}
-				file, err := nativeFile(path, relativeBase, locationID, entryInfo)
-				if err != nil {
-					return err
-				}
-				files = append(files, file)
+				files = append(files, nativeFile(path, base, locationID, entryInfo))
 				return nil
 			})
-			if err != nil {
-				return nil, err
-			}
 			continue
 		}
 		if !info.Mode().IsRegular() {
 			continue
 		}
-		relativeBase := filepath.Dir(match)
-		if hasMeta(pattern) {
-			relativeBase = base
+		relativeBase := base
+		if !globby {
+			relativeBase = filepath.Dir(match)
 		}
-		file, err := nativeFile(match, relativeBase, locationID, info)
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, file)
+		files = append(files, nativeFile(match, relativeBase, locationID, info))
 	}
-	return files, nil
+	return files
 }
 
-func nativeFile(path, base, locationID string, info fs.FileInfo) (target.File, error) {
+func nativeFile(path, base, locationID string, info fs.FileInfo) target.File {
 	relativePath, err := filepath.Rel(base, path)
 	if err != nil {
-		return target.File{}, err
+		relativePath = filepath.Base(path)
 	}
 	return target.File{
 		Path:         path,
@@ -279,7 +286,7 @@ func nativeFile(path, base, locationID string, info fs.FileInfo) (target.File, e
 		RelativePath: relativePath,
 		Size:         info.Size(),
 		Modified:     info.ModTime(),
-	}, nil
+	}
 }
 
 func hasMeta(path string) bool {

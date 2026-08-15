@@ -39,13 +39,25 @@ The distributed client archives include `THIRD_PARTY_NOTICES`, which preserves
 the Ludusavi Manifest's MIT copyright and permission notice alongside the
 derived data embedded in the binary.
 
-Two interpretation rules make community data safe to consume. Duplicate Steam
-ids — the manifest holds dozens, from renamed wiki pages and split editions —
-resolve deterministically to the first title in sorted order, so a base title
-outranks its longer variants. Rules under `<root>/userdata` are dropped: those
-directories are Steam Cloud's, already discovered and attributed to an account
-by the steam adapter, and a profile rule over them would report every Cloud
-save twice.
+A handful of interpretation rules make community data safe to consume.
+Duplicate Steam ids — the manifest holds over a hundred, from renamed wiki
+pages and split editions — resolve deterministically to the first title in
+sorted order that actually carries save rules, so a stub page never shadows
+the entry that locates saves. Rules over Steam's `userdata` directories are
+dropped however the manifest spells them: those are Steam Cloud's, already
+discovered and attributed to an account by the steam adapter, and a profile
+rule over them would report every Cloud save twice. Only absolute expanded
+paths are searched or offered as destinations, which discards the manifest's
+occasional prose and relative entries. Glob matching is case-insensitive,
+as Ludusavi's is, because community casing is unreliable; and metacharacters
+that arrive through real filesystem values (a library named with brackets)
+stay literal rather than becoming pattern syntax.
+
+A rule's identity — the location id recorded in revision file paths on the
+server — derives from its template text, not its position in the entry, so
+canonical paths keep meaning across manifest refreshes that add, remove, or
+reorder a game's other rules. Filesystem trouble while resolving one rule
+narrows what that rule finds; it never fails the scan.
 
 Freshness rides releases. A new game's save location becomes known to devices
 through the next client release and `omnisave upgrade`
@@ -77,3 +89,11 @@ More difficult:
   forgotten, the knowledge just stays stale.
 - Community data quality is inherited — a wrong path in the manifest ships
   until a release after someone corrects it upstream.
+- A leftover Proton prefix misclassifies a game that switched back to its
+  native build: profile rules then search the stale prefix and skip the
+  native ones. Reading Steam's compat-tool selection would resolve it.
+- `<storeUserId>` matches any account directory, so a machine with several
+  Steam accounts aggregates them into one profile save, and a template
+  containing both a glob and a bracketed real path is still misread.
+- The compressed asset is byte-stable per Go toolchain; a different Go
+  release rewrites the whole blob on refresh even when the data is unchanged.

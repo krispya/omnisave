@@ -251,6 +251,8 @@ Example:
       tags: [save]
     <root>/userData/<storeUserId>/123/Local:
       tags: [save]
+    <home>/.local/share/Steam/userdata/<storeUserId>/123/remote:
+      tags: [save]
   steam:
     id: 123
 `))
@@ -264,6 +266,229 @@ Example:
 	}
 	if len(profile.Rules) != 1 || profile.Rules[0].Path != "<home>/.config/Example" {
 		t.Fatalf("expected userdata rules to stay with the steam adapter, got %+v", profile.Rules)
+	}
+}
+
+func TestZeroRuleDuplicateNeverShadowsARealGame(t *testing.T) {
+	profiles, err := ludusavi.New([]byte(`
+.Age:
+  steam:
+    id: 638510
+DotAGE:
+  files:
+    <home>/AppData/LocalLow/CKCGames/dotAGE:
+      tags: [save]
+  steam:
+    id: 638510
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "638510"}}}
+	profile, err := profiles.Find(context.Background(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Title != "DotAGE" || len(profile.Rules) != 1 {
+		t.Fatalf("expected the rule-bearing duplicate to win, got %+v", profile)
+	}
+}
+
+func TestRuleIdentitySurvivesManifestGrowth(t *testing.T) {
+	before, err := ludusavi.New([]byte(`
+Example:
+  files:
+    <home>/.config/Example:
+      tags: [save]
+  steam:
+    id: 123
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := ludusavi.New([]byte(`
+Example:
+  files:
+    <base>/Saves:
+      tags: [save]
+    <home>/.config/Example:
+      tags: [save]
+  steam:
+    id: 123
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "123"}}}
+	first, err := before.Find(context.Background(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := after.Find(context.Background(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, rule := range second.Rules {
+		ids[rule.Path] = rule.ID
+	}
+	if ids["<home>/.config/Example"] != first.Rules[0].ID {
+		t.Fatalf("expected the surviving rule to keep its identity, got %+v then %+v", first.Rules, second.Rules)
+	}
+	if ids["<base>/Saves"] == ids["<home>/.config/Example"] {
+		t.Fatalf("expected distinct identities per template, got %+v", second.Rules)
+	}
+}
+
+func TestRulesOnlySearchAbsolutePaths(t *testing.T) {
+	home := t.TempDir()
+	game := target.InstalledGame{
+		ID: "steam:123", TargetID: "steam",
+		Identity:    target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "123"}}},
+		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeNative, Home: home},
+	}
+	profile := saveprofile.Profile{
+		Provider: "ludusavi", ProviderID: "123",
+		Rules: []saveprofile.Rule{
+			{ID: "a", Path: "Developer cloud save only?", Kind: "save"},
+			{ID: "b", Path: "Library/Application Support/com.example/save.ito", Kind: "save"},
+		},
+	}
+	saves, err := saveprofile.Resolve(game, profile)
+	if err != nil || saves != nil {
+		t.Fatalf("expected relative manifest entries to resolve nothing, got %+v, %v", saves, err)
+	}
+	destinations, err := saveprofile.ResolveDestinations(game, profile)
+	if err != nil || destinations != nil {
+		t.Fatalf("expected relative manifest entries to offer no destination, got %+v, %v", destinations, err)
+	}
+}
+
+func TestBracketedLibraryPathsStayLiteral(t *testing.T) {
+	parent := t.TempDir()
+	installRoot := filepath.Join(parent, "Games [SSD]", "Example")
+	saveDirectory := filepath.Join(installRoot, "Saves")
+	if err := os.MkdirAll(saveDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	savePath := filepath.Join(saveDirectory, "progress.sav")
+	if err := os.WriteFile(savePath, []byte("progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	game := target.InstalledGame{
+		ID: "steam:123", TargetID: "steam", InstallRoot: installRoot,
+		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeNative},
+	}
+	profile := saveprofile.Profile{
+		Provider: "ludusavi", ProviderID: "123",
+		Rules: []saveprofile.Rule{{ID: "1", Path: "<base>/Saves", Kind: "save"}},
+	}
+	saves, err := saveprofile.Resolve(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 || len(saves[0].Files) != 1 || saves[0].Files[0].Path != savePath {
+		t.Fatalf("expected the bracketed library save, got %+v", saves)
+	}
+	destinations, err := saveprofile.ResolveDestinations(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(destinations) != 1 || destinations[0].Locations[0].Path != saveDirectory {
+		t.Fatalf("expected the literal bracketed destination, got %+v", destinations)
+	}
+}
+
+func TestGlobMatchingIgnoresManifestCasing(t *testing.T) {
+	installRoot := t.TempDir()
+	saveDirectory := filepath.Join(installRoot, "SaveData")
+	if err := os.MkdirAll(saveDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	savePath := filepath.Join(saveDirectory, "slot1.sav")
+	if err := os.WriteFile(savePath, []byte("progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	game := target.InstalledGame{
+		ID: "steam:123", TargetID: "steam", InstallRoot: installRoot,
+		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeNative},
+	}
+	profile := saveprofile.Profile{
+		Provider: "ludusavi", ProviderID: "123",
+		Rules: []saveprofile.Rule{{ID: "1", Path: "<base>/SaveData/*.SAV", Kind: "save"}},
+	}
+	saves, err := saveprofile.Resolve(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 || len(saves[0].Files) != 1 || saves[0].Files[0].Path != savePath {
+		t.Fatalf("expected community casing to still match, got %+v", saves)
+	}
+}
+
+func TestGlobsFollowSymlinkedDirectories(t *testing.T) {
+	relocated := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(relocated, "Saves"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	savePath := filepath.Join(relocated, "Saves", "progress.sav")
+	if err := os.WriteFile(savePath, []byte("progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	installRoot := t.TempDir()
+	if err := os.Symlink(relocated, filepath.Join(installRoot, "Foo")); err != nil {
+		t.Fatal(err)
+	}
+
+	game := target.InstalledGame{
+		ID: "steam:123", TargetID: "steam", InstallRoot: installRoot,
+		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeNative},
+	}
+	profile := saveprofile.Profile{
+		Provider: "ludusavi", ProviderID: "123",
+		Rules: []saveprofile.Rule{{ID: "1", Path: "<base>/*/Saves/*.sav", Kind: "save"}},
+	}
+	saves, err := saveprofile.Resolve(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 || len(saves[0].Files) != 1 {
+		t.Fatalf("expected the save behind the symlinked directory, got %+v", saves)
+	}
+}
+
+func TestUnreadableEntriesNarrowDiscoveryInsteadOfFailingIt(t *testing.T) {
+	installRoot := t.TempDir()
+	saveDirectory := filepath.Join(installRoot, "Saves")
+	locked := filepath.Join(saveDirectory, "locked")
+	if err := os.MkdirAll(locked, 0755); err != nil {
+		t.Fatal(err)
+	}
+	savePath := filepath.Join(saveDirectory, "ok.sav")
+	if err := os.WriteFile(savePath, []byte("progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0755) })
+
+	game := target.InstalledGame{
+		ID: "steam:123", TargetID: "steam", InstallRoot: installRoot,
+		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeNative},
+	}
+	profile := saveprofile.Profile{
+		Provider: "ludusavi", ProviderID: "123",
+		Rules: []saveprofile.Rule{{ID: "1", Path: "<base>/Saves", Kind: "save"}},
+	}
+	saves, err := saveprofile.Resolve(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 || len(saves[0].Files) != 1 || saves[0].Files[0].Path != savePath {
+		t.Fatalf("expected the readable save beside the locked directory, got %+v", saves)
 	}
 }
 

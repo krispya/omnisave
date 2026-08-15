@@ -21,26 +21,23 @@ import (
 //go:embed manifest.yaml.gz
 var compressed []byte
 
-// Provider serves save profiles from the embedded manifest. The manifest is
-// parsed on first lookup, so commands that never scan pay nothing for it.
+// load parses the embedded manifest once per process, on first use, so
+// commands that never scan pay nothing for it.
+var load = sync.OnceValues(parse)
+
+// Provider serves save profiles from the embedded manifest.
 func Provider() saveprofile.Provider {
-	return &lazy{}
+	return provider{}
 }
 
-type lazy struct {
-	once     sync.Once
-	provider *ludusavi.Provider
-	err      error
-}
+type provider struct{}
 
-func (l *lazy) Find(ctx context.Context, identity target.GameIdentity) (*saveprofile.Profile, error) {
-	l.once.Do(func() {
-		l.provider, l.err = parse()
-	})
-	if l.err != nil {
-		return nil, l.err
+func (provider) Find(ctx context.Context, identity target.GameIdentity) (*saveprofile.Profile, error) {
+	parsed, err := load()
+	if err != nil {
+		return nil, err
 	}
-	return l.provider.Find(ctx, identity)
+	return parsed.Find(ctx, identity)
 }
 
 func parse() (*ludusavi.Provider, error) {
