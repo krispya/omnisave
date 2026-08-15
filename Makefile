@@ -70,25 +70,12 @@ push-oci:
 	docker buildx build -f Containerfile --platform $(OCI_PLATFORMS) $(OCI_BUILD_ARGS) \
 		-t $(OCI_IMAGE):$(VERSION) -t $(OCI_IMAGE):latest --push .
 
-# Exports each published image platform as a docker-loadable archive, for
-# release downloads and manual import into Synology Container Manager.
-export-oci:
-	mkdir -p dist
-	docker buildx build -f Containerfile --platform linux/amd64 $(OCI_BUILD_ARGS) \
-		-t $(OCI_IMAGE):$(VERSION) \
-		-o type=docker,dest=dist/omnisave-$(VERSION)-oci-amd64.tar .
-	docker buildx build -f Containerfile --platform linux/arm64 $(OCI_BUILD_ARGS) \
-		-t $(OCI_IMAGE):$(VERSION) \
-		-o type=docker,dest=dist/omnisave-$(VERSION)-oci-arm64.tar .
-	gzip -f dist/omnisave-$(VERSION)-oci-amd64.tar dist/omnisave-$(VERSION)-oci-arm64.tar
-	@echo "Import an image with Synology Container Manager's image import flow"
-
 # ── Synology SPK ──────────────────────────────────────────────────────────────
 
 build-spk: build-web build-spk-x86_64 build-spk-armv8
 	./scripts/verify-synology-spk.sh \
-		dist/omnisave-$(VERSION)-x86_64.spk \
-		dist/omnisave-$(VERSION)-armv8.spk
+		dist/omnisave-server-$(VERSION)-x86_64.spk \
+		dist/omnisave-server-$(VERSION)-armv8.spk
 
 build-spk-x86_64: build-web
 	VERSION=$(VERSION) BUILD=$(BUILD) SPK_ARCH=x86_64 ./scripts/package-synology.sh
@@ -97,5 +84,5 @@ build-spk-armv8: build-web
 	VERSION=$(VERSION) BUILD=$(BUILD) SPK_ARCH=armv8 ./scripts/package-synology.sh
 
 .PHONY: install refresh-save-profiles install-client build-web build-server build-client build-all test \
-		dist-client dist-release build-oci push-oci export-oci build-spk build-spk-x86_64 \
+		dist-client dist-release build-oci push-oci build-spk build-spk-x86_64 \
 		build-spk-armv8
