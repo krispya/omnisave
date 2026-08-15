@@ -35,6 +35,10 @@ builds are offline and reproducible, and the tool's output is byte-stable to
 keep refresh diffs reviewable. The client parses the manifest lazily on first
 profile lookup; commands that never scan pay nothing.
 
+The distributed client archives include `THIRD_PARTY_NOTICES`, which preserves
+the Ludusavi Manifest's MIT copyright and permission notice alongside the
+derived data embedded in the binary.
+
 Two interpretation rules make community data safe to consume. Duplicate Steam
 ids — the manifest holds dozens, from renamed wiki pages and split editions —
 resolve deterministically to the first title in sorted order, so a base title
