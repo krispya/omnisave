@@ -60,11 +60,15 @@ for ARCHIVE in "$@"; do
         echo "${ARCHIVE}: missing LICENSE" >&2
         exit 1
     fi
+    if [ ! -f "${ROOT}/THIRD_PARTY_NOTICES" ]; then
+        echo "${ARCHIVE}: missing THIRD_PARTY_NOTICES" >&2
+        exit 1
+    fi
     # The installers unpack the archive whole and install the binary alone, so
     # anything else in here is dead weight a reader would have to explain.
     ENTRIES=$(find "${ROOT}" -mindepth 1 | wc -l | tr -d ' ')
-    if [ "${ENTRIES}" != "2" ]; then
-        echo "${ARCHIVE}: archive must contain only ${BINARY} and LICENSE" >&2
+    if [ "${ENTRIES}" != "3" ]; then
+        echo "${ARCHIVE}: archive must contain only ${BINARY}, LICENSE, and THIRD_PARTY_NOTICES" >&2
         exit 1
     fi
 

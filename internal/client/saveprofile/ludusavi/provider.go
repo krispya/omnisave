@@ -3,6 +3,8 @@ package ludusavi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strconv"
@@ -18,7 +20,9 @@ type Provider struct {
 	bySteamID map[string]saveprofile.Profile
 }
 
-// New parses the supported subset of a Ludusavi manifest.
+// New parses the supported subset of a Ludusavi manifest. Entries without a
+// Steam id or without save rules are dropped, so Find answers only for games
+// the manifest actually locates saves for.
 func New(data []byte) (*Provider, error) {
 	var manifest map[string]manifestEntry
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
@@ -36,14 +40,22 @@ func New(data []byte) (*Provider, error) {
 		if !ok {
 			continue
 		}
+		// The community manifest reuses a Steam id when wiki pages split or
+		// a game is renamed. The first rule-bearing title in sorted order
+		// wins deterministically; entries with nothing to contribute never
+		// shadow one that locates saves.
 		if _, exists := provider.bySteamID[steamID]; exists {
-			return nil, fmt.Errorf("duplicate Ludusavi Steam id %s", steamID)
+			continue
+		}
+		kept := rules(entry.Files)
+		if len(kept) == 0 {
+			continue
 		}
 		provider.bySteamID[steamID] = saveprofile.Profile{
 			Provider:   "ludusavi",
 			ProviderID: steamID,
 			Title:      title,
-			Rules:      rules(entry.Files),
+			Rules:      kept,
 		}
 	}
 	return provider, nil
@@ -85,15 +97,43 @@ type manifestWhen struct {
 }
 
 func rules(paths map[string]*manifestPath) []saveprofile.Rule {
-	templates := make([]string, 0, len(paths))
+	originals := make([]string, 0, len(paths))
 	for path := range paths {
-		templates = append(templates, path)
+		originals = append(originals, path)
+	}
+	sort.Strings(originals)
+	normalized := make(map[string]*manifestPath, len(paths))
+	templates := make([]string, 0, len(paths))
+	for _, original := range originals {
+		template := original
+		// The manifest spells some Windows rules from the drive root as
+		// C:/Users/<osUserName>/…. That directory is what <home> already
+		// names on every runtime, and a Proton prefix spells users in
+		// lowercase, so the literal path would never match there.
+		if rest, ok := strings.CutPrefix(template, "C:/Users/<osUserName>/"); ok {
+			template = "<home>/" + rest
+		}
+		if existing, exists := normalized[template]; exists {
+			normalized[template] = mergePaths(existing, paths[original])
+			continue
+		}
+		normalized[template] = paths[original]
+		templates = append(templates, template)
 	}
 	sort.Strings(templates)
 	var result []saveprofile.Rule
 	for _, template := range templates {
-		path := paths[template]
+		path := normalized[template]
 		if path != nil && !isSave(path.Tags) {
+			continue
+		}
+		// Steam Cloud's userdata directories already belong to the steam
+		// adapter, which attributes them to an account. A profile rule over
+		// the same files would report every Cloud save a second time. The
+		// manifest spells those directories through <root>, <home>,
+		// <xdgData>, and Application Support, in either casing.
+		lowered := strings.ToLower(template)
+		if strings.HasPrefix(lowered, "<root>/userdata") || strings.Contains(lowered, "steam/userdata") {
 			continue
 		}
 		constraints := []manifestWhen{{}}
@@ -102,7 +142,7 @@ func rules(paths map[string]*manifestPath) []saveprofile.Rule {
 		}
 		for _, constraint := range constraints {
 			result = append(result, saveprofile.Rule{
-				ID:    strconv.Itoa(len(result) + 1),
+				ID:    locationID(template),
 				Path:  template,
 				OS:    normalizeOS(constraint.OS),
 				Store: strings.ToLower(constraint.Store),
@@ -111,6 +151,34 @@ func rules(paths map[string]*manifestPath) []saveprofile.Rule {
 		}
 	}
 	return result
+}
+
+// locationID derives a rule's identity from its template alone. The id is
+// recorded in revision file paths on the server, so it must keep meaning
+// across manifest refreshes that add, remove, or reorder a game's other
+// rules — a position could not.
+func locationID(template string) string {
+	sum := sha256.Sum256([]byte(template))
+	return hex.EncodeToString(sum[:4])
+}
+
+// mergePaths combines two manifest spellings of the same template. Either
+// side declaring the path a save keeps it one, and both sides' constraints
+// survive.
+func mergePaths(left, right *manifestPath) *manifestPath {
+	if left == nil {
+		return right
+	}
+	if right == nil {
+		return left
+	}
+	merged := &manifestPath{
+		When: append(append([]manifestWhen(nil), left.When...), right.When...),
+	}
+	if !isSave(left.Tags) && !isSave(right.Tags) {
+		merged.Tags = left.Tags
+	}
+	return merged
 }
 
 func isSave(tags []string) bool {

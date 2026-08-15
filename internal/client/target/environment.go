@@ -19,6 +19,9 @@ func CurrentEnvironment(storeRoot string) Environment {
 			variables[name] = value
 		}
 	}
+	// DOCUMENTS and SAVED_GAMES have no environment variables; Windows
+	// resolves them through the shell so OneDrive folder moves are honored.
+	knownFolders(variables)
 	return Environment{
 		HostOS:    runtime.GOOS,
 		Runtime:   RuntimeNative,
