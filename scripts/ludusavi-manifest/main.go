@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/ludusavi"
 )
@@ -21,6 +23,10 @@ func main() {
 	url := flag.String("url", manifestURL, "manifest to download")
 	output := flag.String("output", "internal/client/saveprofile/ludusavi/embedded/manifest.yaml.gz", "pruned manifest destination")
 	flag.Parse()
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "ludusavi-manifest: unexpected arguments %v; a local manifest is passed with -input\n", flag.Args())
+		os.Exit(1)
+	}
 	if err := run(*input, *url, *output); err != nil {
 		fmt.Fprintf(os.Stderr, "ludusavi-manifest: %v\n", err)
 		os.Exit(1)
@@ -36,22 +42,7 @@ func run(input, url, output string) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.Create(output)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	writer, err := gzip.NewWriterLevel(file, gzip.BestCompression)
-	if err != nil {
-		return err
-	}
-	if _, err := writer.Write(pruned); err != nil {
-		return err
-	}
-	if err := writer.Close(); err != nil {
-		return err
-	}
-	if err := file.Close(); err != nil {
+	if err := writeCompressed(output, pruned); err != nil {
 		return err
 	}
 	info, err := os.Stat(output)
@@ -63,11 +54,39 @@ func run(input, url, output string) error {
 	return nil
 }
 
+// writeCompressed replaces the destination atomically so an interrupted
+// refresh can never leave a truncated manifest for go:embed to ship.
+func writeCompressed(output string, pruned []byte) error {
+	file, err := os.CreateTemp(filepath.Dir(output), ".manifest-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	writer, err := gzip.NewWriterLevel(file, gzip.BestCompression)
+	if err != nil {
+		file.Close()
+		return err
+	}
+	if _, err := writer.Write(pruned); err != nil {
+		file.Close()
+		return err
+	}
+	if err := writer.Close(); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), output)
+}
+
 func read(input, url string) ([]byte, error) {
 	if input != "" {
 		return os.ReadFile(input)
 	}
-	response, err := http.Get(url)
+	client := &http.Client{Timeout: 5 * time.Minute}
+	response, err := client.Get(url)
 	if err != nil {
 		return nil, err
 	}

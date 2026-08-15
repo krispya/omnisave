@@ -270,17 +270,31 @@ func TestScanFindsDarkSoulsIIISavesUnderProtonFromTheEmbeddedManifest(t *testing
 	if len(scans) != 1 || len(scans[0].Games) != 1 || len(scans[0].Games[0].Saves) != 1 {
 		t.Fatalf("expected the embedded profile to find one local save, got %+v", scans)
 	}
+	// The embedded manifest refreshes from community data, so the test pins
+	// the files this scan created rather than the entry's exact rule count.
 	save := scans[0].Games[0].Saves[0]
 	if save.Kind != "local" || save.Metadata["profile_provider_id"] != "374320" {
 		t.Fatalf("expected a Ludusavi profile save for Dark Souls III, got %+v", save)
 	}
-	if len(save.Files) != 1 || save.Files[0].RelativePath != filepath.Join("76561198000000000", "DS30000.sl2") {
+	foundSave := false
+	for _, file := range save.Files {
+		if file.RelativePath == filepath.Join("76561198000000000", "DS30000.sl2") {
+			foundSave = true
+		}
+	}
+	if !foundSave {
 		t.Fatalf("expected the account-scoped save file, got %+v", save.Files)
 	}
-	destinations := scans[0].Games[0].Destinations
-	if len(destinations) != 1 || len(destinations[0].Locations) != 1 ||
-		filepath.Base(destinations[0].Locations[0].Path) != "DarkSoulsIII" {
-		t.Fatalf("expected the DarkSoulsIII directory as the prospective destination, got %+v", destinations)
+	foundDestination := false
+	for _, destination := range scans[0].Games[0].Destinations {
+		for _, location := range destination.Locations {
+			if filepath.Base(location.Path) == "DarkSoulsIII" {
+				foundDestination = true
+			}
+		}
+	}
+	if !foundDestination {
+		t.Fatalf("expected the DarkSoulsIII directory among prospective destinations, got %+v", scans[0].Games[0].Destinations)
 	}
 }
 

@@ -44,10 +44,16 @@ func TestEmbeddedManifestFindsUndertaleSavesOnLinux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(saves) != 1 || len(saves[0].Files) != 2 {
-		t.Fatalf("expected one Undertale save with both files, got %+v", saves)
+	if len(saves) != 1 {
+		t.Fatalf("expected one Undertale save, got %+v", saves)
 	}
-	if saves[0].Files[0].RelativePath != "file0" || saves[0].Files[1].RelativePath != "undertale.ini" {
-		t.Fatalf("unexpected Undertale save files: %+v", saves[0].Files)
+	// The manifest refreshes from community data, so the test pins the files
+	// this test created rather than the entry's exact rule count.
+	found := map[string]bool{}
+	for _, file := range saves[0].Files {
+		found[file.RelativePath] = true
+	}
+	if !found["file0"] || !found["undertale.ini"] {
+		t.Fatalf("expected both created files in the Undertale save, got %+v", saves[0].Files)
 	}
 }
