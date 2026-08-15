@@ -132,6 +132,9 @@ func (a *Adapter) DiscoverGames(ctx context.Context, discovered target.Target) (
 				Identity: target.GameIdentity{
 					Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: app.ID}},
 					Title:       app.Title,
+					// One Steam purchase is one cloud save on every OS Steam
+					// ships on, so the platform is the store's, not the host's.
+					Platform: "PC",
 				},
 				InstallRoot: installRoot,
 				Environment: environment,
