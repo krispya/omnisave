@@ -130,7 +130,11 @@ func expand(template string, game target.InstalledGame) string {
 		"storeGameId": storeGameID,
 		// The store account owning a save is unknown at discovery time, so
 		// the placeholder matches any account directory, as Ludusavi does.
-		"storeUserId":     "*",
+		"storeUserId": "*",
+		// A rule may name the OS account owning the save. Native
+		// environments derive it from the home directory; Proton prefixes
+		// always call the account steamuser.
+		"osUserName":      filepath.Base(home),
 		"winAppData":      environment.Variables["APPDATA"],
 		"winLocalAppData": environment.Variables["LOCALAPPDATA"],
 		"winProgramData":  environment.Variables["PROGRAMDATA"],
@@ -158,10 +162,13 @@ func expand(template string, game target.InstalledGame) string {
 	}
 
 	if environment.Runtime == target.RuntimeProton {
+		// <root> stays the native store root: a Proton game's library is
+		// still where it is, and <root>/steamapps/... rules depend on that.
+		// Only user-relative placeholders move inside the prefix.
 		userHome := filepath.Join(environment.PrefixRoot, "drive_c", "users", "steamuser")
 		drive := filepath.Join(environment.PrefixRoot, "drive_c")
 		values["home"] = userHome
-		values["root"] = drive
+		values["osUserName"] = "steamuser"
 		values["winAppData"] = filepath.Join(userHome, "AppData", "Roaming")
 		values["winLocalAppData"] = filepath.Join(userHome, "AppData", "Local")
 		values["winLocalAppDataLow"] = filepath.Join(userHome, "AppData", "LocalLow")
@@ -189,7 +196,7 @@ func collect(pattern, locationID string) ([]target.File, error) {
 	base := pattern
 	if hasMeta(pattern) {
 		var err error
-		matches, err = filepath.Glob(pattern)
+		matches, err = expandGlob(pattern)
 		if err != nil {
 			return nil, err
 		}

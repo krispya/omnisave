@@ -98,6 +98,175 @@ Example:
 	}
 }
 
+func TestRecursiveGlobsMatchEveryDepth(t *testing.T) {
+	installRoot := t.TempDir()
+	nested := filepath.Join(installRoot, "x", "y")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a.sav", filepath.Join("x", "b.sav"), filepath.Join("x", "y", "c.sav"), filepath.Join("x", "notes.txt")} {
+		if err := os.WriteFile(filepath.Join(installRoot, name), []byte("progress"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	game := target.InstalledGame{
+		ID:          "steam:123",
+		TargetID:    "steam",
+		InstallRoot: installRoot,
+		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeNative},
+	}
+	profile := saveprofile.Profile{
+		Provider:   "ludusavi",
+		ProviderID: "Example",
+		Rules:      []saveprofile.Rule{{ID: "1", Path: "<base>/**/*.sav", Kind: "save"}},
+	}
+
+	saves, err := saveprofile.Resolve(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 || len(saves[0].Files) != 3 {
+		t.Fatalf("expected saves at every depth, got %+v", saves)
+	}
+	relative := []string{saves[0].Files[0].RelativePath, saves[0].Files[1].RelativePath, saves[0].Files[2].RelativePath}
+	expected := []string{"a.sav", filepath.Join("x", "b.sav"), filepath.Join("x", "y", "c.sav")}
+	for index := range expected {
+		if relative[index] != expected[index] {
+			t.Fatalf("expected %v, got %v", expected, relative)
+		}
+	}
+}
+
+func TestRootRulesStayInTheLibraryUnderProton(t *testing.T) {
+	library := t.TempDir()
+	installDirectory := filepath.Join(library, "steamapps", "common", "Example")
+	if err := os.MkdirAll(installDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	savePath := filepath.Join(installDirectory, "save.dat")
+	if err := os.WriteFile(savePath, []byte("progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	game := target.InstalledGame{
+		ID:       "steam:123",
+		TargetID: "steam",
+		Identity: target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "123"}}},
+		Environment: target.Environment{
+			HostOS:     saveprofile.OSLinux,
+			Runtime:    target.RuntimeProton,
+			StoreRoot:  library,
+			PrefixRoot: filepath.Join(library, "steamapps", "compatdata", "123", "pfx"),
+		},
+	}
+	profile := saveprofile.Profile{
+		Provider:   "ludusavi",
+		ProviderID: "Example",
+		Rules: []saveprofile.Rule{{
+			ID: "1", Path: "<root>/steamapps/common/Example/save.dat", OS: saveprofile.OSWindows, Store: "steam", Kind: "save",
+		}},
+	}
+
+	saves, err := saveprofile.Resolve(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 || len(saves[0].Files) != 1 || saves[0].Files[0].Path != savePath {
+		t.Fatalf("expected the library-relative save under Proton, got %+v", saves)
+	}
+}
+
+func TestDriveRootUserRulesResolveOnEveryRuntime(t *testing.T) {
+	profiles, err := ludusavi.New([]byte(`
+Example:
+  files:
+    C:/Users/<osUserName>/Documents/MGR/SaveData/MGR.sav:
+      tags: [save]
+      when:
+        - os: windows
+  steam:
+    id: 123
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "123"}}}
+	profile, err := profiles.Find(context.Background(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profile.Rules) != 1 || profile.Rules[0].Path != "<home>/Documents/MGR/SaveData/MGR.sav" {
+		t.Fatalf("expected the drive-root user path to normalize to <home>, got %+v", profile.Rules)
+	}
+
+	prefix := t.TempDir()
+	protonSave := filepath.Join(prefix, "drive_c", "users", "steamuser", "Documents", "MGR", "SaveData", "MGR.sav")
+	if err := os.MkdirAll(filepath.Dir(protonSave), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(protonSave, []byte("progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	deck := target.InstalledGame{
+		ID: "steam:123", TargetID: "steam", Identity: identity,
+		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeProton, PrefixRoot: prefix},
+	}
+	saves, err := saveprofile.Resolve(deck, *profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 || saves[0].Files[0].Path != protonSave {
+		t.Fatalf("expected the prefix user save under Proton, got %+v", saves)
+	}
+
+	home := t.TempDir()
+	windowsSave := filepath.Join(home, "Documents", "MGR", "SaveData", "MGR.sav")
+	if err := os.MkdirAll(filepath.Dir(windowsSave), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(windowsSave, []byte("progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	desktop := target.InstalledGame{
+		ID: "steam:123", TargetID: "steam", Identity: identity,
+		Environment: target.Environment{HostOS: saveprofile.OSWindows, Runtime: target.RuntimeNative, Home: home},
+	}
+	saves, err = saveprofile.Resolve(desktop, *profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 || saves[0].Files[0].Path != windowsSave {
+		t.Fatalf("expected the native Windows home save, got %+v", saves)
+	}
+}
+
+func TestSteamCloudRulesAreLeftToTheSteamAdapter(t *testing.T) {
+	profiles, err := ludusavi.New([]byte(`
+Example:
+  files:
+    <home>/.config/Example:
+      tags: [save]
+    <root>/userdata/<storeUserId>/123/remote:
+      tags: [save]
+    <root>/userData/<storeUserId>/123/Local:
+      tags: [save]
+  steam:
+    id: 123
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "123"}}}
+	profile, err := profiles.Find(context.Background(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profile.Rules) != 1 || profile.Rules[0].Path != "<home>/.config/Example" {
+		t.Fatalf("expected userdata rules to stay with the steam adapter, got %+v", profile.Rules)
+	}
+}
+
 func TestDuplicateSteamIdsKeepTheFirstTitle(t *testing.T) {
 	profiles, err := ludusavi.New([]byte(`
 Alpha:
