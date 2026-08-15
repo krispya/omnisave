@@ -29,11 +29,11 @@ them with a script the player pipes into a shell.
 A `v`-prefixed tag is the only thing that publishes, and the tag is the version:
 the `VERSION` variable in the Makefile remains the development default. Each
 release carries one archive per supported platform — Linux, macOS, and Windows
-on `amd64`, plus Linux and macOS on `arm64` — holding the client binary and the
-license, beside a checksum file covering all of them. Archives are named for their
-version and platform alone; the build number stays inside the binary, so one
-release names its assets one way. Releases also carry build provenance
-attestation.
+on `amd64`, plus Linux and macOS on `arm64` — holding the client binary,
+Omnisave's license, and third-party notices, beside a checksum file covering all
+of them. Archives are named for their version and platform alone; the build
+number stays inside the binary, so one release names its assets one way.
+Releases also carry build provenance attestation.
 
 Two installers consume that release: a POSIX shell script for macOS, Linux, and
 SteamOS, and a PowerShell script for Windows. Both are run by piping them into
