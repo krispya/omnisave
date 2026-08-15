@@ -61,9 +61,10 @@ build_platform() {
             -o "${PAYLOAD}/${BINARY}" ./cmd/omnisave
     )
     chmod 755 "${PAYLOAD}/${BINARY}"
-    # The license travels with the binary: ISC asks for the notice to appear
-    # in every copy, and an archive is one.
+    # The licenses travel with the binary: the ISC and embedded manifest MIT
+    # notices both require inclusion with distributed copies.
     cp "${ROOT}/LICENSE" "${PAYLOAD}/LICENSE"
+    cp "${ROOT}/THIRD_PARTY_NOTICES" "${PAYLOAD}/THIRD_PARTY_NOTICES"
 }
 
 # The cross-compiles are independent, so they run concurrently. Archiving
@@ -93,10 +94,10 @@ for PLATFORM in ${PLATFORMS}; do
     if [ "${GOOS}" = "windows" ]; then
         ARCHIVE="${DIST}/${BASE}.zip"
         rm -f "${ARCHIVE}"
-        (cd "${PAYLOAD}" && zip -q -X "${ARCHIVE}" "${BINARY}" LICENSE)
+        (cd "${PAYLOAD}" && zip -q -X "${ARCHIVE}" "${BINARY}" LICENSE THIRD_PARTY_NOTICES)
     else
         ARCHIVE="${DIST}/${BASE}.tar.gz"
-        tar -czf "${ARCHIVE}" -C "${PAYLOAD}" "${BINARY}" LICENSE
+        tar -czf "${ARCHIVE}" -C "${PAYLOAD}" "${BINARY}" LICENSE THIRD_PARTY_NOTICES
     fi
 
     printf '%s  %s\n' "$(sha256_of "${ARCHIVE}")" "$(basename "${ARCHIVE}")" >> "${CHECKSUMS}"

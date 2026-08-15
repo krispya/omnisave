@@ -101,4 +101,6 @@ installer upgrades the client in place too.
 
 ## License
 
-Omnisave is released under the [ISC License](LICENSE).
+Omnisave is released under the [ISC License](LICENSE). Distributed builds also
+include the licenses for incorporated material in
+[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).

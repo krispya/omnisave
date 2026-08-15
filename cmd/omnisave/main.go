@@ -22,6 +22,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client/host"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
 	"github.com/krisbaumgartner/omnisave/internal/client/running"
+	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/ludusavi/embedded"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/retroarch"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/steam"
@@ -55,7 +56,7 @@ func run(ctx context.Context, arguments []string) error {
 }
 
 func runWithOutput(ctx context.Context, arguments []string, output io.Writer) error {
-	scanner := client.NewScanner(nil, retroarch.NewDefault(), steam.NewDefault())
+	scanner := client.NewScanner(embedded.Provider(), retroarch.NewDefault(), steam.NewDefault())
 	if len(arguments) == 0 {
 		return runApp(ctx, scanner, nil)
 	}
