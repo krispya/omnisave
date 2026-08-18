@@ -161,7 +161,9 @@ func (r *Repository) ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, er
 			COALESCE(
 				(SELECT created_at FROM revisions WHERE id = omnisaves.current_revision_id),
 				created_at
-			), metadata
+			),
+			(SELECT saved_at FROM revisions WHERE id = omnisaves.current_revision_id),
+			metadata
 		FROM omnisaves ORDER BY created_at, id`,
 	)
 	if err != nil {
@@ -187,7 +189,9 @@ func (r *Repository) GetOmnisave(ctx context.Context, id string) (*omnisave.Omni
 			COALESCE(
 				(SELECT created_at FROM revisions WHERE id = omnisaves.current_revision_id),
 				created_at
-			), metadata
+			),
+			(SELECT saved_at FROM revisions WHERE id = omnisaves.current_revision_id),
+			metadata
 		FROM omnisaves WHERE id = ?`, id,
 	))
 	return save, translateNotFound(err)
@@ -449,10 +453,11 @@ func (r *Repository) CommitRevision(ctx context.Context, expectedCurrentRevision
 	}
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO revisions(
-		id, game_id, omnisave_id, display_name, name_source, parent_id, created_at, metadata
-	) SELECT ?, game_id, ?, ?, ?, ?, ?, ? FROM omnisaves WHERE id = ?`,
+		id, game_id, omnisave_id, display_name, name_source, parent_id, created_at, saved_at, metadata
+	) SELECT ?, game_id, ?, ?, ?, ?, ?, ?, ? FROM omnisaves WHERE id = ?`,
 		revision.ID, revision.OmnisaveID, revision.DisplayName, revision.NameSource, revision.ParentID,
-		revision.CreatedAt.Format(time.RFC3339Nano), string(metadata), revision.OmnisaveID)
+		revision.CreatedAt.Format(time.RFC3339Nano), formatNullableTime(revision.SavedAt),
+		string(metadata), revision.OmnisaveID)
 	if err != nil {
 		return translateUniqueViolation(err)
 	}
@@ -505,7 +510,7 @@ func (r *Repository) GetRevision(ctx context.Context, saveID, revisionID string)
 		UNION SELECT revisions.parent_id FROM revisions JOIN members ON revisions.id = members.id
 			WHERE revisions.parent_id IS NOT NULL
 	) SELECT
-		id, omnisave_id, display_name, name_source, parent_id, created_at, metadata
+		id, omnisave_id, display_name, name_source, parent_id, created_at, saved_at, metadata
 		FROM revisions WHERE id = ? AND id IN (SELECT id FROM members)`, saveID, saveID, saveID, revisionID))
 	if err != nil {
 		return nil, translateNotFound(err)
@@ -525,7 +530,7 @@ func (r *Repository) ListRevisions(ctx context.Context, saveID string) ([]omnisa
 		UNION SELECT revisions.parent_id FROM revisions JOIN members ON revisions.id = members.id
 			WHERE revisions.parent_id IS NOT NULL
 	) SELECT
-		id, omnisave_id, display_name, name_source, parent_id, created_at, metadata
+		id, omnisave_id, display_name, name_source, parent_id, created_at, saved_at, metadata
 		FROM revisions WHERE id IN (SELECT id FROM members) ORDER BY created_at, id`, saveID, saveID, saveID)
 	if err != nil {
 		return nil, err
@@ -939,6 +944,13 @@ func nullableStringPointer(value sql.NullString) *string {
 	return &copy
 }
 
+func formatNullableTime(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.Format(time.RFC3339Nano)
+}
+
 func forkOmnisaveID(origin *omnisave.ForkOrigin) any {
 	if origin == nil {
 		return nil
@@ -960,10 +972,11 @@ type scanner interface {
 func scanOmnisave(row scanner) (*omnisave.Omnisave, error) {
 	var save omnisave.Omnisave
 	var createdAt, currentRevisionCreatedAt, metadata string
-	var current, forkSave, forkRevision sql.NullString
+	var current, forkSave, forkRevision, currentRevisionSavedAt sql.NullString
 	if err := row.Scan(
 		&save.ID, &save.GameID, &save.DisplayName, &current,
-		&forkSave, &forkRevision, &createdAt, &currentRevisionCreatedAt, &metadata,
+		&forkSave, &forkRevision, &createdAt, &currentRevisionCreatedAt,
+		&currentRevisionSavedAt, &metadata,
 	); err != nil {
 		return nil, err
 	}
@@ -983,6 +996,10 @@ func scanOmnisave(row scanner) (*omnisave.Omnisave, error) {
 	if err != nil {
 		return nil, err
 	}
+	save.CurrentRevisionSavedAt, err = parseNullableTime(currentRevisionSavedAt)
+	if err != nil {
+		return nil, err
+	}
 	if err := json.Unmarshal([]byte(metadata), &save.Metadata); err != nil {
 		return nil, err
 	}
@@ -992,16 +1009,20 @@ func scanOmnisave(row scanner) (*omnisave.Omnisave, error) {
 func scanRevision(row scanner) (*omnisave.Revision, error) {
 	var revision omnisave.Revision
 	var createdAt, metadata string
-	var parent sql.NullString
+	var parent, savedAt sql.NullString
 	if err := row.Scan(
 		&revision.ID, &revision.OmnisaveID, &revision.DisplayName, &revision.NameSource,
-		&parent, &createdAt, &metadata,
+		&parent, &createdAt, &savedAt, &metadata,
 	); err != nil {
 		return nil, err
 	}
 	revision.ParentID = nullableStringPointer(parent)
 	var err error
 	revision.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return nil, err
+	}
+	revision.SavedAt, err = parseNullableTime(savedAt)
 	if err != nil {
 		return nil, err
 	}

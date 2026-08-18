@@ -10,6 +10,8 @@ export type Omnisave = {
   created_at: string;
   /** Original creation time of the snapshot selected as current. */
   current_revision_created_at: string;
+  /** When the current snapshot's content was written by the game. Absent for snapshots that predate devices reporting it. */
+  current_revision_saved_at?: string;
   metadata?: Record<string, string>;
 };
 
@@ -21,6 +23,8 @@ export type Revision = {
   /** Who set display_name: the game's labeler or a person. Absent while unnamed. */
   name_source?: 'labeler' | 'manual';
   created_at: string;
+  /** When the content was written by the game, as the committing device saw it; created_at is when it reached the server. */
+  saved_at?: string;
   files: Array<{
     path: string;
     artifact: Artifact;
