@@ -1,6 +1,6 @@
 # ADR-014: Require Durable Proof Before Forgetting Data
 
-**Date:** 2026-08-09
+**Date:** 2026-08-17
 
 ## Context
 
@@ -41,10 +41,13 @@ records, and deletion markers in commit order. A drainer acquires SQLite's
 writer position before selecting the oldest action and holds it through the
 durable store write and queue removal. This makes projection order
 database-wide. Two processes cannot select the same action or let an older
-mutable record overwrite a newer one. A request affecting durable save state is
-successful only after its required store work is durable. A failed store write
-remains queued rather than becoming an untracked, best-effort side effect. The
-committed result is discoverable, but it was not acknowledged.
+mutable record overwrite a newer one. A mutation that creates or changes
+durable state is successful only after its required store work is durable. A
+failed store write remains queued rather than becoming an untracked,
+best-effort side effect. The committed result is discoverable, but it was not
+acknowledged. The drainer's wait for the writer position is bounded:
+contention that outlasts its patience surfaces as a projection failure instead
+of holding the mutation path indefinitely.
 
 **Deletion is an immutable committed fact.** A deleting transaction removes
 the logical rows, records their identifiers in SQLite's Deletion Ledger, and
@@ -54,7 +57,18 @@ reuse an identifier while its marker is still queued. The markers are written
 only after SQLite commits; if that commit fails, no marker exists. Recovery
 honors markers and preserves data without one. Manifests and objects are
 reclaimed only after their markers are durable. Delete requests are idempotent
-with respect to an existing marker.
+with respect to a committed ledger row or an existing marker.
+
+**A deletion is acknowledged at its SQLite commit.** Unlike a creating
+mutation, a delete's durable local proof — the ledger row and its queued
+markers — is complete when the transaction commits, so the request does not
+wait for the projection or for physical reclamation. A background task,
+serialized with other mutations, projects the markers and then drops manifests
+and reclaims objects. A projection failure there stops later durable mutations
+exactly as an inline failure would, surfacing on the next mutation rather than
+on the delete; the next open replays the queue. A crash before the deferred
+cleanup runs leaves the same state as one during it, which recovery already
+repairs.
 
 **Only complete recovery may infer garbage.** Recovery reports whether every
 record needed to establish reachability was read successfully. Only that
@@ -84,6 +98,8 @@ Easier:
   path to omit accidentally.
 - Corruption disables destructive inference instead of expanding damage.
 - Save, revision, and game deletion share one protocol.
+- A delete answers in the time of its own transaction, independent of how much
+  history and content it reclaims.
 
 More difficult:
 
@@ -94,7 +110,9 @@ More difficult:
   reordered across processes.
 - Store format migrations must convert legacy tombstones into immutable
   markers.
-- A store that cannot accept queued work makes the corresponding request
-  unavailable rather than allowing the portable recovery copy to lag silently.
+- A store that cannot accept queued work makes creating mutations unavailable
+  rather than allowing the portable recovery copy to lag silently; after an
+  acknowledged deletion the same failure surfaces one mutation later than it
+  happened.
 - Damage can retain garbage indefinitely until the damaged records are repaired
   or deliberately removed.

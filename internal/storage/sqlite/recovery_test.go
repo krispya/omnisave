@@ -336,6 +336,7 @@ func TestDeletedRevisionsStayDeletedWhenTheirManifestSurvives(t *testing.T) {
 	if err := saves.DeleteRevision(ctx, save.ID, second.ID); err != nil {
 		t.Fatal(err)
 	}
+	repository.WaitForCleanup()
 	// The crash: the deletion committed, but the manifest outlived it.
 	if err := repository.Store().PutRevision(manifest); err != nil {
 		t.Fatal(err)

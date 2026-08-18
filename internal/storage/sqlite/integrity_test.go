@@ -98,9 +98,10 @@ func TestRevisionCommitRequiresArtifactAvailabilityAtThePersistenceBoundary(t *t
 	}
 }
 
-// A portable marker may lag its committed delete when the store is down. The
-// SQLite ledger closes that cross-process window: another repository cannot
-// reuse the identifier merely because it has not observed the marker yet.
+// A portable marker lags its committed delete — routinely while cleanup is
+// deferred, indefinitely when the store is down. The SQLite ledger closes that
+// cross-process window: another repository cannot reuse the identifier merely
+// because it has not observed the marker yet.
 func TestDeletedIdentifiersCannotBeReusedBeforeOutboxProjection(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
@@ -127,12 +128,20 @@ func TestDeletedIdentifiersCannotBeReusedBeforeOutboxProjection(t *testing.T) {
 	if err := os.WriteFile(markerNamespace, []byte("store unavailable"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := first.DeleteGame(ctx, game.ID); err == nil {
-		t.Fatal("expected deletion to remain unacknowledged while its marker cannot be written")
+	// The delete answers at commit; writing the marker is deferred cleanup.
+	if err := first.DeleteGame(ctx, game.ID); err != nil {
+		t.Fatal(err)
 	}
+	first.WaitForCleanup()
 	game.Title = "Accidental reuse"
 	if err := second.SaveGame(ctx, game, nil); !errors.Is(err, storage.ErrConflict) {
 		t.Fatalf("expected the committed deletion ledger to reject reuse, got %v", err)
+	}
+	if err := first.SaveGame(ctx, catalog.Game{ID: "any-other", Title: "Any"}, nil); err == nil {
+		t.Fatal("expected durable mutations to stop after the marker could not be written")
+	}
+	if err := second.DeleteGame(ctx, game.ID); err != nil {
+		t.Fatalf("expected the ledger to answer a repeated delete while the marker lags, got %v", err)
 	}
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
