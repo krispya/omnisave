@@ -551,7 +551,19 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 	var presence presenceWatch
 	var deferredPulls []string
 	waitErr := tui.Wait(ctx, "", func(taskCtx context.Context, session *tui.WaitSession) {
-		taskCtx = activity.WithReporter(taskCtx, session.SetLabel)
+		// The one-line spinner has no game row for a phase to land on, so
+		// while a pass has a game in hand the label leads with it — "Hollow
+		// Knight · uploading (1/3)" — the way a watch row reads. Working and
+		// Report both come from the task goroutine, so a plain string carries
+		// the title between them.
+		working := ""
+		report.OnWorking = func(title string) { working = title }
+		taskCtx = activity.WithReporter(taskCtx, func(message string) {
+			if working != "" {
+				message = working + " · " + tui.RowPhase(message, working)
+			}
+			session.SetLabel(message)
+		})
 		var confirmed map[string]bool
 		outcome, confirmed = syncTracking(taskCtx, server, &state, scans, removed, report)
 		// Build presence after resolving Library identities and reuse it in watch.
