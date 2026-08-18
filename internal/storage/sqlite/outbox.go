@@ -44,6 +44,16 @@ func enqueueDeletion(ctx context.Context, tx *sql.Tx, marker store.Deletion) err
 	return enqueueStoreAction(ctx, tx, storeActionDelete, marker.TargetID, marker)
 }
 
+// deletionCommitted reports whether the ledger holds a committed deletion of
+// the target. It answers ahead of the portable marker, whose projection may
+// still be in deferred cleanup.
+func deletionCommitted(ctx context.Context, tx *sql.Tx, kind, targetID string) (bool, error) {
+	var committed bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM deletion_ledger
+		WHERE target_kind = ? AND target_id = ?)`, kind, targetID).Scan(&committed)
+	return committed, err
+}
+
 func (r *Repository) enqueueOmnisaveProjection(ctx context.Context, tx *sql.Tx, id string) error {
 	record, err := r.buildOmnisaveFrom(ctx, tx, id)
 	if err != nil {
@@ -142,15 +152,23 @@ func (r *Repository) flushNextStoreAction(
 	return true, nil
 }
 
-// beginStoreProjection retries until it obtains SQLite's global writer position.
+// storeProjectionPatience bounds how long a projection waits out another
+// writer before giving up. Contention that outlasts it means the database is
+// effectively owned elsewhere; spinning would hold the mutation lock forever.
+const storeProjectionPatience = 30 * time.Second
+
+// beginStoreProjection retries until it obtains SQLite's global writer
+// position, or until its patience runs out and the contention error surfaces.
+// The caller records the failure and the next open replays the queue.
 func (r *Repository) beginStoreProjection(ctx context.Context) (*sql.Tx, error) {
 	delay := time.Millisecond
+	deadline := time.Now().Add(storeProjectionPatience)
 	for {
 		tx, err := r.db.BeginTx(ctx, nil)
 		if err == nil {
 			return tx, nil
 		}
-		if !sqliteLockContention(err) {
+		if !sqliteLockContention(err) || time.Now().After(deadline) {
 			return nil, err
 		}
 		timer := time.NewTimer(delay)

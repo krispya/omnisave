@@ -30,6 +30,9 @@ type Repository struct {
 	storeErr error
 	// mutate serializes in-process mutations and their portable-store side effects.
 	mutate sync.Mutex
+	// cleanup tracks deferred deletion work so Close can drain it before the
+	// database goes away.
+	cleanup sync.WaitGroup
 }
 
 // Open migrates SQLite, replays portable writes, and repairs database/store drift.
@@ -112,7 +115,36 @@ func sqliteDSN(databasePath string) string {
 func (r *Repository) Store() *store.Store { return r.store }
 
 func (r *Repository) Close() error {
+	r.cleanup.Wait()
 	return r.db.Close()
+}
+
+// WaitForCleanup blocks until deferred deletion cleanup has settled. Reads
+// never need it — deleted rows are gone at commit — but Close drains it, and
+// tests use it before inspecting the store or reclaimed artifacts.
+func (r *Repository) WaitForCleanup() {
+	r.cleanup.Wait()
+}
+
+// deferDeletionCleanup finishes a committed deletion's physical half — the
+// portable-store projection and the cleanup behind it — off the caller's
+// request, so a delete answers as soon as its rows are gone. The work runs
+// under the mutation lock like the inline path did, and a crash before it
+// runs is repaired the same way as one during it: the next open replays the
+// outbox and sweeps.
+func (r *Repository) deferDeletionCleanup(what string, cleanup func(ctx context.Context)) {
+	r.cleanup.Add(1)
+	go func() {
+		defer r.cleanup.Done()
+		r.mutate.Lock()
+		defer r.mutate.Unlock()
+		ctx := context.Background()
+		if err := r.projectStore(ctx); err != nil {
+			log.Printf("save store: %s committed, but projecting it failed: %v; durable mutations stop until the next open", what, err)
+			return
+		}
+		cleanup(ctx)
+	}()
 }
 
 func (r *Repository) InsertOmnisave(ctx context.Context, save omnisave.Omnisave) error {
@@ -251,7 +283,13 @@ func (r *Repository) DeleteOmnisave(ctx context.Context, id string) error {
 		return err
 	}
 	if count == 0 {
-		if r.store.HasDeletion(store.DeletionOmnisave, id) {
+		// The ledger row commits with the delete; the portable marker may still
+		// be in deferred cleanup, so it cannot be the only witness.
+		committed, err := deletionCommitted(ctx, tx, store.DeletionOmnisave, id)
+		if err != nil {
+			return err
+		}
+		if committed || r.store.HasDeletion(store.DeletionOmnisave, id) {
 			return nil
 		}
 		return storage.ErrNotFound
@@ -312,11 +350,10 @@ func (r *Repository) DeleteOmnisave(ctx context.Context, id string) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if err := r.projectStore(ctx); err != nil {
-		return err
-	}
-	r.noteStoreLag("deletion of save "+id, r.dropRevisions(revisionIDs))
-	r.reclaimArtifacts(ctx, hashes)
+	r.deferDeletionCleanup("deletion of save "+id, func(ctx context.Context) {
+		r.noteStoreLag("deletion of save "+id, r.dropRevisions(revisionIDs))
+		r.reclaimArtifacts(ctx, hashes)
+	})
 	return nil
 }
 
@@ -735,7 +772,13 @@ func (r *Repository) DeleteRevision(ctx context.Context, saveID, revisionID stri
 	}
 	// Idempotent only through a live save: the marker check sits behind the
 	// existence check so a deleted save's URLs answer not-found, not success.
-	if r.store.HasDeletion(store.DeletionRevision, revisionID) {
+	// The ledger commits with the delete; the portable marker may lag in
+	// deferred cleanup.
+	committed, err := deletionCommitted(ctx, tx, store.DeletionRevision, revisionID)
+	if err != nil {
+		return err
+	}
+	if committed || r.store.HasDeletion(store.DeletionRevision, revisionID) {
 		return nil
 	}
 	member, err := revisionIsMember(ctx, tx, saveID, revisionID)
@@ -793,11 +836,10 @@ func (r *Repository) DeleteRevision(ctx context.Context, saveID, revisionID stri
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if err := r.projectStore(ctx); err != nil {
-		return err
-	}
-	r.noteStoreLag("deletion of revision "+revisionID, r.dropRevisions([]string{revisionID}))
-	r.reclaimArtifacts(ctx, hashes)
+	r.deferDeletionCleanup("deletion of revision "+revisionID, func(ctx context.Context) {
+		r.noteStoreLag("deletion of revision "+revisionID, r.dropRevisions([]string{revisionID}))
+		r.reclaimArtifacts(ctx, hashes)
+	})
 	return nil
 }
 
