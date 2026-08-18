@@ -281,6 +281,7 @@ func TestDeletingASourceKeepsTheRevisionGraphSharedByAFork(t *testing.T) {
 	if err := saves.Delete(ctx, second.Omnisave.ID); err != nil {
 		t.Fatal(err)
 	}
+	repository.WaitForCleanup()
 	if _, err := saves.OpenArtifact(ctx, artifact.SHA256); !errors.Is(err, omnisave.ErrNotFound) {
 		t.Fatalf("unreferenced artifact should be deleted, got %v", err)
 	}
@@ -340,6 +341,7 @@ func TestDeletingASourceKeepsAForkPointTheForkRewoundBelow(t *testing.T) {
 	if err := saves.Delete(ctx, source.ID); err != nil {
 		t.Fatal(err)
 	}
+	repository.WaitForCleanup()
 	// The fork was started at the fork point, so deleting the source must not
 	// erase that node even while the fork's current sits below it.
 	history, err := saves.ListRevisions(ctx, fork.Omnisave.ID)
@@ -572,6 +574,7 @@ func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 	if err := repository.DeleteGame(ctx, game.ID); err != nil {
 		t.Fatal(err)
 	}
+	repository.WaitForCleanup()
 
 	if _, err := repository.GetGame(ctx, game.ID); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("deleted game should be gone, got %v", err)
@@ -651,6 +654,7 @@ func TestADeletedGameStaysDeletedWhenAForkOutlivedItsSource(t *testing.T) {
 	if err := repository.DeleteGame(ctx, game.ID); err != nil {
 		t.Fatal(err)
 	}
+	repository.WaitForCleanup()
 	for _, revisionID := range []string{first.ID, second.ID} {
 		if repository.Store().HasRevision(revisionID) {
 			t.Fatalf("the deleted game's manifest %s should be gone", revisionID)
@@ -1099,6 +1103,7 @@ func TestDeleteRevisionPrunesAnUnneededTip(t *testing.T) {
 	if err := saves.DeleteRevision(ctx, save.ID, second.ID); err != nil {
 		t.Fatal(err)
 	}
+	repository.WaitForCleanup()
 	history, err := saves.ListRevisions(ctx, save.ID)
 	if err != nil || len(history) != 1 || history[0].ID != first.ID {
 		t.Fatalf("expected only the kept revision: history=%+v err=%v", history, err)

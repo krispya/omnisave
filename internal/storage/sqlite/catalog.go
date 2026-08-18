@@ -259,9 +259,14 @@ func (r *Repository) DeleteGame(ctx context.Context, id string) error {
 		return err
 	}
 	if count == 0 {
-		// Idempotent with respect to a committed marker, like the save and
-		// revision deletions it cascades to.
-		if r.store.HasDeletion(store.DeletionGame, id) {
+		// Idempotent with respect to a committed deletion, like the save and
+		// revision deletions it cascades to. The ledger commits with the
+		// delete; the portable marker may lag in deferred cleanup.
+		committed, err := deletionCommitted(ctx, tx, store.DeletionGame, id)
+		if err != nil {
+			return err
+		}
+		if committed || r.store.HasDeletion(store.DeletionGame, id) {
 			return nil
 		}
 		return storage.ErrNotFound
@@ -296,12 +301,11 @@ func (r *Repository) DeleteGame(ctx context.Context, id string) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if err := r.projectStore(ctx); err != nil {
-		return err
-	}
-	r.noteStoreLag("deletion of game "+id, r.dropRevisions(revisionIDs))
-	r.noteStoreLag("deletion of game "+id, r.store.RemoveGame(id))
-	r.reclaimArtifacts(ctx, hashes)
+	r.deferDeletionCleanup("deletion of game "+id, func(ctx context.Context) {
+		r.noteStoreLag("deletion of game "+id, r.dropRevisions(revisionIDs))
+		r.noteStoreLag("deletion of game "+id, r.store.RemoveGame(id))
+		r.reclaimArtifacts(ctx, hashes)
+	})
 	return nil
 }
 
