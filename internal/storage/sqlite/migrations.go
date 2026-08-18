@@ -519,6 +519,12 @@ var migrations = []string{
 	);
 
 	CREATE INDEX achievements_by_revision ON achievements(revision_id);`,
+
+	// saved_at is when a snapshot's content was written by the game — the
+	// newest file-modification time the committing Device saw — as opposed to
+	// created_at, when it reached the server. Null for revisions committed
+	// before clients reported it.
+	`ALTER TABLE revisions ADD COLUMN saved_at TEXT;`,
 }
 
 func migrate(db *sql.DB) error {

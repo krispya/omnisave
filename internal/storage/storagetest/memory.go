@@ -91,15 +91,18 @@ func (r *MemoryRepository) GetOmnisave(_ context.Context, id string) (*omnisave.
 }
 
 // deriveCurrentRevisionCreatedAt mirrors the SQL repository: the selected
-// revision's original creation time, or the save's own when it has none.
+// revision's original creation and saved times, or the save's own creation
+// time and no saved time when it has none.
 func (r *MemoryRepository) deriveCurrentRevisionCreatedAt(save omnisave.Omnisave) omnisave.Omnisave {
 	save.CurrentRevisionCreatedAt = save.CreatedAt
+	save.CurrentRevisionSavedAt = nil
 	if save.CurrentRevisionID == nil {
 		return save
 	}
 	for _, revision := range r.allRevisions() {
 		if revision.ID == *save.CurrentRevisionID {
 			save.CurrentRevisionCreatedAt = revision.CreatedAt
+			save.CurrentRevisionSavedAt = revision.SavedAt
 		}
 	}
 	return save

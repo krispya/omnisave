@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/binding"
@@ -272,6 +273,37 @@ func TestPushSkipsUploadingContentTheServerAlreadyHas(t *testing.T) {
 	}
 	if server.uploadCalls != 1 {
 		t.Fatalf("expected only the changed file to upload, got %d uploads", server.uploadCalls)
+	}
+}
+
+func TestPushReportsTheNewestFileTimeAsSavedAt(t *testing.T) {
+	directory := t.TempDir()
+	older := writeFile(t, directory, "settings.json", "settings")
+	older.Modified = time.Date(2024, 3, 1, 8, 0, 0, 0, time.UTC)
+	newer := writeFile(t, directory, "progress.sav", "progress")
+	newer.Modified = time.Date(2024, 8, 3, 17, 12, 9, 0, time.UTC)
+	save := target.Save{ID: "save-1", Files: []target.File{older, newer}}
+
+	server := newFakeServer()
+	if _, err := binding.Push(context.Background(), server, "omnisave-1", save, "revision-1", nil); err != nil {
+		t.Fatal(err)
+	}
+	committed := server.committed["omnisave-1"]
+	if committed.SavedAt == nil || !committed.SavedAt.Equal(newer.Modified) {
+		t.Fatalf("expected the newest file time %v as SavedAt, got %v", newer.Modified, committed.SavedAt)
+	}
+}
+
+func TestPushLeavesSavedAtUnreportedWithoutFileTimes(t *testing.T) {
+	directory := t.TempDir()
+	save := target.Save{ID: "save-1", Files: []target.File{writeFile(t, directory, "a.srm", "x")}}
+
+	server := newFakeServer()
+	if _, err := binding.Push(context.Background(), server, "omnisave-1", save, "revision-1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if committed := server.committed["omnisave-1"]; committed.SavedAt != nil {
+		t.Fatalf("expected no SavedAt for files without modification times, got %v", committed.SavedAt)
 	}
 }
 

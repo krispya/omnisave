@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
@@ -174,7 +175,8 @@ func Seed(ctx context.Context, server Server, serverGameID string, save target.S
 	if err != nil {
 		return nil, nil, fmt.Errorf("create Omnisave: %w", err)
 	}
-	revision, err := commitContent(ctx, server, created.ID, save, omnisave.CreateRevision{Upserts: upserts})
+	revision, err := commitContent(ctx, server, created.ID, save,
+		omnisave.CreateRevision{SavedAt: savedAt(save), Upserts: upserts})
 	if err != nil {
 		// An Omnisave with no revisions is indistinguishable from lost data;
 		// remove the empty shell so a retry starts clean.
@@ -231,6 +233,7 @@ func push(ctx context.Context, server Server, omnisaveID string, save target.Sav
 	}
 	input := omnisave.CreateRevision{
 		ExpectedCurrentRevisionID: &expectedCurrentRevisionID,
+		SavedAt:                   savedAt(save),
 		Upserts:                   upserts,
 		Deletes:                   deletes,
 	}
@@ -242,6 +245,23 @@ func push(ctx context.Context, server Server, omnisaveID string, save target.Sav
 		return nil, fmt.Errorf("commit local progress: %w", err)
 	}
 	return revision, nil
+}
+
+// savedAt is when the save's content was written by the game: the newest
+// modification time across its files as this Device scanned them. Nil when no
+// file carries one, leaving the revision's SavedAt unreported.
+func savedAt(save target.Save) *time.Time {
+	var newest time.Time
+	for _, file := range save.Files {
+		if file.Modified.After(newest) {
+			newest = file.Modified
+		}
+	}
+	if newest.IsZero() {
+		return nil
+	}
+	utc := newest.UTC()
+	return &utc
 }
 
 // commitContent commits the local save's manifest, uploading only the
