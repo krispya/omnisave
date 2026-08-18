@@ -196,7 +196,7 @@ func TestSeedUploadsContentAndCommitsInitialRevision(t *testing.T) {
 		progress = append(progress, message)
 	})
 
-	created, revision, err := binding.Seed(ctx, server, "server-game-1", save)
+	created, revision, err := binding.Seed(ctx, server, "server-game-1", save, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func TestSeedRemovesEmptyOmnisaveWhenCommitFails(t *testing.T) {
 	server := newFakeServer()
 	server.commitError = errors.New("server rejected the revision")
 
-	if _, _, err := binding.Seed(context.Background(), server, "server-game-1", save); err == nil {
+	if _, _, err := binding.Seed(context.Background(), server, "server-game-1", save, ""); err == nil {
 		t.Fatal("expected the seed to fail")
 	}
 	if len(server.deleted) != 1 || server.deleted[0] != "omnisave-1" {
@@ -327,7 +327,7 @@ func TestSeedRemovesEmptyOmnisaveWhenCommitFails(t *testing.T) {
 
 func TestSeedRejectsEmptySaves(t *testing.T) {
 	server := newFakeServer()
-	if _, _, err := binding.Seed(context.Background(), server, "server-game-1", target.Save{ID: "save-1"}); err == nil {
+	if _, _, err := binding.Seed(context.Background(), server, "server-game-1", target.Save{ID: "save-1"}, ""); err == nil {
 		t.Fatal("expected an error for a save with no files")
 	}
 	if len(server.created) != 0 {
@@ -338,7 +338,7 @@ func TestSeedRejectsEmptySaves(t *testing.T) {
 func TestSeedRequiresResolvedGame(t *testing.T) {
 	directory := t.TempDir()
 	save := target.Save{Files: []target.File{writeFile(t, directory, "a.srm", "x")}}
-	if _, _, err := binding.Seed(context.Background(), newFakeServer(), "", save); err == nil {
+	if _, _, err := binding.Seed(context.Background(), newFakeServer(), "", save, ""); err == nil {
 		t.Fatal("expected an error for a missing server game ID")
 	}
 }

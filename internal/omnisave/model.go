@@ -118,6 +118,15 @@ type CreateRevision struct {
 	ExpectedCurrentRevisionID *string `json:"expected_current_revision_id"`
 	// ParentRevisionID selects a branch parent; nil uses ExpectedCurrentRevisionID.
 	ParentRevisionID *string `json:"parent_revision_id,omitempty"`
+	// KeepCurrent commits the node without claiming the current revision: the
+	// pointer stays where the expected check proved it. It is how a divergence
+	// jump preserves local progress as a branch the Device is about to leave
+	// (FDR-005, decision 4).
+	KeepCurrent bool `json:"keep_current,omitempty"`
+	// DisplayName names the revision at commit. A non-empty name is recorded
+	// as manually chosen — automation never replaces it — and takes precedence
+	// over the game's labeler. Empty commits the revision unnamed as before.
+	DisplayName string `json:"display_name,omitempty"`
 	// SavedAt reports when the committed content was written by the game, as
 	// the Device saw it. Optional; a zero time is treated as unreported.
 	SavedAt  *time.Time        `json:"saved_at,omitempty"`

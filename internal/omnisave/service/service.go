@@ -186,6 +186,10 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 	if input.ParentRevisionID != nil && *input.ParentRevisionID == "" {
 		return nil, omnisave.ErrInvalid
 	}
+	suppliedName, validName := normalizeDisplayName(input.DisplayName)
+	if !validName {
+		return nil, omnisave.ErrInvalid
+	}
 	if !sameString(save.CurrentRevisionID, input.ExpectedCurrentRevisionID) {
 		return nil, &omnisave.CurrentRevisionConflict{
 			ExpectedCurrentRevisionID: cloneString(input.ExpectedCurrentRevisionID),
@@ -277,13 +281,19 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 		Files:      files,
 		Metadata:   cloneMap(input.Metadata),
 	}
-	if s.namer != nil {
+	if suppliedName != "" {
+		// A committing client that names the revision is recording the user's
+		// answer — divergence provenance, not derived presentation — so the
+		// name outranks the labeler and is never replaced by automation.
+		revision.DisplayName = suppliedName
+		revision.NameSource = omnisave.NameSourceManual
+	} else if s.namer != nil {
 		if name, valid := normalizeDisplayName(s.namer.NameRevision(ctx, save.GameID, files)); valid && name != "" {
 			revision.DisplayName = name
 			revision.NameSource = omnisave.NameSourceLabeler
 		}
 	}
-	if err := s.repository.CommitRevision(ctx, input.ExpectedCurrentRevisionID, revision); err != nil {
+	if err := s.repository.CommitRevision(ctx, input.ExpectedCurrentRevisionID, revision, input.KeepCurrent); err != nil {
 		var conflict *storage.CurrentRevisionConflict
 		if errors.As(err, &conflict) {
 			return nil, &omnisave.CurrentRevisionConflict{

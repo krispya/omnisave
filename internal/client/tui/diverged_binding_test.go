@@ -19,7 +19,7 @@ func TestDivergedBindingPromptOffersTwoLosslessChoices(t *testing.T) {
 		"› Fork here",
 		"continue this device's progress as a new playthrough",
 		"Take current",
-		"keep this progress as a fork and take the current revision",
+		"keep this progress as a branch and take the current revision",
 	} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("expected the diverged prompt to contain %q, got:\n%s", text, view)

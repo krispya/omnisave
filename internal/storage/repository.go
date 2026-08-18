@@ -68,7 +68,11 @@ type OmnisaveRepository interface {
 	// ListAchievements returns a save's achievements in unlock order.
 	ListAchievements(ctx context.Context, omnisaveID string) ([]omnisave.Achievement, error)
 
-	CommitRevision(ctx context.Context, expectedCurrentRevisionID *string, revision omnisave.Revision) error
+	// CommitRevision inserts a revision after verifying the save's current
+	// revision matches the caller's expectation. The new node becomes current
+	// unless keepCurrent leaves the pointer where the check proved it — a
+	// branch committed only to preserve content (FDR-005, decision 4).
+	CommitRevision(ctx context.Context, expectedCurrentRevisionID *string, revision omnisave.Revision, keepCurrent bool) error
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*omnisave.Revision, error)
 	ListRevisions(ctx context.Context, omnisaveID string) ([]omnisave.Revision, error)
 	UpdateRevisionDisplayName(ctx context.Context, omnisaveID, revisionID, displayName string) error

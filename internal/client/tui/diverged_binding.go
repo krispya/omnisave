@@ -7,14 +7,17 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
-// DivergedBindingChoice preserves both sides by forking or preserving-then-jumping.
+// DivergedBindingChoice keeps both sides recoverable: forking continues the
+// local progress as its own lineage, jumping keeps it reachable — as a branch
+// in the same tree when it is unsynced, or not at all when the history
+// already holds it — and takes the Current Revision.
 type DivergedBindingChoice string
 
 const (
 	// DivergedBindingFork continues this device's progress as a new lineage.
 	DivergedBindingFork DivergedBindingChoice = "fork"
-	// DivergedBindingJump preserves this device's progress as a fork, then
-	// takes the Current Revision.
+	// DivergedBindingJump takes the Current Revision, keeping any unsynced
+	// local progress as a branch of the baseline first.
 	DivergedBindingJump DivergedBindingChoice = "jump"
 )
 
@@ -39,7 +42,7 @@ func DivergedOptions() []DivergedOption {
 		},
 		{
 			Label:       "Take current",
-			Description: "keep this progress as a fork and take the current revision",
+			Description: "keep this progress as a branch and take the current revision",
 			Choice:      DivergedBindingJump,
 		},
 	}

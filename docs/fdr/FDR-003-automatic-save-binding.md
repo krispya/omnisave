@@ -36,7 +36,10 @@ establishes the baseline that sync will later diff against.
   Device. The user chooses between fast-forwarding — the Current Revision's content
   replaces the local save and the binding starts there — or forking
   at the matched revision, keeping the lineage and continuing this
-  playthrough independently.
+  playthrough independently. The fork is named for the Device it
+  deconflicts — "Save 1 (Steam Deck)" — so the Dash says where the
+  playthrough split off, falling back to the server's " (fork)" suffix
+  when the Device has no name.
 - If the local save matches nothing, or matches more than one Omnisave, the
   user chooses: bind to one of the existing Omnisaves (matches are marked),
   create a new one seeded from the local save, or decide later — the save
