@@ -161,6 +161,81 @@ func TestCurrentRevisionDateFollowsTheSelectedSnapshot(t *testing.T) {
 	}
 }
 
+// SavedAt is a client-reported fact, so it has to survive every representation
+// a revision passes through: the row, the omnisave's current-revision surface,
+// the portable manifest, and a rebuild from that manifest alone.
+func TestSavedAtRoundTripsThroughCommitAndRebuild(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "omnisave.db")
+	storeDir := filepath.Join(directory, "store")
+	repository, err := sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := omnisaveservice.New(repository)
+
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := saves.Get(ctx, save.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.CurrentRevisionSavedAt != nil {
+		t.Fatalf("expected no saved date before any commit, got %v", stored.CurrentRevisionSavedAt)
+	}
+
+	savedAt := time.Date(2024, 8, 3, 17, 12, 9, 0, time.UTC)
+	artifact := storeOmnisaveArtifact(t, ctx, saves, "old game-save contents")
+	revision, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		SavedAt: &savedAt,
+		Upserts: []omnisave.RevisionFile{{Path: "pokemon.sav", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revision.SavedAt == nil || !revision.SavedAt.Equal(savedAt) {
+		t.Fatalf("expected the commit to carry the saved date %v, got %v", savedAt, revision.SavedAt)
+	}
+	history, err := saves.ListRevisions(ctx, save.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 1 || history[0].SavedAt == nil || !history[0].SavedAt.Equal(savedAt) {
+		t.Fatalf("expected the listed revision to carry the saved date, got %v", history)
+	}
+	stored, err = saves.Get(ctx, save.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.CurrentRevisionSavedAt == nil || !stored.CurrentRevisionSavedAt.Equal(savedAt) {
+		t.Fatalf("expected the save to surface the current revision's saved date, got %v", stored.CurrentRevisionSavedAt)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The database is lost; the portable manifests are all that remains.
+	if err := os.Remove(databasePath); err != nil {
+		t.Fatal(err)
+	}
+	repository, err = sqlite.Open(databasePath, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	saves = omnisaveservice.New(repository)
+	rebuilt, err := saves.GetRevision(ctx, save.ID, revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebuilt.SavedAt == nil || !rebuilt.SavedAt.Equal(savedAt) {
+		t.Fatalf("expected the rebuilt revision to keep the saved date %v, got %v", savedAt, rebuilt.SavedAt)
+	}
+}
+
 func TestDeletingASourceKeepsTheRevisionGraphSharedByAFork(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()

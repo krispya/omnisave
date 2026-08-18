@@ -34,10 +34,13 @@ type Revision struct {
 	Omnisave RevisionOmnisave `json:"omnisave"`
 	Game     RevisionGame     `json:"game"`
 	// Parent is the revision this one followed, or nil at the root of a tree.
-	Parent    *string           `json:"parent"`
-	CreatedAt time.Time         `json:"created_at"`
-	Files     []RevisionFile    `json:"files"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
+	Parent    *string   `json:"parent"`
+	CreatedAt time.Time `json:"created_at"`
+	// SavedAt is when the content was written by the game, as the committing
+	// Device reported it; absent for revisions committed before Devices did.
+	SavedAt  *time.Time        `json:"saved_at,omitempty"`
+	Files    []RevisionFile    `json:"files"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // RevisionOmnisave names the lineage a snapshot belongs to.

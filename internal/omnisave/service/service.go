@@ -273,6 +273,7 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 		OmnisaveID: saveID,
 		ParentID:   cloneString(parentRevisionID),
 		CreatedAt:  time.Now().UTC(),
+		SavedAt:    cloneReportedTime(input.SavedAt),
 		Files:      files,
 		Metadata:   cloneMap(input.Metadata),
 	}
@@ -476,6 +477,16 @@ func cloneString(source *string) *string {
 		return nil
 	}
 	copy := *source
+	return &copy
+}
+
+// cloneReportedTime keeps an optional client-reported time, treating a zero
+// value as unreported rather than as a date.
+func cloneReportedTime(source *time.Time) *time.Time {
+	if source == nil || source.IsZero() {
+		return nil
+	}
+	copy := source.UTC()
 	return &copy
 }
 

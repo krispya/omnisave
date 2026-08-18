@@ -364,9 +364,13 @@ export function RevisionLog({
                         </span>
                         <span
                           className="text-[10px] text-muted"
-                          title={formatDateTime(revision.created_at)}
+                          title={
+                            revision.saved_at
+                              ? `Saved ${formatDateTime(revision.saved_at)} · Synced ${formatDateTime(revision.created_at)}`
+                              : formatDateTime(revision.created_at)
+                          }
                         >
-                          {formatHistoryStamp(revision.created_at)}
+                          {formatHistoryStamp(revision.saved_at ?? revision.created_at)}
                         </span>
                       </span>
                     </div>

@@ -105,7 +105,13 @@ export function RevisionDetailsDialog({
         <dl className="mt-5 grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-[8rem_minmax(0,1fr)]">
           <dt className="text-muted">Revision ID</dt>
           <dd className="min-w-0 font-mono text-xs break-all text-text">{revision.id}</dd>
-          <dt className="text-muted">Created</dt>
+          {revision.saved_at ? (
+            <>
+              <dt className="text-muted">Saved</dt>
+              <dd className="min-w-0 text-text">{formatDateTime(revision.saved_at)}</dd>
+            </>
+          ) : null}
+          <dt className="text-muted">Synced</dt>
           <dd className="min-w-0 text-text">{formatDateTime(revision.created_at)}</dd>
           <dt className="text-muted">Parent</dt>
           <dd className="min-w-0 text-text">
