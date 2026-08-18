@@ -637,6 +637,30 @@ schedule it cannot be told to skip. The retry ceiling is the pull interval
 precisely so that a device with no server ends up asking exactly as often
 as a device with a quiet one.
 
+### 21. A revision records when the save was written, not only when it arrived
+
+**Decision:** Every commit reports the newest modification time among the
+save's files, and the revision keeps it beside its creation time as
+`saved_at`. It is a client-reported fact the server stores verbatim: the
+portable manifest carries it, and an Omnisave surfaces its current
+revision's value. Dash leads with it wherever it says what a save is from —
+the save card and the history stamp — and keeps the sync time beside it in
+tooltips and details. Revisions committed before devices reported the field
+have no saved date, and every display falls back to the sync time.
+**Why:** A revision's creation time is when content reached the server, and
+for a save that has not been played in months the two dates tell different
+stories: the sync date says "today" about progress written long ago. The
+save's file times are the only witness of when the game wrote it, and the
+committing Device is the only party that ever sees them.
+**Tradeoff:** File modification times are only as honest as the device's
+clock and whatever last touched the files — a copy that rewrites mtimes
+reads as freshly saved. That is the same stat evidence the change poll and
+the settled proof already stand on (decisions 2, 19), extended from when to
+sync to what the synced content says about itself. History stays ordered by
+creation time, so a freshly synced old save sits newest in the list while
+wearing an old date; the tooltip naming both dates is what makes that read
+as intended rather than as disorder.
+
 ## Related
 
 - **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — heads move

@@ -13,8 +13,12 @@ type Omnisave struct {
 	CreatedAt         time.Time   `json:"created_at"`
 	// CurrentRevisionCreatedAt is the original creation time of the selected
 	// snapshot; restoring an older revision deliberately moves it backward.
-	CurrentRevisionCreatedAt time.Time         `json:"current_revision_created_at"`
-	Metadata                 map[string]string `json:"metadata,omitempty"`
+	CurrentRevisionCreatedAt time.Time `json:"current_revision_created_at"`
+	// CurrentRevisionSavedAt is the selected snapshot's SavedAt: when the save
+	// itself was written, not when it reached the server. Nil when the snapshot
+	// predates devices reporting it.
+	CurrentRevisionSavedAt *time.Time        `json:"current_revision_saved_at,omitempty"`
+	Metadata               map[string]string `json:"metadata,omitempty"`
 }
 
 // ForkOrigin identifies the snapshot from which another Omnisave began.
@@ -42,10 +46,16 @@ type Revision struct {
 	ParentID    *string `json:"parent_id"`
 	// NameSource is NameSourceLabeler or NameSourceManual when DisplayName is
 	// set, and empty while the revision is unnamed.
-	NameSource string            `json:"name_source,omitempty"`
-	CreatedAt  time.Time         `json:"created_at"`
-	Files      []RevisionFile    `json:"files"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
+	NameSource string    `json:"name_source,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	// SavedAt is when the snapshot's content was written by the game — the
+	// newest file-modification time the committing Device saw. CreatedAt is
+	// when the snapshot reached the server; a device syncing an old save
+	// commits a new revision of old content, and this is what says so. Nil
+	// when the committing client did not report it.
+	SavedAt  *time.Time        `json:"saved_at,omitempty"`
+	Files    []RevisionFile    `json:"files"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // AchievementUnlock is one achievement a Device watched a game unlock, named
@@ -107,10 +117,13 @@ type UpdateRevision struct {
 type CreateRevision struct {
 	ExpectedCurrentRevisionID *string `json:"expected_current_revision_id"`
 	// ParentRevisionID selects a branch parent; nil uses ExpectedCurrentRevisionID.
-	ParentRevisionID *string           `json:"parent_revision_id,omitempty"`
-	Upserts          []RevisionFile    `json:"upserts,omitempty"`
-	Deletes          []string          `json:"deletes,omitempty"`
-	Metadata         map[string]string `json:"metadata,omitempty"`
+	ParentRevisionID *string `json:"parent_revision_id,omitempty"`
+	// SavedAt reports when the committed content was written by the game, as
+	// the Device saw it. Optional; a zero time is treated as unreported.
+	SavedAt  *time.Time        `json:"saved_at,omitempty"`
+	Upserts  []RevisionFile    `json:"upserts,omitempty"`
+	Deletes  []string          `json:"deletes,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // RestoreRevision moves an Omnisave's current pointer to an existing node.

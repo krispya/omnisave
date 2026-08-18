@@ -141,7 +141,7 @@ export function SaveList({
                   </div>
                   <p className="mt-1 text-xs text-muted">
                     {save.current_revision_id
-                      ? `Current from ${formatDate(save.current_revision_created_at)}`
+                      ? `Current from ${formatDate(save.current_revision_saved_at ?? save.current_revision_created_at)}`
                       : 'No revisions yet'}
                   </p>
                 </div>

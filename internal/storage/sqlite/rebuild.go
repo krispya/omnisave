@@ -384,10 +384,11 @@ func (r *Repository) importRevisions(
 			nameSource = omnisave.NameSourceManual
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO revisions(
-			id, game_id, omnisave_id, display_name, name_source, parent_id, created_at, metadata
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, manifest.ID, manifest.Game.ID, manifest.Omnisave.ID,
+			id, game_id, omnisave_id, display_name, name_source, parent_id, created_at, saved_at, metadata
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, manifest.ID, manifest.Game.ID, manifest.Omnisave.ID,
 			displayName, nameSource, parent,
-			manifest.CreatedAt.Format(time.RFC3339Nano), string(metadata)); err != nil {
+			manifest.CreatedAt.Format(time.RFC3339Nano), formatNullableTime(manifest.SavedAt),
+			string(metadata)); err != nil {
 			return 0, 0, err
 		}
 		for _, file := range manifest.Files {

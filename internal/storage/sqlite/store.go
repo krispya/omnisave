@@ -38,20 +38,21 @@ func (r *Repository) buildRevisionFrom(
 		manifest  store.Revision
 		parent    sql.NullString
 		createdAt string
+		savedAt   sql.NullString
 		metadata  string
 		gameID    string
 		gameTitle string
 		platform  sql.NullString
 	)
 	err := queryer.QueryRowContext(ctx, `SELECT
-			revisions.id, revisions.parent_id, revisions.created_at, revisions.metadata,
+			revisions.id, revisions.parent_id, revisions.created_at, revisions.saved_at, revisions.metadata,
 			COALESCE(omnisaves.id, revisions.omnisave_id), COALESCE(omnisaves.display_name, ''), revisions.game_id,
 			COALESCE(games.title, ''), games.platform
 		FROM revisions
 		LEFT JOIN omnisaves ON omnisaves.id = revisions.omnisave_id
 		LEFT JOIN games ON games.id = revisions.game_id
 		WHERE revisions.id = ?`, revisionID).Scan(
-		&manifest.ID, &parent, &createdAt, &metadata,
+		&manifest.ID, &parent, &createdAt, &savedAt, &metadata,
 		&manifest.Omnisave.ID, &manifest.Omnisave.DisplayName, &gameID,
 		&gameTitle, &platform,
 	)
@@ -65,6 +66,9 @@ func (r *Repository) buildRevisionFrom(
 		manifest.Parent = &parent.String
 	}
 	if manifest.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {
+		return store.Revision{}, err
+	}
+	if manifest.SavedAt, err = parseNullableTime(savedAt); err != nil {
 		return store.Revision{}, err
 	}
 	if metadata != "" {
