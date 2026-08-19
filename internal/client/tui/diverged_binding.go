@@ -21,26 +21,16 @@ const (
 	DivergedBindingJump DivergedBindingChoice = "jump"
 )
 
-// DivergedKeep says what "take current" would do with the local progress, so
-// the option can promise exactly that (FDR-005, decision 4).
-type DivergedKeep string
-
-const (
-	// KeepAsBranch shelves unsynced progress as a branch of the baseline,
-	// inside the same omnisave.
-	KeepAsBranch DivergedKeep = "branch"
-	// KeepAsSave seeds a new omnisave: a baseline-less binding has no node
-	// to branch from.
-	KeepAsSave DivergedKeep = "save"
-	// KeepNothing preserves nothing: the history already holds this content.
-	KeepNothing DivergedKeep = "held"
-)
+// DivergedBindingDefault is the answer both surfaces open on. Taking current
+// is the one answer that leaves the save count where it was — it keeps this
+// device's progress in the tree rather than minting a lineage — so it is the
+// safe thing to land on when someone confirms without reading.
+const DivergedBindingDefault = DivergedBindingJump
 
 // DivergedQuestion is one diverged save put to the user: the game, the
-// omnisave that moved on the server, the name forking would create, and what
-// taking current would do with the local progress. The pass that found the
-// divergence fills it in, so both surfaces promise exactly what the answers
-// will do.
+// omnisave that diverged, and the name forking would create. The pass that
+// found the divergence fills it in, so both surfaces name the fork the answer
+// would actually produce.
 type DivergedQuestion struct {
 	GameTitle    string
 	OmnisaveName string
@@ -48,53 +38,43 @@ type DivergedQuestion struct {
 	// (Steam Deck)"); empty when the Device is unnamed and the server's
 	// default applies.
 	ForkName string
-	Keep     DivergedKeep
 }
 
 // DivergedOption is one answer as the user reads it. The label is shared by
-// the track run's form and the watch view's modal, so the two surfaces
-// cannot drift into naming the same choice differently. "Take current"
-// rather than "jump": the glossary already spends that word on a restore
-// between sibling branches, and neither surface has room to disambiguate.
+// the track run's form and the watch view's modal, so the two surfaces cannot
+// drift into naming the same choice differently. The label is the whole
+// interface: it says what the answer does and, for a fork, what it creates.
 type DivergedOption struct {
-	Label       string
-	Description string
-	Choice      DivergedBindingChoice
+	Label  string
+	Choice DivergedBindingChoice
 }
 
-// DivergedOptions is the answer set, in the order both surfaces show it,
-// worded for what each answer would do to this particular save. The labels
-// already say which side wins, so each description only adds what happens
-// to the local progress.
+// DivergedOptions is the answer set, in the order both surfaces show it.
 func DivergedOptions(question DivergedQuestion) []DivergedOption {
 	forkAs := "a new save"
 	if question.ForkName != "" {
 		forkAs = question.ForkName
 	}
-	jump := "keep this progress as a branch"
-	switch question.Keep {
-	case KeepAsSave:
-		jump = "keep this progress as " + forkAs
-	case KeepNothing:
-		jump = "this progress is already in the history"
-	}
 	return []DivergedOption{
-		{
-			Label:       "Fork here",
-			Description: "continue as " + forkAs,
-			Choice:      DivergedBindingFork,
-		},
-		{
-			Label:       "Take current",
-			Description: jump,
-			Choice:      DivergedBindingJump,
-		},
+		{Label: "Fork as " + forkAs, Choice: DivergedBindingFork},
+		{Label: "Jump to current", Choice: DivergedBindingJump},
 	}
+}
+
+// DivergedDefaultIndex is where a surface parks its cursor: the position of
+// DivergedBindingDefault in the answer set.
+func DivergedDefaultIndex(options []DivergedOption) int {
+	for index, option := range options {
+		if option.Choice == DivergedBindingDefault {
+			return index
+		}
+	}
+	return 0
 }
 
 // PromptDivergedBinding asks how a diverged save should continue.
 func PromptDivergedBinding(question DivergedQuestion) (DivergedBindingChoice, error) {
-	choice := DivergedBindingFork
+	choice := DivergedBindingDefault
 	form := divergedBindingForm(question, &choice)
 	if err := form.Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
@@ -109,7 +89,7 @@ func divergedBindingForm(question DivergedQuestion, choice *DivergedBindingChoic
 	answers := DivergedOptions(question)
 	options := make([]huh.Option[DivergedBindingChoice], 0, len(answers))
 	for _, option := range answers {
-		options = append(options, huh.NewOption(option.Label+" · "+option.Description, option.Choice))
+		options = append(options, huh.NewOption(option.Label, option.Choice))
 	}
 	prompt := huh.NewSelect[DivergedBindingChoice]().
 		Title(fmt.Sprintf("%s diverges between this device and the server", question.OmnisaveName)).

@@ -438,9 +438,9 @@ func TestSyncLifecyclePushesPullsAndReportsDivergence(t *testing.T) {
 	beforeJump, _ := fixture.state.BindingFor(local)
 	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
 	prompts.diverged = func(question tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
-		// The question promises what the answers would do to this save.
-		if question.ForkName != "Save 1 (Steam Deck)" || question.Keep != tui.KeepAsBranch {
-			t.Fatalf("expected the question to carry the fork name and shape, got %+v", question)
+		// The question names the save forking would have created.
+		if question.ForkName != "Save 1 (Steam Deck)" {
+			t.Fatalf("expected the question to carry the fork name, got %+v", question)
 		}
 		return tui.DivergedBindingJump, nil
 	}

@@ -7,13 +7,14 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// The prompt opens on taking current: the answer that adds no save is the
+// safe thing to land on when someone confirms without reading.
 func TestDivergedBindingPromptOffersTwoLosslessChoices(t *testing.T) {
-	choice := DivergedBindingFork
+	choice := DivergedBindingDefault
 	question := DivergedQuestion{
 		GameTitle:    "Slay the Spire 2",
 		OmnisaveName: "Save 1",
 		ForkName:     "Save 1 (Steam Deck)",
-		Keep:         KeepAsBranch,
 	}
 	form := divergedBindingForm(question, &choice).WithWidth(80)
 	form.Update(form.Init())
@@ -22,10 +23,8 @@ func TestDivergedBindingPromptOffersTwoLosslessChoices(t *testing.T) {
 	for _, text := range []string{
 		"Slay the Spire 2",
 		"Save 1 diverges between this device and the server",
-		"› Fork here",
-		"continue as Save 1 (Steam Deck)",
-		"Take current",
-		"keep this progress as a branch",
+		"Fork as Save 1 (Steam Deck)",
+		"› Jump to current",
 	} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("expected the diverged prompt to contain %q, got:\n%s", text, view)
@@ -33,26 +32,14 @@ func TestDivergedBindingPromptOffersTwoLosslessChoices(t *testing.T) {
 	}
 }
 
-// The options promise only what this save's shape allows: without a Device
-// name the fork stays generic, without unsynced content there is nothing to
-// keep, and without a baseline the kept progress is a save, not a branch.
-func TestDivergedOptionsPromiseWhatEachShapeWouldDo(t *testing.T) {
-	nameless := DivergedOptions(DivergedQuestion{OmnisaveName: "Save 1", Keep: KeepAsBranch})
-	if nameless[0].Description != "continue as a new save" {
-		t.Fatalf("expected a generic fork promise without a device name, got %q", nameless[0].Description)
+// A Device with no name has no deconflicting name to offer, so the fork
+// answer says only that a save appears.
+func TestTheForkAnswerFallsBackWithoutADeviceName(t *testing.T) {
+	options := DivergedOptions(DivergedQuestion{OmnisaveName: "Save 1"})
+	if options[0].Label != "Fork as a new save" {
+		t.Fatalf("expected a generic fork label without a device name, got %q", options[0].Label)
 	}
-
-	held := DivergedOptions(DivergedQuestion{
-		OmnisaveName: "Save 1", ForkName: "Save 1 (Steam Deck)", Keep: KeepNothing,
-	})
-	if held[1].Description != "this progress is already in the history" {
-		t.Fatalf("expected the jump to promise no copy for held content, got %q", held[1].Description)
-	}
-
-	seeded := DivergedOptions(DivergedQuestion{
-		OmnisaveName: "Save 1", ForkName: "Save 1 (Steam Deck)", Keep: KeepAsSave,
-	})
-	if seeded[1].Description != "keep this progress as Save 1 (Steam Deck)" {
-		t.Fatalf("expected the baseline-less jump to promise a new save, got %q", seeded[1].Description)
+	if options[DivergedDefaultIndex(options)].Choice != DivergedBindingJump {
+		t.Fatal("expected both surfaces to open on taking current")
 	}
 }

@@ -331,7 +331,7 @@ func divergedSnapshot() ReportSnapshot {
 			Events:  []string{"Save diverged from Save 2, run omnisave track to resolve"},
 			Pending: &PendingDecision{
 				Kind: PendingDiverged, OmnisaveName: "Save 2",
-				ForkName: "Save 2 (Steam Deck)", Keep: KeepAsBranch,
+				ForkName: "Save 2 (Steam Deck)",
 			},
 		},
 	}}
@@ -371,9 +371,8 @@ func TestTheQuestionTakesOverTheBlock(t *testing.T) {
 		"▲ Omnisave · watching",
 		"Project Zomboid",
 		"Save 2 diverges between this device and the server",
-		"› Fork here",
-		"continue as Save 2 (Steam Deck)",
-		"Take current",
+		"Fork as Save 2 (Steam Deck)",
+		"› Jump to current",
 		"↑↓ choose · enter confirm · esc dismiss",
 	} {
 		if !strings.Contains(view, text) {
@@ -417,8 +416,9 @@ func TestAnsweringSendsTheChoiceAndTheSaveItBelongsTo(t *testing.T) {
 	asked, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	<-requests
 
-	moved, _ := asked.(watchModel).Update(tea.KeyMsg{Type: tea.KeyDown})
-	answered, _ := moved.(watchModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// The question opens on taking current, so confirming without moving
+	// answers that.
+	answered, _ := asked.(watchModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	if answered.(watchModel).question != nil {
 		t.Fatal("expected answering to close the question")
@@ -431,7 +431,19 @@ func TestAnsweringSendsTheChoiceAndTheSaveItBelongsTo(t *testing.T) {
 		t.Fatalf("expected the answer to name the save it belongs to, got %v", request)
 	}
 	if request.Diverged != DivergedBindingJump {
-		t.Fatalf("expected the second option to answer take-current, got %q", request.Diverged)
+		t.Fatalf("expected the default answer to take current, got %q", request.Diverged)
+	}
+
+	// Moving off the default reaches the other answer.
+	reasked, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	<-requests
+	moved, _ := reasked.(watchModel).Update(tea.KeyMsg{Type: tea.KeyUp})
+	forked, _ := moved.(watchModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if forked.(watchModel).question != nil {
+		t.Fatal("expected answering to close the question")
+	}
+	if request := <-requests; request.Diverged != DivergedBindingFork {
+		t.Fatalf("expected moving up to answer fork, got %q", request.Diverged)
 	}
 }
 

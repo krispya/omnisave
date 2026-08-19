@@ -1599,23 +1599,17 @@ func resolveDivergence(
 		report.SyncedWith(local.GameTitle, name, time.Now())
 		return nil
 	}
-	// The question promises what each answer would do to this save, so the
-	// shape is worked out before anything is asked or reported.
+	// The question names the save forking would create, so it is worked out
+	// before anything is asked or reported.
 	deviceName := strings.TrimSpace(state.Device.Name)
 	question := tui.DivergedQuestion{
 		GameTitle:    local.GameTitle,
 		OmnisaveName: name,
 		ForkName:     deconflictName(remoteSave, deviceName),
-		Keep:         tui.KeepAsBranch,
-	}
-	if contentKnown {
-		question.Keep = tui.KeepNothing
-	} else if baseline == nil {
-		question.Keep = tui.KeepAsSave
 	}
 	waiting := func() error {
 		outcome.Diverged++
-		report.Diverged(local.GameTitle, name, question.ForkName, question.Keep)
+		report.Diverged(local.GameTitle, name, question.ForkName)
 		return nil
 	}
 	if !prompts.asksDiverged() {
