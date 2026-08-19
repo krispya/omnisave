@@ -88,24 +88,98 @@ func TestCanApplyAcceptsAliasedSpellings(t *testing.T) {
 	}
 }
 
+// A save shaped like one flat file accepts an aliased spelling only under
+// its own name: a foreign name would be placed beside the real file and the
+// game would keep reading the old one — or nothing.
+func TestCanApplyRefusesRenamingASingleFileSave(t *testing.T) {
+	local := target.Save{
+		Files: []target.File{{
+			Path:       "/nowhere/saves/GameSave.dat",
+			LocationID: "mac1", RelativePath: "GameSave.dat",
+		}},
+		LocationAliases: []string{"mac1", "win1"},
+	}
+	renamed := omnisave.Revision{ID: "revision-1", Files: []omnisave.RevisionFile{
+		revisionFile("win1/save.dat", "content", "application/octet-stream"),
+	}}
+	if err := binding.CanApply(local, renamed); err == nil {
+		t.Fatal("expected a foreign filename to be refused for a single-file save")
+	}
+	sameName := omnisave.Revision{ID: "revision-2", Files: []omnisave.RevisionFile{
+		revisionFile("win1/GameSave.dat", "content", "application/octet-stream"),
+	}}
+	if err := binding.CanApply(local, sameName); err != nil {
+		t.Fatalf("expected the native filename to be accepted, got %v", err)
+	}
+}
+
+// A directory that happens to contain one file is not frozen in that shape:
+// a later revision may add another file beneath the same aliased location.
+func TestCanApplyAllowsAnAliasedDirectoryToGainFiles(t *testing.T) {
+	local := target.Save{
+		Files: []target.File{{
+			Path:       "/nowhere/UNDERTALE/file0",
+			LocationID: "linux1", RelativePath: "file0",
+		}},
+		LocationAliases: []string{"linux1", "mac1", "win1"},
+	}
+	expanded := omnisave.Revision{ID: "revision-1", Files: []omnisave.RevisionFile{
+		revisionFile("mac1/file0", "progress", "application/octet-stream"),
+		revisionFile("mac1/undertale.ini", "settings", "application/octet-stream"),
+	}}
+	if err := binding.CanApply(local, expanded); err != nil {
+		t.Fatalf("expected the aliased directory to accept another file, got %v", err)
+	}
+	severalLocations := omnisave.Revision{ID: "revision-2", Files: []omnisave.RevisionFile{
+		revisionFile("mac1/file0", "progress", "application/octet-stream"),
+		revisionFile("win1/undertale.ini", "settings", "application/octet-stream"),
+	}}
+	if err := binding.CanApply(local, severalLocations); err == nil {
+		t.Fatal("expected a several-location revision to refuse translation")
+	}
+}
+
 // A fresh Device can materialize a lineage spelled by another OS onto its
 // own destination when that destination's one location answers to the
-// lineage's identity.
+// lineage's identity. A destination that does not exist yet cannot say
+// whether it is a file or a directory, so a foreign single file under a
+// name that is not the destination's own is refused rather than buried in
+// a directory wearing the save file's name.
 func TestCanMaterializeAcceptsAliasedSpellings(t *testing.T) {
 	destination := target.SaveDestination{
 		ID: "save-1", TargetID: "target-1", GameID: "game-1", Kind: "local",
 		Locations: []target.SaveLocation{{
-			ID: "linux1", Path: "/nowhere/UNDERTALE", Kind: target.SaveLocationDirectory,
+			ID: "linux1", Path: "/nowhere/UNDERTALE", Kind: target.SaveLocationUnknown,
 		}},
 		LocationAliases: []string{"linux1", "mac1"},
 	}
-	foreign := omnisave.Revision{ID: "revision-1", Files: []omnisave.RevisionFile{
+	directoryShaped := omnisave.Revision{ID: "revision-1", Files: []omnisave.RevisionFile{
 		revisionFile("mac1/file0", "content", "application/octet-stream"),
+		revisionFile("mac1/undertale.ini", "settings", "application/octet-stream"),
 	}}
-	if err := binding.CanMaterialize(destination, foreign); err != nil {
-		t.Fatalf("expected the aliased spelling to be placeable, got %v", err)
+	if err := binding.CanMaterialize(destination, directoryShaped); err != nil {
+		t.Fatalf("expected the aliased directory save to be placeable, got %v", err)
 	}
-	unknown := omnisave.Revision{ID: "revision-2", Files: []omnisave.RevisionFile{
+	oneForeignName := omnisave.Revision{ID: "revision-2", Files: []omnisave.RevisionFile{
+		revisionFile("mac1/save.dat", "content", "application/octet-stream"),
+	}}
+	if err := binding.CanMaterialize(destination, oneForeignName); err == nil {
+		t.Fatal("expected one foreign-named file into an unproven location to be refused")
+	}
+	ownName := omnisave.Revision{ID: "revision-3", Files: []omnisave.RevisionFile{
+		revisionFile("mac1/UNDERTALE", "content", "application/octet-stream"),
+	}}
+	if err := binding.CanMaterialize(destination, ownName); err != nil {
+		t.Fatalf("expected the destination's own name to place as its file, got %v", err)
+	}
+	severalLocations := omnisave.Revision{ID: "revision-4", Files: []omnisave.RevisionFile{
+		revisionFile("mac1/file0", "content", "application/octet-stream"),
+		revisionFile("windows9/undertale.ini", "settings", "application/octet-stream"),
+	}}
+	if err := binding.CanMaterialize(destination, severalLocations); err == nil {
+		t.Fatal("expected a several-location revision to refuse translation")
+	}
+	unknown := omnisave.Revision{ID: "revision-5", Files: []omnisave.RevisionFile{
 		revisionFile("windows9/file0", "content", "application/octet-stream"),
 	}}
 	if err := binding.CanMaterialize(destination, unknown); err == nil {
