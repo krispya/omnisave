@@ -12,7 +12,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/client/activity"
@@ -76,7 +78,7 @@ func FindContentMatchesContext(ctx context.Context, save target.Save, lineages [
 	for _, lineage := range lineages {
 		match := ContentMatch{Omnisave: lineage.Omnisave}
 		for _, revision := range lineage.Revisions {
-			if sameManifest(manifest, revision.Files) {
+			if sameManifest(respellManifest(manifest, save.LocationAliases, revision.Files), revision.Files) {
 				match.Revisions = append(match.Revisions, revision)
 			}
 		}
@@ -156,6 +158,49 @@ func sameManifest(local, remote []omnisave.RevisionFile) bool {
 	return true
 }
 
+// respellManifest rewrites a local manifest into the location vocabulary a
+// remote manifest uses, when the two demonstrably describe the same single
+// logical location: each side spells exactly one location, and the remote's
+// spelling is among the identities the local save knows its location under.
+// Anything else returns the manifest unchanged, which makes every comparison
+// fall back to the strict exact rule. Only the location prefix moves; the
+// relative paths must coincide on their own, and when they do not the
+// translated comparison simply fails.
+func respellManifest(local []omnisave.RevisionFile, aliases []string, remote []omnisave.RevisionFile) []omnisave.RevisionFile {
+	localLocation := singleLocation(local)
+	remoteLocation := singleLocation(remote)
+	if localLocation == "" || remoteLocation == "" || localLocation == remoteLocation {
+		return local
+	}
+	if !slices.Contains(aliases, remoteLocation) {
+		return local
+	}
+	respelled := make([]omnisave.RevisionFile, len(local))
+	for index, file := range local {
+		file.Path = remoteLocation + strings.TrimPrefix(file.Path, localLocation)
+		respelled[index] = file
+	}
+	return respelled
+}
+
+// singleLocation is the one location a manifest spells all its paths under,
+// or empty when it has none or several.
+func singleLocation(files []omnisave.RevisionFile) string {
+	location := ""
+	for _, file := range files {
+		prefix, _, found := strings.Cut(file.Path, "/")
+		if !found || prefix == "" {
+			return ""
+		}
+		if location == "" {
+			location = prefix
+		} else if location != prefix {
+			return ""
+		}
+	}
+	return location
+}
+
 // Seed creates a new Omnisave for a Library game and commits the local save's
 // current content as its initial revision (FDR-003). The returned revision is
 // the binding's sync baseline. An empty displayName lets the server pick its
@@ -178,7 +223,7 @@ func Seed(ctx context.Context, server Server, serverGameID string, save target.S
 		return nil, nil, fmt.Errorf("create Omnisave: %w", err)
 	}
 	revision, err := commitContent(ctx, server, created.ID, save,
-		omnisave.CreateRevision{SavedAt: savedAt(save), Upserts: upserts})
+		omnisave.CreateRevision{SavedAt: savedAt(save), Upserts: upserts}, CanonicalPath)
 	if err != nil {
 		// An Omnisave with no revisions is indistinguishable from lost data;
 		// remove the empty shell so a retry starts clean.
@@ -189,8 +234,11 @@ func Seed(ctx context.Context, server Server, serverGameID string, save target.S
 }
 
 // MatchesManifest reports whether a local manifest equals a revision's files.
-func MatchesManifest(manifest []omnisave.RevisionFile, revision omnisave.Revision) bool {
-	return sameManifest(manifest, revision.Files)
+// aliases are the identities the local save's location is also known under,
+// so a revision spelled by another OS's rule still compares (FDR-003,
+// decision 11); nil keeps the comparison strict.
+func MatchesManifest(manifest []omnisave.RevisionFile, aliases []string, revision omnisave.Revision) bool {
+	return sameManifest(respellManifest(manifest, aliases, revision.Files), revision.Files)
 }
 
 // Push commits the local save's current content as a new revision on top of
@@ -229,7 +277,10 @@ type commitOptions struct {
 
 // push commits the local manifest as a child of parentRevisionID — empty
 // meaning the expected current revision — with parentFiles supplying the
-// paths a delete has to cover.
+// paths a delete has to cover. A commit onto a lineage spelled by another
+// OS's location identity keeps the lineage's spelling: the manifest is
+// respelled into the parent's vocabulary, so one lineage never mixes
+// spellings however many OSes commit to it (FDR-003, decision 11).
 func push(ctx context.Context, server Server, omnisaveID string, save target.Save, expectedCurrentRevisionID, parentRevisionID string, parentFiles []omnisave.RevisionFile, options commitOptions) (*omnisave.Revision, error) {
 	if omnisaveID == "" || expectedCurrentRevisionID == "" {
 		return nil, fmt.Errorf("push needs a bound Omnisave and its baseline")
@@ -241,6 +292,8 @@ func push(ctx context.Context, server Server, omnisaveID string, save target.Sav
 	if err != nil {
 		return nil, err
 	}
+	upserts = respellManifest(upserts, save.LocationAliases, parentFiles)
+	spelling := manifestSpelling(save, upserts)
 	local := make(map[string]bool, len(upserts))
 	for _, file := range upserts {
 		local[file.Path] = true
@@ -262,11 +315,29 @@ func push(ctx context.Context, server Server, omnisaveID string, save target.Sav
 	if parentRevisionID != "" && parentRevisionID != expectedCurrentRevisionID {
 		input.ParentRevisionID = &parentRevisionID
 	}
-	revision, err := commitContent(ctx, server, omnisaveID, save, input)
+	revision, err := commitContent(ctx, server, omnisaveID, save, input, spelling)
 	if err != nil {
 		return nil, fmt.Errorf("commit local progress: %w", err)
 	}
 	return revision, nil
+}
+
+// manifestSpelling names local files the way the given manifest spells them,
+// so an upload can find a file's artifact record after a respelling moved
+// the manifest into another vocabulary.
+func manifestSpelling(save target.Save, upserts []omnisave.RevisionFile) func(target.File) string {
+	location := singleLocation(upserts)
+	if location == "" {
+		return CanonicalPath
+	}
+	return func(file target.File) string {
+		canonical := CanonicalPath(file)
+		_, relative, found := strings.Cut(canonical, "/")
+		if !found {
+			return canonical
+		}
+		return location + "/" + relative
+	}
 }
 
 // savedAt is when the save's content was written by the game: the newest
@@ -288,15 +359,17 @@ func savedAt(save target.Save) *time.Time {
 
 // commitContent commits the local save's manifest, uploading only the
 // artifacts the server reports missing: identical content — an unchanged
-// file, another Device's earlier upload — never travels twice.
-func commitContent(ctx context.Context, server Server, omnisaveID string, save target.Save, input omnisave.CreateRevision) (*omnisave.Revision, error) {
+// file, another Device's earlier upload — never travels twice. spelling
+// names a local file the way the manifest spells it, which may differ from
+// its own canonical path when the commit keeps another OS's vocabulary.
+func commitContent(ctx context.Context, server Server, omnisaveID string, save target.Save, input omnisave.CreateRevision, spelling func(target.File) string) (*omnisave.Revision, error) {
 	activity.Report(ctx, "checking server")
 	revision, err := server.CommitRevision(ctx, omnisaveID, input)
 	var missing *omnisave.MissingArtifacts
 	if !errors.As(err, &missing) {
 		return revision, err
 	}
-	if err := uploadMissing(ctx, server, save, input.Upserts, missing.SHA256); err != nil {
+	if err := uploadMissing(ctx, server, save, input.Upserts, missing.SHA256, spelling); err != nil {
 		return nil, err
 	}
 	activity.Report(ctx, "finalizing")
@@ -304,7 +377,7 @@ func commitContent(ctx context.Context, server Server, omnisaveID string, save t
 }
 
 // uploadMissing uploads only absent artifacts and rejects files changed after hashing.
-func uploadMissing(ctx context.Context, server Server, save target.Save, upserts []omnisave.RevisionFile, missing []string) error {
+func uploadMissing(ctx context.Context, server Server, save target.Save, upserts []omnisave.RevisionFile, missing []string, spelling func(target.File) string) error {
 	wanted := make(map[string]bool, len(missing))
 	for _, hash := range missing {
 		wanted[hash] = true
@@ -315,7 +388,7 @@ func uploadMissing(ctx context.Context, server Server, save target.Save, upserts
 	}
 	uploaded := 0
 	for _, file := range save.Files {
-		artifact, known := artifacts[CanonicalPath(file)]
+		artifact, known := artifacts[spelling(file)]
 		if !known || !wanted[artifact.SHA256] {
 			continue
 		}

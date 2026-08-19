@@ -26,6 +26,12 @@ type ArtifactSource interface {
 type localLayout struct {
 	roots       map[string]string
 	currentPath map[string]string
+	// aliases are the identities this save's location is also known under —
+	// the other OSes' spellings of the same logical place. A canonical path
+	// naming one of them lands in the save's single root; the mapping is
+	// refused when the save has several roots, since nothing then says which
+	// one the alias means.
+	aliases map[string]bool
 }
 
 type stagedFile struct {
@@ -350,13 +356,31 @@ func planMaterialization(destination target.SaveDestination, current omnisave.Re
 		}
 		locations[location.ID] = location
 	}
+	aliases := make(map[string]bool, len(destination.LocationAliases))
+	for _, alias := range destination.LocationAliases {
+		aliases[alias] = true
+	}
+	// resolveLocation honors another OS's spelling of the destination's one
+	// location (FDR-003, decision 11); several locations leave nothing to
+	// say which one an alias means.
+	resolveLocation := func(locationID string) (target.SaveLocation, bool) {
+		if location, exists := locations[locationID]; exists {
+			return location, true
+		}
+		if aliases[locationID] && len(destination.Locations) == 1 {
+			return destination.Locations[0], true
+		}
+		return target.SaveLocation{}, false
+	}
 	counts := make(map[string]int)
 	for _, file := range current.Files {
 		locationID, _, err := splitCanonicalPath(file.Path)
 		if err != nil {
 			return nil, err
 		}
-		counts[locationID]++
+		if location, exists := resolveLocation(locationID); exists {
+			counts[location.ID]++
+		}
 	}
 
 	planned := make([]plannedFile, 0, len(current.Files))
@@ -366,11 +390,11 @@ func planMaterialization(destination target.SaveDestination, current omnisave.Re
 		if err != nil {
 			return nil, err
 		}
-		location, exists := locations[locationID]
+		location, exists := resolveLocation(locationID)
 		if !exists {
 			return nil, fmt.Errorf("current revision uses an unknown save location")
 		}
-		targetPath, err := materializedPath(location, relative, counts[locationID])
+		targetPath, err := materializedPath(location, relative, counts[location.ID])
 		if err != nil {
 			return nil, err
 		}
@@ -508,6 +532,10 @@ func describeLocalLayout(save target.Save) (localLayout, error) {
 	layout := localLayout{
 		roots:       make(map[string]string),
 		currentPath: make(map[string]string),
+		aliases:     make(map[string]bool, len(save.LocationAliases)),
+	}
+	for _, alias := range save.LocationAliases {
+		layout.aliases[alias] = true
 	}
 	for _, file := range save.Files {
 		relative := filepath.Clean(filepath.FromSlash(file.RelativePath))
@@ -545,6 +573,13 @@ func (l localLayout) pathFor(canonical string) (string, string, error) {
 		return "", "", err
 	}
 	root := l.roots[locationID]
+	if root == "" && l.aliases[locationID] && len(l.roots) == 1 {
+		// Another OS's spelling of this save's one location (FDR-003,
+		// decision 11).
+		for _, only := range l.roots {
+			root = only
+		}
+	}
 	if root == "" {
 		return "", "", fmt.Errorf("current revision uses an unknown save location")
 	}

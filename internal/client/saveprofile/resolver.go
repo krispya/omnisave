@@ -51,7 +51,26 @@ func Resolve(game target.InstalledGame, profile Profile) ([]target.Save, error) 
 			"profile_provider":    profile.Provider,
 			"profile_provider_id": profile.ProviderID,
 		},
+		LocationAliases: locationAliases(profile),
 	}}, nil
+}
+
+// locationAliases is every identity the profile's rules give this game's save
+// locations, across every OS — the same logical place spelled per platform.
+// Sharing them on the resolved save is what lets a revision minted under
+// another OS's spelling be recognized here (FDR-003, decision 11).
+func locationAliases(profile Profile) []string {
+	seen := make(map[string]bool, len(profile.Rules))
+	aliases := make([]string, 0, len(profile.Rules))
+	for _, rule := range profile.Rules {
+		if rule.ID == "" || seen[rule.ID] {
+			continue
+		}
+		seen[rule.ID] = true
+		aliases = append(aliases, rule.ID)
+	}
+	sort.Strings(aliases)
+	return aliases
 }
 
 // ResolveDestinations expands applicable profile rules into a prospective Local Save
@@ -101,6 +120,7 @@ func ResolveDestinations(game target.InstalledGame, profile Profile) ([]target.S
 			"profile_provider":    profile.Provider,
 			"profile_provider_id": profile.ProviderID,
 		},
+		LocationAliases: locationAliases(profile),
 	}}, nil
 }
 

@@ -1561,7 +1561,7 @@ func syncBoundSave(
 	}
 
 	if current.ID == baseline.ID {
-		if binding.MatchesManifest(manifest, baseline) {
+		if binding.MatchesManifest(manifest, save.LocationAliases, baseline) {
 			// Proved equal the expensive way; remember how the files stood so
 			// the next pass can reach the same answer by looking at them.
 			state.RecordVerified(local, signature)
@@ -1597,7 +1597,7 @@ func syncBoundSave(
 	}
 
 	// The Current Revision moved away from the baseline.
-	if binding.MatchesManifest(manifest, current) {
+	if binding.MatchesManifest(manifest, save.LocationAliases, current) {
 		// Local already carries the Current Revision's content; only the baseline lags.
 		if err := state.RecordSynced(local, remoteSave.ID, current.ID); err != nil {
 			outcome.Failed++
@@ -1608,7 +1608,7 @@ func syncBoundSave(
 		report.SyncedWith(local.GameTitle, name, time.Now())
 		return nil
 	}
-	if binding.MatchesManifest(manifest, baseline) {
+	if binding.MatchesManifest(manifest, save.LocationAliases, baseline) {
 		if gate.holdPull(local.GameID) {
 			// Defer pulls that a running game could overwrite from memory.
 			outcome.Deferred++
@@ -1684,7 +1684,7 @@ func resolveDivergence(
 	prompts *reconcilePrompts,
 ) error {
 	name := omnisaveDisplayName(remoteSave)
-	matched, contentKnown := matchHistory(manifest, history)
+	matched, contentKnown := matchHistory(manifest, save.LocationAliases, history)
 	if contentKnown && matched.ID == current.ID {
 		// Only reachable without a baseline: the local content is the Current
 		// Revision, so nothing has diverged — the binding just never recorded
@@ -1731,7 +1731,7 @@ func resolveDivergence(
 	// record now keeps a repeated answer from minting another.
 	var earlier, resumable *preservedProgress
 	if !contentKnown {
-		earlier, resumable, err = recordedPreservation(state, local, manifest, baseline, gameSaves, loadHistory)
+		earlier, resumable, err = recordedPreservation(state, local, manifest, save.LocationAliases, baseline, gameSaves, loadHistory)
 		if err != nil {
 			outcome.Failed++
 			report.SaveFailed(local.GameTitle, err)
@@ -1988,6 +1988,7 @@ func recordedPreservation(
 	state *tracking.State,
 	local tracking.LocalSave,
 	manifest []omnisave.RevisionFile,
+	aliases []string,
 	baseline *omnisave.Revision,
 	gameSaves []omnisave.Omnisave,
 	loadHistory func(string) ([]omnisave.Revision, error),
@@ -2016,7 +2017,7 @@ func recordedPreservation(
 		state.ClearPendingPreservation(local)
 		return nil, nil, nil
 	}
-	if binding.MatchesManifest(manifest, current) {
+	if binding.MatchesManifest(manifest, aliases, current) {
 		return &preservedProgress{omnisave: *recorded, revision: current}, nil, nil
 	}
 	if baseline != nil && current.ID == baseline.ID {
@@ -2029,11 +2030,11 @@ func recordedPreservation(
 // matchHistory finds the newest revision whose content equals the local
 // manifest. Any hit means the server already holds this exact content, so
 // nothing needs preserving before this Device moves on.
-func matchHistory(manifest []omnisave.RevisionFile, history []omnisave.Revision) (omnisave.Revision, bool) {
+func matchHistory(manifest []omnisave.RevisionFile, aliases []string, history []omnisave.Revision) (omnisave.Revision, bool) {
 	var matched omnisave.Revision
 	found := false
 	for _, revision := range history {
-		if !binding.MatchesManifest(manifest, revision) {
+		if !binding.MatchesManifest(manifest, aliases, revision) {
 			continue
 		}
 		if !found || revision.CreatedAt.After(matched.CreatedAt) {

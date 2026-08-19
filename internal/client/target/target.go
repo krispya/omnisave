@@ -93,6 +93,12 @@ type Save struct {
 	Kind     string
 	Files    []File
 	Metadata map[string]string
+	// LocationAliases are every identity the save's logical location is known
+	// under. Profile rules spell one location differently per OS, and a
+	// revision minted on another OS names the location by that OS's spelling;
+	// the aliases are what let the two be recognized as the same place.
+	// Empty means the save's locations answer only to their own identities.
+	LocationAliases []string
 }
 
 // SaveLocationKind describes how revision paths map into a prospective
@@ -129,6 +135,9 @@ type SaveDestination struct {
 	Kind      string
 	Locations []SaveLocation
 	Metadata  map[string]string
+	// LocationAliases mirrors Save.LocationAliases for a save that does not
+	// exist yet, so a revision spelled by another OS can still be placed.
+	LocationAliases []string
 }
 
 // Adapter discovers application targets, their games, current saves, and the
