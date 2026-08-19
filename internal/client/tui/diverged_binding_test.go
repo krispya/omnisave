@@ -30,14 +30,17 @@ func TestDivergedBindingPromptOffersTwoLosslessChoices(t *testing.T) {
 			t.Fatalf("expected the diverged prompt to contain %q, got:\n%s", text, view)
 		}
 	}
+	if strings.Index(view, "Jump to current") > strings.Index(view, "Fork as Save 1 (Steam Deck)") {
+		t.Fatalf("expected jump to current to be the first answer, got:\n%s", view)
+	}
 }
 
 // A Device with no name has no deconflicting name to offer, so the fork
 // answer says only that a save appears.
 func TestTheForkAnswerFallsBackWithoutADeviceName(t *testing.T) {
 	options := DivergedOptions(DivergedQuestion{OmnisaveName: "Save 1"})
-	if options[0].Label != "Fork as a new save" {
-		t.Fatalf("expected a generic fork label without a device name, got %q", options[0].Label)
+	if options[1].Label != "Fork as a new save" {
+		t.Fatalf("expected a generic fork label without a device name, got %q", options[1].Label)
 	}
 	if options[DivergedDefaultIndex(options)].Choice != DivergedBindingJump {
 		t.Fatal("expected both surfaces to open on taking current")

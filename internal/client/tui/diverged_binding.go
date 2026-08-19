@@ -71,8 +71,8 @@ func ForkLabel(forkName string) string {
 // DivergedOptions is the answer set, in the order both surfaces show it.
 func DivergedOptions(question DivergedQuestion) []DivergedOption {
 	return []DivergedOption{
-		{Label: ForkLabel(question.ForkName), Choice: DivergedBindingFork},
 		{Label: "Jump to current", Choice: DivergedBindingJump},
+		{Label: ForkLabel(question.ForkName), Choice: DivergedBindingFork},
 	}
 }
 
