@@ -167,9 +167,9 @@ func TestTrackingCanJumpAStaleLocalSaveToTheCurrentRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	outcome := tui.TrackOutcome{Tracked: 1, Synced: true}
-	choose := func(gameTitle, omnisaveName string) (tui.StaleBindingChoice, error) {
-		if gameTitle != "Chrono Trigger" || omnisaveName != "New Game+" {
-			t.Fatalf("unexpected stale-match prompt: %q %q", gameTitle, omnisaveName)
+	choose := func(question tui.StaleQuestion) (tui.StaleBindingChoice, error) {
+		if question.GameTitle != "Chrono Trigger" || question.OmnisaveName != "New Game+" {
+			t.Fatalf("unexpected stale-match prompt: %+v", question)
 		}
 		return tui.StaleBindingJump, nil
 	}
@@ -235,7 +235,7 @@ func TestTrackingCanForkAStaleLocalSaveAtItsMatchingRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	outcome := tui.TrackOutcome{Tracked: 1, Synced: true}
-	choose := func(_, _ string) (tui.StaleBindingChoice, error) {
+	choose := func(tui.StaleQuestion) (tui.StaleBindingChoice, error) {
 		return tui.StaleBindingFork, nil
 	}
 
@@ -288,9 +288,9 @@ func TestAReverseStaleSaveGetsTheStalePromptAndCanAdoptTheOlderCurrent(t *testin
 	}
 	outcome := tui.TrackOutcome{Tracked: 1, Synced: true}
 	prompted := false
-	choose := func(gameTitle, omnisaveName string) (tui.StaleBindingChoice, error) {
-		if gameTitle != "Chrono Trigger" || omnisaveName != "New Game+" {
-			t.Fatalf("unexpected stale-match prompt: %q %q", gameTitle, omnisaveName)
+	choose := func(question tui.StaleQuestion) (tui.StaleBindingChoice, error) {
+		if question.GameTitle != "Chrono Trigger" || question.OmnisaveName != "New Game+" {
+			t.Fatalf("unexpected stale-match prompt: %+v", question)
 		}
 		prompted = true
 		return tui.StaleBindingJump, nil
@@ -358,7 +358,7 @@ func TestAReverseStaleSaveCanForkToKeepItsDescendantContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	outcome := tui.TrackOutcome{Tracked: 1, Synced: true}
-	choose := func(_, _ string) (tui.StaleBindingChoice, error) {
+	choose := func(tui.StaleQuestion) (tui.StaleBindingChoice, error) {
 		return tui.StaleBindingFork, nil
 	}
 
@@ -642,7 +642,7 @@ func TestDeletingAGameInTheDashUntracksItBeforeTheNextPrompt(t *testing.T) {
 // testPrompts builds a prompt set whose diverged prompt fails the test —
 // binding-era tests never expect divergence.
 func testPrompts(
-	stale func(string, string) (tui.StaleBindingChoice, error),
+	stale func(tui.StaleQuestion) (tui.StaleBindingChoice, error),
 	ambiguous func(string, []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error),
 	t *testing.T,
 ) *reconcilePrompts {
@@ -919,9 +919,9 @@ func TestARunThatDoesNotAskKeepsEveryTrackedGame(t *testing.T) {
 	}
 }
 
-func failingStaleChooser(t *testing.T) func(string, string) (tui.StaleBindingChoice, error) {
-	return func(gameTitle, _ string) (tui.StaleBindingChoice, error) {
-		t.Fatalf("unexpected stale prompt for %q", gameTitle)
+func failingStaleChooser(t *testing.T) func(tui.StaleQuestion) (tui.StaleBindingChoice, error) {
+	return func(question tui.StaleQuestion) (tui.StaleBindingChoice, error) {
+		t.Fatalf("unexpected stale prompt for %q", question.GameTitle)
 		return "", nil
 	}
 }

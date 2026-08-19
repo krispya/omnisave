@@ -581,9 +581,9 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 				})
 				return choice, err
 			},
-			stale: func(gameTitle, omnisaveName string) (choice tui.StaleBindingChoice, err error) {
+			stale: func(question tui.StaleQuestion) (choice tui.StaleBindingChoice, err error) {
 				session.Interact(func() {
-					choice, err = tui.PromptStaleBinding(gameTitle, omnisaveName)
+					choice, err = tui.PromptStaleBinding(question)
 				})
 				return choice, err
 			},
@@ -850,7 +850,7 @@ func isNotFound(err error) bool {
 // reconcilePrompts provides optional interaction; nil leaves decisions for a later run.
 type reconcilePrompts struct {
 	empty     func(gameTitle string, options []tui.SyncToDeviceOption) (tui.SyncToDeviceChoice, error)
-	stale     func(gameTitle, omnisaveName string) (tui.StaleBindingChoice, error)
+	stale     func(question tui.StaleQuestion) (tui.StaleBindingChoice, error)
 	ambiguous func(gameTitle string, options []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error)
 	diverged  func(question tui.DivergedQuestion) (tui.DivergedBindingChoice, error)
 }
@@ -1094,7 +1094,14 @@ func reconcileSaves(
 				report.Stale(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave))
 				continue
 			}
-			choice, err := prompts.stale(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave))
+			// The fork answer names the save it would create, and creates
+			// exactly that one.
+			forkName := deconflictName(matched.Omnisave, strings.TrimSpace(state.Device.Name))
+			choice, err := prompts.stale(tui.StaleQuestion{
+				GameTitle:    candidate.local.GameTitle,
+				OmnisaveName: omnisaveDisplayName(matched.Omnisave),
+				ForkName:     forkName,
+			})
 			if err != nil {
 				return err
 			}
@@ -1121,7 +1128,7 @@ func reconcileSaves(
 			case tui.StaleBindingFork:
 				fork, err := server.ForkOmnisave(ctx, matched.Omnisave.ID, omnisave.ForkOmnisave{
 					RevisionID:  matchedRevision.ID,
-					DisplayName: deconflictName(matched.Omnisave, strings.TrimSpace(state.Device.Name)),
+					DisplayName: forkName,
 				})
 				if err != nil {
 					outcome.Failed++

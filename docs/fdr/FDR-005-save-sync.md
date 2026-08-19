@@ -58,21 +58,23 @@ path, syncing-down built the read path; sync makes both routine.
 - Diverged saves are reported — "save diverged from …; run
   omnisave track to resolve" — and skipped until someone answers: fork
   here, and this Device's progress continues as a new lineage named for
-  the Device, or take current, which keeps the unsynced local progress
+  the Device, or jump to current, which keeps the unsynced local progress
   as a Device-named branch of the baseline — inside the same Omnisave,
   left behind the current pointer — and then applies the Current
   Revision. Neither choice destroys content, and only forking creates
   another Omnisave.
 - Before either answer preserves anything, the local content is matched
   against the Omnisave's full revision history. Content the history
-  already holds needs no copy: take current simply applies the Current
-  Revision, and fork here forks at the matched revision without pushing.
+  already holds needs no copy: jumping simply applies the Current
+  Revision, and forking forks at the matched revision without pushing.
   A baseline-less binding whose content turns out to equal the Current
   Revision is rebound silently, even by a headless pass — there was
   nothing to resolve.
 - Both surfaces show the same two labels and nothing else: "Fork as Save 1
   (Steam Deck)", naming the save that answer would create, and "Jump to
-  current". Both open on jumping — it is the answer that adds no save, so
+  current" — the same pair, worded the same way, as the stale-save prompt
+  in [FDR-003](FDR-003-automatic-save-binding.md), decision 5. Both open on
+  jumping — it is the answer that adds no save, so
   confirming without reading keeps the poster wall as it was.
 - The answer can be given from the live watch view without stopping it:
   the row says which Omnisave is waiting, `r` raises the question as a
@@ -254,12 +256,12 @@ closes most of that window by holding pulls while the game runs.
 **Decision:** Divergence is new progress on *both* sides of one line — a
 Current Revision that descends from this Device's baseline while the local
 content moved too (decision 15 covers every other shape). Headless sync and
-watch report it and skip. Interactive track asks: fork here, or jump to
-latest. Before either answer moves anything, the local content is matched
+watch report it and skip. Interactive track asks: fork, or jump to
+current. Before either answer moves anything, the local content is matched
 against the full revision history; a hit is proof the server already holds
 it, so jump applies the Current Revision with nothing to preserve and fork
 shares the matched revision without pushing. Unsynced content is preserved
-where the answer says the user wants it: fork here mints a new Omnisave, and
+where the answer says the user wants it: forking mints a new Omnisave, and
 jump commits it as a branch of the baseline inside the same Omnisave — a
 keep-current commit, so the pointer never moves — named for the Device it
 came from. A branch revision carries the Device's name alone because the

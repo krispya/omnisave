@@ -51,14 +51,21 @@ type DivergedOption struct {
 	Choice DivergedBindingChoice
 }
 
+// ForkLabel names a fork answer for the save it would create. The stale and
+// diverged prompts both offer one, so they share the wording rather than
+// drift apart. An unnamed Device has no deconflict name to show, and the
+// answer says only that a save appears.
+func ForkLabel(forkName string) string {
+	if forkName == "" {
+		return "Fork as a new save"
+	}
+	return "Fork as " + forkName
+}
+
 // DivergedOptions is the answer set, in the order both surfaces show it.
 func DivergedOptions(question DivergedQuestion) []DivergedOption {
-	forkAs := "a new save"
-	if question.ForkName != "" {
-		forkAs = question.ForkName
-	}
 	return []DivergedOption{
-		{Label: "Fork as " + forkAs, Choice: DivergedBindingFork},
+		{Label: ForkLabel(question.ForkName), Choice: DivergedBindingFork},
 		{Label: "Jump to current", Choice: DivergedBindingJump},
 	}
 }

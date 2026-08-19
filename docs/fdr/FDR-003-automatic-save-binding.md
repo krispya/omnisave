@@ -121,7 +121,10 @@ through to the prompt.
 
 **Decision:** When the local save equals an out-of-date revision, the pass
 does not silently rebind. The user picks fast-forward — adopt the Current Revision —
-or fork at the matched revision.
+or fork at the matched revision. The prompt shows two labels and no
+explanation: "Jump to current" and "Fork as Save 1 (Steam Deck)", naming
+the save the fork would create — the same pair, worded the same way, as the
+divergence prompt ([FDR-005](FDR-005-save-sync.md), decision 4).
 **Why:** The match proves what happened: this save was tracked once, went
 stale, and play continued on another Device. The two futures are
 incompatible, and both are safe to offer — fast-forwarding discards
