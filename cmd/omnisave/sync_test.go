@@ -766,7 +766,9 @@ func TestDivergedSaveCanForkHereAndContinueLocally(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, save := range saves {
-		if save.ID == forked.OmnisaveID && !strings.Contains(save.DisplayName, "(Steam Deck)") {
+		// The source carried only the default "Save N", so the device name
+		// stands alone.
+		if save.ID == forked.OmnisaveID && save.DisplayName != "Steam Deck" {
 			t.Fatalf("expected the fork named for the device, got %q", save.DisplayName)
 		}
 	}
@@ -857,7 +859,9 @@ func TestForkingFromContentTheHistoryAlreadyHoldsSharesTheMatchedRevision(t *tes
 		t.Fatal(err)
 	}
 	for _, save := range saves {
-		if save.ID == forked.OmnisaveID && !strings.Contains(save.DisplayName, "(Steam Deck)") {
+		// The source carried only the default "Save N", so the device name
+		// stands alone.
+		if save.ID == forked.OmnisaveID && save.DisplayName != "Steam Deck" {
 			t.Fatalf("expected the fork named for the device, got %q", save.DisplayName)
 		}
 	}

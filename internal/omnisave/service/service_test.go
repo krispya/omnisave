@@ -223,6 +223,55 @@ func TestUnnamedForksInheritTheSourceNameWithAForkSuffix(t *testing.T) {
 	}
 }
 
+// Repeat divergences from the same Device request the same name every time;
+// the server numbers the newcomers so the poster wall can tell them apart.
+func TestARequestedNameTheGameAlreadyCarriesIsNumbered(t *testing.T) {
+	ctx := context.Background()
+	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	source, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := storeBlob(t, ctx, saves, "snapshot")
+	root, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := saves.Fork(ctx, source.ID, omnisave.ForkOmnisave{RevisionID: root.ID, DisplayName: "Steam Deck"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := saves.Fork(ctx, source.ID, omnisave.ForkOmnisave{RevisionID: root.ID, DisplayName: "Steam Deck"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Omnisave.DisplayName != "Steam Deck" || second.Omnisave.DisplayName != "Steam Deck 2" {
+		t.Fatalf("expected the repeat to be numbered, got %q and %q",
+			first.Omnisave.DisplayName, second.Omnisave.DisplayName)
+	}
+
+	// Creates are deconflicted the same way, but only within their game.
+	if _, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa", DisplayName: "Steam Deck"}); err != nil {
+		t.Fatal(err)
+	}
+	third, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa", DisplayName: "Steam Deck"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.DisplayName != "Steam Deck 4" {
+		t.Fatalf("expected the create to take the next free number, got %q", third.DisplayName)
+	}
+	otherGame, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "chrono-trigger-usa", DisplayName: "Steam Deck"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherGame.DisplayName != "Steam Deck" {
+		t.Fatalf("expected another game's names to not collide, got %q", otherGame.DisplayName)
+	}
+}
+
 func TestForkCreatesAnotherSelectableSaveWithItsOwnHistory(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())

@@ -37,9 +37,11 @@ establishes the baseline that sync will later diff against.
   replaces the local save and the binding starts there — or forking
   at the matched revision, keeping the lineage and continuing this
   playthrough independently. The fork is named for the Device it
-  deconflicts — "Save 1 (Steam Deck)" — so the Dash says where the
-  playthrough split off, falling back to the server's " (fork)" suffix
-  when the Device has no name.
+  deconflicts — "Steam Deck" — so the Dash says where the playthrough
+  split off. A source name someone chose stays on as provenance
+  ("Hardcore run (Steam Deck)"); the default "Save N" says nothing and
+  is dropped. A Device with no name requests nothing and the server's
+  " (fork)" suffix applies.
 - If the local save matches nothing, or matches more than one Omnisave, the
   user chooses: bind to one of the existing Omnisaves (matches are marked),
   create a new one seeded from the local save, or decide later — the save
@@ -163,8 +165,10 @@ pass after its first save exists — the same exposure window
 **Decision:** The server guarantees a display name at creation: an unnamed
 create gets "Save N", numbered past the game's highest surviving "Save N";
 an unnamed fork inherits its source's name with a " (fork)" suffix; renaming
-to an empty name is rejected. Records that predate the rule were backfilled
-in creation order.
+to an empty name is rejected. A requested name another of the game's saves
+already carries is numbered — "Steam Deck", then "Steam Deck 2" — so repeat
+divergences from the same Device stay distinguishable on the poster wall.
+Records that predate the rule were backfilled in creation order.
 **Why:** Names are how saves are told apart everywhere they surface — the
 Dash poster wall, the track report's "seeded as" line, the bind prompt.
 Client-side fallbacks invented a name per surface and could disagree;

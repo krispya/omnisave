@@ -1809,25 +1809,42 @@ func lastSyncedAt(bound tracking.Binding) time.Time {
 }
 
 // deconflictName names a preservation fork or seed after the Device whose
-// progress it keeps — "Save 1 (Steam Deck)" — so the Dash says where a
-// deconflicted lineage came from. A Device without a name falls back to the
-// generic "(fork)" suffix. The result is capped at the server's 100-rune
-// display name limit.
+// progress it keeps — "Steam Deck" — so the Dash says where a deconflicted
+// lineage came from. A source name someone chose stays on as provenance
+// ("Hardcore run (Steam Deck)"); the default "Save N" says nothing and is
+// dropped. A Device without a name has no provenance to record, so the empty
+// result lets the server pick its own default. The server numbers a repeat —
+// a second divergence becomes "Steam Deck 2" (FDR-003, decision 8). The
+// result is capped at the server's 100-rune display name limit.
 func deconflictName(source omnisave.Omnisave, deviceName string) string {
-	label := deviceName
-	if label == "" {
-		label = "fork"
+	if deviceName == "" {
+		return ""
 	}
+	name := deviceName
 	base := strings.TrimSpace(source.DisplayName)
-	name := label
-	if base != "" {
-		name = base + " (" + label + ")"
+	if base != "" && !isDefaultSaveName(base) {
+		name = base + " (" + deviceName + ")"
 	}
 	runes := []rune(name)
 	if len(runes) > 100 {
 		runes = runes[:100]
 	}
 	return string(runes)
+}
+
+// isDefaultSaveName reports whether name is exactly the server's unnamed
+// default, "Save N" (FDR-003, decision 8).
+func isDefaultSaveName(name string) bool {
+	number, found := strings.CutPrefix(name, "Save ")
+	if !found || number == "" {
+		return false
+	}
+	for _, r := range number {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func deviceName() string {

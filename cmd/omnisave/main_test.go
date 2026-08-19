@@ -217,7 +217,9 @@ func TestTrackingCanForkAStaleLocalSaveAtItsMatchingRevision(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
 				t.Fatal(err)
 			}
-			if input.RevisionID != matched.ID || input.DisplayName != "New Game+ (fork)" {
+			// This device has no name, so the fork asks for none and the
+			// server's own "(fork)" default applies.
+			if input.RevisionID != matched.ID || input.DisplayName != "" {
 				t.Fatalf("unexpected fork request: %+v", input)
 			}
 			response.WriteHeader(http.StatusCreated)
