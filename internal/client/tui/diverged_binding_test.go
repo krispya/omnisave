@@ -21,7 +21,7 @@ func TestDivergedBindingPromptOffersTwoLosslessChoices(t *testing.T) {
 	view := ansi.Strip(form.View())
 	for _, text := range []string{
 		"Slay the Spire 2",
-		"Save changed here and Save 1 moved on the server",
+		"Save 1 has new progress on this device and on the server",
 		"› Fork here",
 		"continue as Save 1 (Steam Deck)",
 		"Take current",

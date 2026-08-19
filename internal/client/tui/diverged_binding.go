@@ -112,7 +112,7 @@ func divergedBindingForm(question DivergedQuestion, choice *DivergedBindingChoic
 		options = append(options, huh.NewOption(option.Label+" · "+option.Description, option.Choice))
 	}
 	prompt := huh.NewSelect[DivergedBindingChoice]().
-		Title(fmt.Sprintf("Save changed here and %s moved on the server", question.OmnisaveName)).
+		Title(fmt.Sprintf("%s has new progress on this device and on the server", question.OmnisaveName)).
 		Options(options...).
 		Value(choice)
 	form := huh.NewForm(huh.NewGroup(prompt).Title(question.GameTitle))
