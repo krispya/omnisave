@@ -46,12 +46,9 @@ Mode to Gaming Mode. A refused linger request leaves a working login-started
 service. LaunchAgents and interactive Scheduled Tasks intentionally wait for a
 login because they run with that user's session and access.
 
-Three actions, no more: `install` defines the service and starts it,
-`uninstall` stops and removes it, `status` says whether it is running. There
-is deliberately no `start`, `stop`, or `restart` — those would be a worse copy
-of the platform's own tool, which is right there and better at it. `status`
-earns its place because it is the only way to answer "is this actually
-running?" on a device with no terminal to have watched it from.
+The client exposes only the service lifecycle needed for setup, removal, and
+inspection. Ongoing lifecycle control remains with the platform's native tool
+rather than being duplicated imperfectly in Omnisave.
 
 **Installing requires a connected device.** The unit runs `watch` with no
 flags and no environment, so the only credential it can ever use is the one
@@ -69,13 +66,10 @@ nobody to notice. So an upgrade restarts a running service and says it did. A
 service that is stopped stays stopped: replacing a binary is no reason to
 start something the player turned off.
 
-**The service takes over rather than joining.** The run that sets tracking up
-asks once, at the end, whether this device should keep syncing after the
-terminal closes — that run already has the player's attention, and on a
-handheld it is the last moment before there is none. Accepting ends the run
-instead of proceeding to watch, because two watchers on one device would be
-two passes writing the same tracking state. Later runs do not ask again; they
-mention the command in one dim line and get on with the work.
+**The service takes over rather than joining.** Handing continuous sync to the
+managed service ends the foreground watcher, because two watchers on one Device
+would run competing passes over the same tracking state. Once that handoff has
+been decided, later runs preserve it rather than repeatedly asking.
 
 ## Consequences
 
@@ -85,8 +79,8 @@ Easier:
   Mode, across mode switches and reboots, with no terminal.
 - The service survives a SteamOS update, because it is defined in `$HOME`
   alongside the binary.
-- macOS and Windows players get the same install, status, uninstall, and
-  upgrade behavior through their native per-user managers.
+- macOS and Windows players get the same service lifecycle and upgrade behavior
+  through their native per-user managers.
 - A player can ask a device with no display whether it is actually running,
   and get an answer that separates stopped from never installed.
 - Upgrading a headless device leaves it running the client it just installed.

@@ -32,10 +32,9 @@ non-blocking, and the stream sends heartbeats. A new or reconnected subscriber
 receives an invalidation checkpoint and performs a complete resync, so event
 history does not need durable storage.
 
-The Dash consumes the stream with `fetch` rather than the browser's native
-`EventSource`, allowing the credential the client already holds to remain in
-the `Authorization` header. It keeps settled content visible while a transitioned
-refresh prepares the next complete view.
+The Dash consumes the stream through an authenticated request rather than the
+browser's credential-limited native event source, allowing the credential to
+remain in the ordinary authorization header.
 
 ## Consequences
 
