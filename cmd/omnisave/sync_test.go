@@ -766,10 +766,10 @@ func TestDivergedSaveCanForkHereAndContinueLocally(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, save := range saves {
-		// The source carried only the default "Save N", so the device name
-		// stands alone.
-		if save.ID == forked.OmnisaveID && save.DisplayName != "Steam Deck" {
-			t.Fatalf("expected the fork named for the device, got %q", save.DisplayName)
+		// The name links the fork to the lineage it left and the device
+		// whose progress it keeps.
+		if save.ID == forked.OmnisaveID && save.DisplayName != "Save 1 (Steam Deck)" {
+			t.Fatalf("expected the fork named for its source and device, got %q", save.DisplayName)
 		}
 	}
 
@@ -859,10 +859,10 @@ func TestForkingFromContentTheHistoryAlreadyHoldsSharesTheMatchedRevision(t *tes
 		t.Fatal(err)
 	}
 	for _, save := range saves {
-		// The source carried only the default "Save N", so the device name
-		// stands alone.
-		if save.ID == forked.OmnisaveID && save.DisplayName != "Steam Deck" {
-			t.Fatalf("expected the fork named for the device, got %q", save.DisplayName)
+		// The name links the fork to the lineage it left and the device
+		// whose progress it keeps.
+		if save.ID == forked.OmnisaveID && save.DisplayName != "Save 1 (Steam Deck)" {
+			t.Fatalf("expected the fork named for its source and device, got %q", save.DisplayName)
 		}
 	}
 	// The next pass is quiet: the fork's current revision is the local content.

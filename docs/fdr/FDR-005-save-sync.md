@@ -258,10 +258,11 @@ shares the matched revision without pushing. Unsynced content is preserved
 where the answer says the user wants it: fork here mints a new Omnisave, and
 jump commits it as a branch of the baseline inside the same Omnisave — a
 keep-current commit, so the pointer never moves — named for the Device it
-came from. The Device's name stands alone ("Steam Deck") when the source
-carried only the default "Save N"; a name someone chose stays on as
-provenance ("Hardcore run (Steam Deck)"). The server numbers a repeat —
-"Steam Deck 2" — so serial divergences from one Device stay apart
+came from. A branch revision carries the Device's name alone because the
+tree around it says what it belongs to; a fork or seed sits beside its
+source on the poster wall, so its name keeps the source's name as the link
+("Save 1 (Steam Deck)"). The server numbers a repeat — "Save 1 (Steam
+Deck) 2" — so serial divergences from one Device stay apart
 ([FDR-003](FDR-003-automatic-save-binding.md), decision 8). A binding with
 no baseline has no node to branch from, so its
 jump still preserves into a fresh Omnisave; and a baseline-less binding
