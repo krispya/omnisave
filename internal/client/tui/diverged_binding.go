@@ -63,23 +63,25 @@ type DivergedOption struct {
 }
 
 // DivergedOptions is the answer set, in the order both surfaces show it,
-// worded for what each answer would do to this particular save.
+// worded for what each answer would do to this particular save. The labels
+// already say which side wins, so each description only adds what happens
+// to the local progress.
 func DivergedOptions(question DivergedQuestion) []DivergedOption {
 	forkAs := "a new playthrough"
 	if question.ForkName != "" {
 		forkAs = question.ForkName
 	}
-	jump := "keep this progress as a branch and take the current revision"
+	jump := "keep this progress as a branch"
 	switch question.Keep {
 	case KeepAsSave:
-		jump = "keep this progress as " + forkAs + " and take the current revision"
+		jump = "keep this progress as " + forkAs
 	case KeepNothing:
-		jump = "take the current revision, the history already holds this progress"
+		jump = "this progress is already in the history"
 	}
 	return []DivergedOption{
 		{
 			Label:       "Fork here",
-			Description: "continue this device's progress as " + forkAs,
+			Description: "continue as " + forkAs,
 			Choice:      DivergedBindingFork,
 		},
 		{

@@ -372,7 +372,7 @@ func TestTheQuestionTakesOverTheBlock(t *testing.T) {
 		"Project Zomboid",
 		"Save 2 diverged from the server",
 		"› Fork here",
-		"continue this device's progress as Save 2 (Steam Deck)",
+		"continue as Save 2 (Steam Deck)",
 		"Take current",
 		"↑↓ choose · enter confirm · esc dismiss",
 	} {
