@@ -57,6 +57,7 @@ For every ADR, check:
 - **Implementation drift:** current code, schemas, generated APIs, runtime resources, deployment config, or client structure contradict the ADR.
 - **Supersession:** superseded ADRs are marked clearly, replacement ADRs reference the old decisions, and the index title makes supersession discoverable when appropriate.
 - **Consequences:** consequences name real tradeoffs, migration costs, compatibility constraints, operational effects, or maintenance burdens.
+- **Durability:** the record contains architectural decisions and meaningful consequences, not code structure, UI presentation, exact copy, test fixtures, or other incidental details that merely match today's implementation.
 - **Public compatibility:** storage, schemas, discovery, API, protocol, and mixed-version implications are explicit when relevant.
 - **Cross-references:** related feature/design records, architecture docs, and user-facing docs cite or align with the ADR where appropriate.
 - **Vocabulary:** terms match the project's glossary, domain model, and current product or architecture naming.
@@ -71,6 +72,8 @@ Classify findings with one of these labels:
 - **Missing Supersession:** a newer ADR or implementation replaced the decision, but the old ADR does not say so.
 - **Weak Decision:** the ADR does not record a concrete choice.
 - **Weak Consequences:** important tradeoffs, compatibility impact, or operational costs are omitted.
+- **Overspecified:** implementation or presentation details obscure the durable
+  architectural decision or create unnecessary documentation maintenance.
 - **Missing Cross-Reference:** related records or docs should cite or align with the ADR.
 - **Index Issue:** `docs/adr/INDEX.md` is missing, mislabeling, or mislinking an ADR.
 - **No Issue:** checked and no material update is needed.

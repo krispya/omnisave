@@ -5,218 +5,132 @@
 
 ## Overview
 
-How a Device's Local Saves get connected to Omnisaves without a separate
-bind step. Tracking ends with a binding pass: games whose saves the server
-has never seen are seeded from the local save, games the server already
-knows are re-attached by content match, and unmatched or ambiguous saves ask
-the user. Manual `bind` remains for corrections. This is the first slice of
-the synchronization flow — seeding builds the client's write path and
-establishes the baseline that sync will later diff against.
+Automatic Save Binding connects a Device's Local Saves to Omnisaves as part of
+tracking. It seeds games the server has never seen, reattaches saves by exact
+content match, and asks only when more than one safe future remains. The result
+is a synchronization baseline that later passes can use without guessing.
 
 ## Behavior
 
-- After tracking completes, every tracked game that has a local save but no
-  binding on this Device goes through the binding pass. Games without a
-  local save are skipped untouched, and the result says that no save is
-  available — unless the server has Omnisaves for them, in which
-  case syncing one down is offered
+- Every tracked game with local save content but no binding goes through the
+  binding pass. Games without local content are left untouched unless an
+  existing Omnisave can be synchronized to the Device
   ([FDR-004](FDR-004-sync-to-device.md)).
-- If the server has no Omnisaves for the game, one is created and seeded:
-  the local save's content becomes its initial revision, and the binding
-  records that revision as the sync baseline. The server names the new
-  Omnisave ("Save N"), the result reads "Save N · synced just now," and it
-  appears in the Dash under that name with no further action.
-- If the server already has Omnisaves for the game, the local save is
-  compared by content against their full revision histories.
-- Matching the Current Revision of exactly one Omnisave rebinds automatically with that
-  revision as the baseline — this Device is simply up to date, and the result
-  reads "Save N · synced just now."
-- Matching an older revision of exactly one Omnisave means the save went
-  stale: it was tracked at some point and play continued on another
-  Device. The user chooses between fast-forwarding — the Current Revision's content
-  replaces the local save and the binding starts there — or forking
-  at the matched revision, keeping the lineage and continuing this
-  playthrough independently. The fork is named for its source and the
-  Device it deconflicts — "Save 1 (Steam Deck)" — because on the poster
-  wall the source's name is the only link the fork's name can carry. A
-  Device with no name requests nothing and the server's " (fork)"
-  suffix applies.
-- A local save matching no revision is an Unmatched Local Save. It offers
-  only "Sync with save" and "Create a new save". Creating seeds and binds a
-  new save from the local content. Syncing opens the list of existing save
-  names; choosing one first preserves the unmatched local content as a new
-  Device-named save, then applies and binds the selected save's Current
-  Revision. There is no ignore choice; leaving either prompt aborts the run
-  without changing anything.
-- If the local save matches more than one Omnisave, the prompt lists the
-  matching save names plus "Create a new save". Choosing a match binds at
-  the matched revision; creating keeps the content as another independent
-  save.
-- Each Local Save binds independently; a game with several local saves can
-  seed several Omnisaves.
-- Untracking and re-tracking a game does not duplicate its saves: the
-  Omnisaves survived untracking, so the pass finds them again and rebinds
-  by content match.
-- The pass only binds against games whose server records were confirmed in
-  the same run; a game whose tracking failed is never seeded.
-- A binding whose Omnisave no longer exists on the server is discarded
-  during the pass. If other Omnisaves for the game survive, the local save
-  falls back to content matching; if none remain, the deletion syncs back —
-  the game is untracked on this Device rather than reseeded, so a deletion
-  in the Dash is never resurrected
+- If the game has no Omnisaves, the local content becomes the initial revision
+  of a new Omnisave and that revision becomes the binding baseline.
+- Otherwise, local content is matched exactly against the full revision history
+  of every Omnisave for the game.
+- One match at the Current Revision rebinds automatically. One match at an older
+  revision requires a choice between adopting current progress and continuing
+  the older progress as a separate Omnisave.
+- A Local Save matching no revision is an Unmatched Local Save. The user can
+  synchronize it with an existing Omnisave or create a new Omnisave from it.
+  Synchronizing first preserves the unmatched local content independently, then
+  applies and binds the selected Omnisave's Current Revision.
+- A Local Save matching several Omnisaves requires the user to choose one of the
+  matches or preserve the content as another independent Omnisave.
+- Interactive binding offers no ignore outcome: tracking expresses an intent to
+  synchronize. Leaving a question aborts without changing the unresolved save.
+- Each Local Save binds independently, so a game with several local saves may
+  seed or bind several Omnisaves.
+- Untracking and later re-tracking does not duplicate content already held by
+  the server; content matching restores the binding.
+- The pass binds only games whose server records were confirmed during that
+  run. A tracking failure cannot seed an Omnisave.
+- If a bound Omnisave was deleted, the stale binding is discarded. Surviving
+  Omnisaves are considered by content match; when none survive, the server
+  deletion wins and the game is untracked on that Device
   ([FDR-002](FDR-002-game-lifecycle.md), decision 10).
 
 ## Design Decisions
 
 ### 1. Binding is automatic; prompting is the exception
 
-**Decision:** Tracking ends with a binding pass that involves the user only
-when content matching cannot decide.
-**Why:** Binding is the step that actually protects a save and the easiest
-one to forget. Tracking already expresses the intent — "Omnisave should
-care about this game" — so requiring a second command to make that
-protection real is ceremony, not consent.
-**Tradeoff:** Server writes now happen as a side effect of tracking; a user
-who only meant to browse selections still creates Omnisaves. Untracking and
-deleting remain available to undo it.
+**Decision:** Tracking includes binding and asks only when content matching
+cannot identify one safe outcome.
+**Why:** Tracking is the user's intent to protect a game. Requiring a second
+routine step would leave saves unprotected through omission rather than choice.
+**Tradeoff:** Tracking may create server history as part of completing that
+intent.
 
-### 2. Zero-save games are seeded without asking
+### 2. A game with no Omnisaves seeds automatically
 
-**Decision:** A tracked game with a local save and no Omnisaves gets one
-created automatically, seeded from the local content, baseline set to the
-seed revision.
-**Why:** With nothing on the server there is nothing to diverge from — the
-case is conflict-free by construction, so asking would be asking permission
-to do the only sensible thing.
-**Tradeoff:** Two Devices tracking the same game near-simultaneously can
-each seed, leaving two Omnisaves. That is legal in the model (separate
-playthroughs), loses nothing, and is visible in the Dash; a server-side
-create-if-empty operation could close the race if it proves annoying.
+**Decision:** Local content seeds the first Omnisave without confirmation.
+**Why:** With no server-side playthrough there is nothing to conflict with.
+**Tradeoff:** Two Devices seeding simultaneously may create two independent
+Omnisaves; both remain valid and visible.
 
-### 3. The server decides whether a game has saves
+### 3. The server determines the available Omnisaves
 
-**Decision:** The pass asks the server for the game's Omnisaves rather than
-consulting anything local.
-**Why:** The server is the only authority
-([ADR-001](../adr/ADR-001-server-authority.md)), and local state may be
-gone precisely when this flow matters (fresh install, wiped Device). It
-also makes re-tracking correct for free: Omnisaves survive untracking
-([FDR-002](FDR-002-game-lifecycle.md)), so a re-tracked game reports
-existing saves and takes the match path instead of seeding a duplicate.
-**Tradeoff:** Binding requires the server to be reachable — acceptable,
-since tracking already does.
+**Decision:** Binding uses the server's current set of Omnisaves rather than a
+local memory of them.
+**Why:** The server is authoritative and local state is disposable
+([ADR-001](../adr/ADR-001-server-authority.md)).
+**Tradeoff:** Binding requires the server to be reachable.
 
-### 4. Matching is exact content equality against full history
+### 4. Matching means exact content equality across full history
 
-**Decision:** A Local Save matches a revision when its file set and content
-are identical. Any revision in an Omnisave's history counts, not just the
-Current Revision.
-**Why:** Artifacts are content-addressed, so equality is trustworthy.
-Matching history rather than only heads means a Device that sat offline —
-or was wiped and re-minted its identity, the acknowledged cost of
-self-identification in [FDR-002](FDR-002-game-lifecycle.md) — still finds
-its lineage instead of falling into the manual prompt. Content matching is
-what makes losing client state recoverable.
-**Tradeoff:** Matching cost grows with history length; fine at self-hosted
-scale. Near-matches (one file differs) get no special treatment and fall
-through to the prompt.
+**Decision:** A Local Save matches only a revision with the same file set and
+content, and historical revisions count as well as the Current Revision.
+**Why:** Exact matching can recover lineage after a Device was offline or lost
+its local state without risking a false attachment.
+**Tradeoff:** Near-matches require a decision, and matching work grows with
+history.
 
-### 5. A stale match asks: fast-forward or fork
+### 5. An older match requires adopting current or separating the playthrough
 
-**Decision:** When the local save equals an out-of-date revision, the pass
-does not silently rebind. The user picks fast-forward — adopt the Current Revision —
-or fork at the matched revision. The prompt shows two labels and no
-explanation: "Jump to current" and "Fork as Save 1 (Steam Deck)", naming
-the save the fork would create — the same pair, worded the same way, as the
-divergence prompt ([FDR-005](FDR-005-save-sync.md), decision 4).
-**Why:** The match proves what happened: this save was tracked once, went
-stale, and play continued on another Device. The two futures are
-incompatible, and both are safe to offer — fast-forwarding discards
-nothing because the local content already exists as the matched revision,
-and playing on from the stale point on the same lineage would only
-guarantee a current revision conflict at the first commit. Asking at bind time, when
-"this device is behind" is visible and explainable, converts that
-inevitable conflict into an informed choice. Forking keeps the lineage:
-the new Omnisave records its origin, so the Dash shows where the
-playthrough split.
-**Tradeoff:** Fast-forward pulls download-and-apply machinery into this
-feature ahead of synchronization proper. The client must download and verify
-the complete Current Revision before moving any local file, then restore the matched local
-snapshot if applying it fails. The replaced content also remains
-recoverable as the older server revision that triggered the choice.
+**Decision:** A save matching an older revision is never advanced silently. The
+user either adopts the Omnisave's Current Revision or forks from the matched
+revision.
+**Why:** Continuing both histories on one lineage would immediately create a
+conflict. Both offered outcomes preserve the older content because the matched
+revision already exists on the server.
+**Tradeoff:** A safe but meaningful choice interrupts an otherwise automatic
+flow.
 
-### 6. Unmatched and ambiguous saves ask; the pass never guesses
+### 6. Unmatched and ambiguous saves are never guessed
 
-**Decision:** Automatic rebinding requires exactly one matching Omnisave.
-An Unmatched Local Save first asks "Sync with save" or "Create a new save";
-syncing then asks which existing save to adopt. Several matches ask which
-matching save to use or whether to create a new one. Neither prompt offers
-an ignore choice.
-**Why:** Binding decides which lineage future revisions extend. A silent
-wrong guess writes new history onto the wrong playthrough — strictly worse
-than one prompt in an otherwise automatic flow. Tracking already says the
-game should synchronize, so an ignore action would leave that intent
-unfulfilled; escape remains the way to abort the run without deciding.
-**Tradeoff:** Forks whose content has not yet diverged always prompt, since
-the same save matches both lineages. An unmatched save cannot remain tracked
-and unbound through an interactive run, though a headless pass still reports
-that it needs attention.
+**Decision:** Automatic binding requires exactly one proven lineage. Unmatched
+content may adopt an existing Omnisave only after being preserved, while
+ambiguous content requires choosing a match or creating another Omnisave.
+**Why:** A wrong guess would extend the wrong playthrough. Preserving first
+keeps synchronization lossless without adding an ignore state that contradicts
+tracking.
+**Tradeoff:** Some saves require interaction before synchronization can begin.
 
-### 7. No local save, no Omnisave
+### 7. A game without local content does not seed an empty Omnisave
 
-**Decision:** Tracked games without a local save are skipped — no empty
-Omnisave, no binding — and reported as having no save available.
-**Why:** There is nothing to protect yet, and an Omnisave with no revisions
-is indistinguishable from lost data. A later pass picks the game up once
-it has been played.
-**Tradeoff:** A tracked-but-unplayed game stays unprotected until the next
-pass after its first save exists — the same exposure window
-[FDR-002](FDR-002-game-lifecycle.md) accepts for untracked games.
+**Decision:** No local content means no new Omnisave and no binding.
+**Why:** There is nothing to protect, and an empty Omnisave cannot distinguish
+an unplayed game from missing data.
+**Tradeoff:** Protection begins on a later pass after the game creates a save.
 
-### 8. Every Omnisave carries a persisted display name
+### 8. Every Omnisave has a server-owned display name
 
-**Decision:** The server guarantees a display name at creation: an unnamed
-create gets "Save N", numbered past the game's highest surviving "Save N";
-an unnamed fork inherits its source's name with a " (fork)" suffix; renaming
-to an empty name is rejected. A requested name another of the game's saves
-already carries is numbered — "Save 1 (Steam Deck)", then "Save 1 (Steam
-Deck) 2" — so repeat divergences from the same Device stay distinguishable
-on the poster wall.
-Records that predate the rule were backfilled in creation order.
-**Why:** Names are how saves are told apart everywhere they surface — the
-Dash poster wall, the track report's "seeded as" line, the bind prompt.
-Client-side fallbacks invented a name per surface and could disagree;
-assigning it once, at the source of truth
-([ADR-001](../adr/ADR-001-server-authority.md)), makes every surface show
-the same identity.
-**Tradeoff:** Default names are generic — "Save 2" says nothing about the
-playthrough — and a deleted save's number can be reissued later, so a name
-is not a stable identifier; the ID remains the only permanent handle.
+**Decision:** The server assigns a non-empty, game-unique display name when an
+Omnisave is created or forked. Fork names retain enough source and Device
+context to distinguish independent playthroughs.
+**Why:** A name assigned once by the authority remains consistent everywhere
+the save appears.
+**Tradeoff:** Generated names are descriptive labels, not stable identifiers,
+and may be reused after deletion.
 
-### 9. Syncing an unmatched save adopts the selected save immediately
+### 9. Adopting an existing Omnisave resolves the known conflict immediately
 
-**Decision:** "Sync with save" preserves the unmatched local content as a
-new save, then applies the selected save's Current Revision and records it
-as the sync baseline in the same run. It never creates a baseline-less
-binding or raises a later divergence question.
-**Why:** No revision matches, so the conflict is already known before the
-user chooses a save. Asking which save to sync with and later asking whether
-to sync with it repeats one decision. Preserving first retains the product's
-lossless guarantee while making the label mean exactly what it says.
-**Tradeoff:** Syncing an unmatched save creates a preservation save the user
-may later delete. This is visible history rather than silent data loss.
+**Decision:** When unmatched local content adopts an existing Omnisave, the
+local content is preserved first and the selected Current Revision is applied
+in the same run.
+**Why:** The conflict is already known, so deferring it to a second divergence
+question would repeat the decision.
+**Tradeoff:** Preservation creates another Omnisave that the user may later
+choose to delete.
 
 ## Related
 
-- **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — the server
-  judges creation and match claims; clients originate content but never
-  arbitrate it.
-- **FDRs:** [FDR-001](FDR-001-game-identity-resolution.md) — track-time
-  resolution that puts the game in the Library before any binding;
-  [FDR-002](FDR-002-game-lifecycle.md) — the detect → track → bind
-  lifecycle this automates, Device self-identification, and Omnisave
-  survival across untracking; [FDR-004](FDR-004-sync-to-device.md) — the
-  read counterpart: offering server saves to a Device that has none;
-  [FDR-005](FDR-005-save-sync.md) — ongoing sync, which re-runs this
-  pass's automatic half and supplies the lossless apply machinery used when
-  an unmatched Local Save adopts an existing save.
+- **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — the server judges
+  creation and matching claims while clients originate content.
+- **FDRs:** [FDR-001](FDR-001-game-identity-resolution.md) — game resolution
+  precedes binding; [FDR-002](FDR-002-game-lifecycle.md) — the lifecycle binding
+  completes; [FDR-004](FDR-004-sync-to-device.md) — placing an existing save on
+  a Device with no local content; [FDR-005](FDR-005-save-sync.md) — ongoing
+  synchronization after a baseline exists.

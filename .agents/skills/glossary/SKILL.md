@@ -12,11 +12,13 @@ The canonical vocabulary for the app. Lives at `docs/GLOSSARY.md`, organised int
 - A **reference** for what a word means in the app's context — internal jargon, product nouns, renamed concepts, acronyms.
 - A **naming surface**: when there's a thing-without-a-name, we add it here first. The glossary leads, the code follows. If a file or component disagrees with the glossary, the file is what should rename.
 - One line per entry, occasionally one short paragraph. Longer concepts link to the FDR/ADR/rules file that owns them.
+- A durable vocabulary contract. Definitions should survive UI rearrangement and code reorganization; update an entry only when the term or its meaning changes.
 
 ## What the Glossary Is NOT
 
 - **NOT** a tutorial. Don't explain *how* something works — FDRs, ADRs, and the relevant `docs/architecture/` inventory are for that.
 - **NOT** an API reference. No function signatures, no transport-specific API types, no proto fields.
+- **NOT** an implementation index or UI specification. Omit package and file paths, storage filenames, command inventories, exact copy, control ordering, layout mechanics, and temporary code-migration notes.
 - **NOT** a dictionary of standard tech terms. Define terms in the context of the app. Don't define "PostgreSQL" or "WebSocket".
 - **NOT** a changelog. When a term is renamed, rewrite the entry. Don't append "previously known as…" unless old names still appear in stable identifiers (stream names, KV keys, config keys).
 
@@ -89,6 +91,7 @@ When invoked without arguments:
    - **Dead links** — references to renamed or removed files.
    - **Misplaced entries** — terms that belong in a different section per the rule-of-thumb.
    - **Missing terms** — top candidates worth adding, with a section + one-line draft for each.
+   - **Overspecified entries** — definitions containing presentation or implementation details that are not part of the term's durable meaning.
 5. **Propose-only**: don't apply edits without user approval.
 
 ## Audit Heuristics
@@ -110,6 +113,6 @@ When *not* to add:
 ## Workflow Notes
 
 - **Before any edits**: read the existing `docs/GLOSSARY.md`. The file is short enough to load entirely.
-- **Cross-link aggressively**: a glossary entry is most useful as a jumping-off point. If there's an FDR or ADR for the term, link it.
+- **Cross-link selectively**: link the FDR or ADR that owns a term's durable meaning, but do not add code paths or incidental implementation references.
 - **One entry per concept**, even with multiple names. Pick the canonical name as the heading; mention aliases in the body if useful (e.g. `**Server** — Top-level deployment. Formerly called *Instance* in the codebase.`).
-- **Glossary > code on naming**: when an entry contradicts a component or file name in the codebase, note "(pending rename)" in the entry. The follow-up is to rename the code, not the entry.
+- **Glossary > code on naming**: when code still uses an old name, report that discrepancy during the audit and rename the code separately. Do not preserve a temporary migration note in the canonical definition.
