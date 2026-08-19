@@ -326,9 +326,9 @@ func divergedSnapshot() ReportSnapshot {
 	return ReportSnapshot{Games: []GameStatus{
 		{Glyph: "✓", Title: "Slay the Spire 2", SyncedWith: "Save 1", SyncedAt: time.Now()},
 		{
-			Glyph:   "○",
-			Title:   "Project Zomboid",
-			Events:  []string{"Save diverged from Save 2, run omnisave track to resolve"},
+			Glyph:  "○",
+			Title:  "Project Zomboid",
+			Events: []string{"Save diverged from Save 2, run omnisave track to resolve"},
 			Pending: &PendingDecision{
 				Kind: PendingDiverged, OmnisaveName: "Save 2",
 				ForkName: "Save 2 (Steam Deck)",

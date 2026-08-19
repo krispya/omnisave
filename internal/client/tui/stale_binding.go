@@ -2,7 +2,6 @@ package tui
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/charmbracelet/huh"
 )
@@ -47,7 +46,7 @@ func PromptStaleBinding(question StaleQuestion) (StaleBindingChoice, error) {
 
 func staleBindingForm(question StaleQuestion, choice *StaleBindingChoice) *huh.Form {
 	prompt := huh.NewSelect[StaleBindingChoice]().
-		Title(fmt.Sprintf("%s is at a different point on this device and the server", question.OmnisaveName)).
+		Title(DivergenceTitle(question.OmnisaveName)).
 		Options(
 			huh.NewOption("Jump to current", StaleBindingJump),
 			huh.NewOption(ForkLabel(question.ForkName), StaleBindingFork),

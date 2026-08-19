@@ -387,7 +387,7 @@ var questionStyle = lipgloss.NewStyle().
 func (q watchQuestion) view() string {
 	var body strings.Builder
 	body.WriteString(nameStyle.Render(q.title) + "\n")
-	body.WriteString(mutedStyle.Render(q.omnisave+" diverges between this device and the server") + "\n\n")
+	body.WriteString(mutedStyle.Render(DivergenceTitle(q.omnisave)) + "\n\n")
 	for index, option := range q.options {
 		if index > 0 {
 			body.WriteString("\n")

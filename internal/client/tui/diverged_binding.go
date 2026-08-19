@@ -2,7 +2,6 @@ package tui
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/charmbracelet/huh"
 )
@@ -49,6 +48,13 @@ type DivergedQuestion struct {
 type DivergedOption struct {
 	Label  string
 	Choice DivergedBindingChoice
+}
+
+// DivergenceTitle says what a save that is not the same on both sides has
+// done. The stale and diverged prompts and the watch modal all open on it,
+// so they share the sentence rather than each phrasing it their own way.
+func DivergenceTitle(omnisaveName string) string {
+	return omnisaveName + " diverges between this device and the server"
 }
 
 // ForkLabel names a fork answer for the save it would create. The stale and
@@ -101,7 +107,7 @@ func divergedBindingForm(question DivergedQuestion, choice *DivergedBindingChoic
 		options = append(options, huh.NewOption(option.Label, option.Choice))
 	}
 	prompt := huh.NewSelect[DivergedBindingChoice]().
-		Title(fmt.Sprintf("%s diverges between this device and the server", question.OmnisaveName)).
+		Title(DivergenceTitle(question.OmnisaveName)).
 		Options(options...).
 		Value(choice)
 	form := huh.NewForm(huh.NewGroup(prompt).Title(question.GameTitle))
