@@ -188,10 +188,14 @@ vocabularies, so every Device reads it the same way forever
 **Tradeoff:** Games whose rules name several distinct locations do not
 translate and still split per OS. Translation trusts relative paths to
 coincide beneath the location; rules that anchor at different depths per OS
-simply never match and fall back to strict. And a manifest refresh that
-rewords a template changes that spelling's identity, which strands
-translation for revisions minted under the old wording until content is
-committed under the new one.
+simply never match and fall back to strict. A location shaped like one save
+file — or one that does not exist yet and cannot prove its shape — accepts a
+translated single file only under its own name, refusing rather than
+guessing a placement the game would never read; rules that pair one OS's
+file with another OS's folder of several files remain undetectable and are
+the residual risk. And a manifest refresh that rewords a template changes
+that spelling's identity, which strands translation for revisions minted
+under the old wording until content is committed under the new one.
 
 ## Related
 
