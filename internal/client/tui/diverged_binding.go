@@ -67,7 +67,7 @@ type DivergedOption struct {
 // already say which side wins, so each description only adds what happens
 // to the local progress.
 func DivergedOptions(question DivergedQuestion) []DivergedOption {
-	forkAs := "a new playthrough"
+	forkAs := "a new save"
 	if question.ForkName != "" {
 		forkAs = question.ForkName
 	}

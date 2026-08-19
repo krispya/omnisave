@@ -38,7 +38,7 @@ func TestDivergedBindingPromptOffersTwoLosslessChoices(t *testing.T) {
 // keep, and without a baseline the kept progress is a save, not a branch.
 func TestDivergedOptionsPromiseWhatEachShapeWouldDo(t *testing.T) {
 	nameless := DivergedOptions(DivergedQuestion{OmnisaveName: "Save 1", Keep: KeepAsBranch})
-	if nameless[0].Description != "continue as a new playthrough" {
+	if nameless[0].Description != "continue as a new save" {
 		t.Fatalf("expected a generic fork promise without a device name, got %q", nameless[0].Description)
 	}
 
