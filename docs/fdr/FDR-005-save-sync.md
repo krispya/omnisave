@@ -17,7 +17,9 @@ Device watches its saves.
   sync and nothing changes.
 - When only local content moved, it commits as a new revision and becomes
   current. When only Current Revision moved, it is applied locally and becomes
-  the new baseline.
+  the new baseline. A commit onto a lineage whose location is spelled by
+  another OS's rule keeps the lineage's spelling, so shared history stays in
+  one vocabulary ([FDR-003](FDR-003-automatic-save-binding.md), decision 11).
 - When both moved, ancestry determines whether the histories truly diverged. A
   current revision descending from the baseline represents progress this Device
   has not seen and requires a decision. A current revision at an ancestor or
