@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/krisbaumgartner/omnisave/internal/client/running"
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile"
@@ -105,20 +107,7 @@ func (s *Scanner) scanAdapter(ctx context.Context, adapter target.Adapter) ([]Ta
 			if err != nil {
 				return nil, fmt.Errorf("discover save locations for %s: %w", game.ID, err)
 			}
-			// One representation per game: a save the adapter itself found —
-			// Steam Cloud's mirror — carries the device-neutral layout every
-			// other Device shares, so profile rules stand in only for games
-			// whose adapter found no save content. Discovering both would
-			// track the same progress as two saves whose lineages can never
-			// converge (FDR-003, decision 10).
-			adapterHasContent := false
-			for _, save := range saves {
-				if len(save.Files) > 0 {
-					adapterHasContent = true
-					break
-				}
-			}
-			if s.profiles != nil && !adapterHasContent {
+			if s.profiles != nil {
 				profile, err := s.profiles.Find(ctx, game.Identity)
 				if err != nil && !errors.Is(err, saveprofile.ErrNotFound) {
 					return nil, fmt.Errorf("find save profile for %s: %w", game.ID, err)
@@ -128,12 +117,25 @@ func (s *Scanner) scanAdapter(ctx context.Context, adapter target.Adapter) ([]Ta
 					if err != nil {
 						return nil, fmt.Errorf("resolve save profile for %s: %w", game.ID, err)
 					}
-					saves = append(saves, resolved...)
-					resolvedDestinations, err := saveprofile.ResolveDestinations(game, *profile)
-					if err != nil {
-						return nil, fmt.Errorf("resolve save profile locations for %s: %w", game.ID, err)
+					// One representation per game: a save the adapter itself
+					// found — Steam Cloud's mirror — carries the device-neutral
+					// layout every Device shares, so the profile stands aside
+					// when that save demonstrably holds the same save family:
+					// files by the same names the profile rules locate.
+					// Tracking both would sync the same progress as two saves
+					// whose lineages can never converge (FDR-003, decision 10).
+					// Mere existence is not enough — a mirror carrying only
+					// auxiliary files, or a subset synced for another OS, would
+					// otherwise silently displace the save that holds the real
+					// progress.
+					if !adapterCoversProfile(saves, resolved) {
+						saves = append(saves, resolved...)
+						resolvedDestinations, err := saveprofile.ResolveDestinations(game, *profile)
+						if err != nil {
+							return nil, fmt.Errorf("resolve save profile locations for %s: %w", game.ID, err)
+						}
+						destinations = append(destinations, resolvedDestinations...)
 					}
-					destinations = append(destinations, resolvedDestinations...)
 				}
 			}
 			scan.Games = append(scan.Games, GameScan{Game: game, Saves: saves, Destinations: destinations})
@@ -147,6 +149,35 @@ func progress(report func(ScanProgress), event ScanProgress) {
 	if report != nil {
 		report(event)
 	}
+}
+
+// adapterCoversProfile reports whether the adapter's own saves already carry
+// the save family the profile rules resolved: some profile file exists in an
+// adapter save under the same name. Names, not content, because the two
+// representations hold the same family at different moments — a mirror can
+// trail the native folder by a session — and because deciding must stay as
+// cheap as the scan it runs in. A profile that resolved no files leaves
+// nothing the adapter could be failing to cover.
+func adapterCoversProfile(adapterSaves, profileSaves []target.Save) bool {
+	names := make(map[string]bool)
+	for _, save := range adapterSaves {
+		for _, file := range save.Files {
+			names[strings.ToLower(filepath.Base(file.Path))] = true
+		}
+	}
+	if len(names) == 0 {
+		return false
+	}
+	profileHasFiles := false
+	for _, save := range profileSaves {
+		for _, file := range save.Files {
+			profileHasFiles = true
+			if names[strings.ToLower(filepath.Base(file.Path))] {
+				return true
+			}
+		}
+	}
+	return !profileHasFiles
 }
 
 // UnlockedAchievements asks the save's own adapter which achievements its

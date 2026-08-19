@@ -41,10 +41,11 @@ sorted order that actually carries save rules, so a stub page never shadows
 the entry that locates saves. Rules over Steam's `userdata` directories are
 dropped however the manifest spells them: those are Steam Cloud's, already
 discovered and attributed to an account by the steam adapter, and a profile
-rule over them would report every Cloud save twice. For the same reason
-profiles are consulted per game only when the adapter found no save content
-of its own, so a Cloud game's native folder is not rediscovered as a second
-save in an incompatible layout
+rule over them would report every Cloud save twice. For the same reason a
+game's profile saves stand aside when the adapter's own save already holds
+the same save family — files by the names the rules locate — so a Cloud
+game's native folder is not rediscovered as a competing layout, while a
+mirror holding only auxiliary content suppresses nothing
 ([FDR-003](../fdr/FDR-003-automatic-save-binding.md), decision 10). Only absolute expanded
 paths are searched or offered as destinations, which discards the manifest's
 occasional prose and relative entries. Glob matching is case-insensitive,

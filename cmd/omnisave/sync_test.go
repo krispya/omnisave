@@ -966,8 +966,8 @@ func TestJumpToAForeignLayoutCurrentFailsBeforePreserving(t *testing.T) {
 }
 
 // A jump that fails after preserving — an outage the preservation itself
-// survived — leaves that preservation behind. The next answer finds it by
-// content and continues from it instead of minting a duplicate.
+// survived — records what it created. The next answer resumes that exact
+// preservation instead of minting a duplicate.
 func TestARepeatedJumpAnswerReusesTheEarlierPreservation(t *testing.T) {
 	var failDownloads atomic.Bool
 	server := newInterceptedServer(t, func(response http.ResponseWriter, request *http.Request) bool {
@@ -1090,6 +1090,135 @@ func TestAFailedForkPreservationLeavesNoEmptyFork(t *testing.T) {
 	forked, _ := fixture.state.BindingFor(local)
 	if forked.OmnisaveID == bound.OmnisaveID || forked.LastSyncedRevisionID == nil {
 		t.Fatalf("expected the binding to continue on the fork, got %+v", forked)
+	}
+}
+
+// An outage can take down the fork's push and the cleanup that would remove
+// the empty fork. The answer records the fork instead, and the retry pushes
+// onto that same fork rather than stacking another beside it.
+func TestAForkOutageThatAlsoBlocksCleanupResumesTheSameFork(t *testing.T) {
+	var broken atomic.Bool
+	server := newInterceptedServer(t, func(response http.ResponseWriter, request *http.Request) bool {
+		blocked := (request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/revisions")) ||
+			request.Method == http.MethodDelete
+		if broken.Load() && blocked {
+			http.Error(response, "unavailable", http.StatusInternalServerError)
+			return true
+		}
+		return false
+	})
+	fixture := newSyncFixture(t, "first-progress")
+	if outcome := syncOnce(t, server, &fixture, nil, 0); outcome.Seeded != 1 {
+		t.Fatalf("expected the first pass to seed, got %+v", outcome)
+	}
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	bound, _ := fixture.state.BindingFor(local)
+	otherDeviceCommit(t, server, bound.OmnisaveID, "deck-progress")
+	if err := os.WriteFile(fixture.localPath, []byte("local-divergence"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixture.state.Device.Name = "Steam Deck"
+	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
+	prompts.diverged = func(tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
+		return tui.DivergedBindingFork, nil
+	}
+
+	broken.Store(true)
+	outcome := syncOnce(t, server, &fixture, prompts, 0)
+	if outcome.Failed != 1 || outcome.Forked != 0 {
+		t.Fatalf("expected the fork answer to fail, got %+v", outcome)
+	}
+	saves, err := server.ListOmnisaves(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 2 {
+		t.Fatalf("expected the unremovable empty fork to stand, got %+v", saves)
+	}
+	var emptyFork omnisave.Omnisave
+	for _, save := range saves {
+		if save.ID != bound.OmnisaveID {
+			emptyFork = save
+		}
+	}
+	if recorded, ok := fixture.state.PendingPreservationFor(local); !ok || recorded != emptyFork.ID {
+		t.Fatalf("expected the empty fork recorded for resumption, got %q %v", recorded, ok)
+	}
+
+	broken.Store(false)
+	outcome = syncOnce(t, server, &fixture, prompts, 0)
+	if outcome.Forked != 1 || outcome.Failed != 0 {
+		t.Fatalf("expected the retried fork to succeed, got %+v", outcome)
+	}
+	saves, err = server.ListOmnisaves(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 2 {
+		t.Fatalf("expected the retry to resume the recorded fork, got %+v", saves)
+	}
+	forked, _ := fixture.state.BindingFor(local)
+	if forked.OmnisaveID != emptyFork.ID || forked.LastSyncedRevisionID == nil {
+		t.Fatalf("expected the binding to continue on the resumed fork, got %+v", forked)
+	}
+	if _, ok := fixture.state.PendingPreservationFor(local); ok {
+		t.Fatal("expected the settled answer to clear the recorded preservation")
+	}
+}
+
+// Another lineage holding the same bytes is not this Device's preservation.
+// A fork answer must never adopt it — only a preservation the answer itself
+// recorded — because the twin is an independent playthrough whose future
+// updates would otherwise cross into this Device's line.
+func TestAForkAnswerNeverAdoptsATwinLineage(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "server-content")
+	if outcome := syncOnce(t, server, &fixture, nil, 0); outcome.Seeded != 1 {
+		t.Fatalf("expected the first pass to seed, got %+v", outcome)
+	}
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	bound, _ := fixture.state.BindingFor(local)
+	if err := os.WriteFile(fixture.localPath, []byte("local-progress"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Rebinding drops the baseline: unmatched content, diverged from the start.
+	if err := fixture.state.Bind(local, bound.OmnisaveID); err != nil {
+		t.Fatal(err)
+	}
+	// An independent lineage that happens to hold the same bytes right now.
+	serverGameID := fixture.state.Games["local-game-1"].ServerGameID
+	twinPath := filepath.Join(t.TempDir(), "Chrono Trigger.srm")
+	if err := os.WriteFile(twinPath, []byte("local-progress"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	twinSave := target.Save{
+		ID: "twin-save", TargetID: "twin-target", GameID: "twin-game", Kind: "battery",
+		Files: []target.File{{Path: twinPath, LocationID: "battery", RelativePath: "Chrono Trigger.srm"}},
+	}
+	twin, _, err := binding.Seed(context.Background(), server, serverGameID, twinSave, "Twin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fixture.state.Device.Name = "Steam Deck"
+	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
+	prompts.diverged = func(tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
+		return tui.DivergedBindingFork, nil
+	}
+	outcome := syncOnce(t, server, &fixture, prompts, 0)
+	if outcome.Forked != 1 || outcome.Failed != 0 {
+		t.Fatalf("expected the fork to create its own preservation, got %+v", outcome)
+	}
+	forked, _ := fixture.state.BindingFor(local)
+	if forked.OmnisaveID == twin.ID {
+		t.Fatal("expected the fork to leave the twin lineage alone")
+	}
+	saves, err := server.ListOmnisaves(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 3 {
+		t.Fatalf("expected the twin untouched beside a fresh preservation, got %+v", saves)
 	}
 }
 

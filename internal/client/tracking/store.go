@@ -122,6 +122,13 @@ type State struct {
 	Server   Server          `json:"server"`
 	Games    map[string]Game `json:"games"`
 	Bindings []Binding       `json:"bindings"`
+	// PendingPreservations remembers, per local save, the Omnisave a
+	// divergence answer created to preserve local progress before the answer
+	// failed partway. The next answer resumes that exact Omnisave instead of
+	// minting another. It must be a recorded identity: content equality alone
+	// cannot tell this Device's own preservation from an independent lineage
+	// that happens to hold the same bytes for a moment.
+	PendingPreservations map[string]string `json:"pending_preservations,omitempty"`
 }
 
 // EnsureDevice mints the device identity on first use and defaults its name.
@@ -333,11 +340,42 @@ func (s *State) Bind(local LocalSave, omnisaveID string) error {
 	for index := range s.Bindings {
 		if sameLocalSave(s.Bindings[index], binding) {
 			s.Bindings[index] = binding
+			s.ClearPendingPreservation(local)
 			return nil
 		}
 	}
 	s.Bindings = append(s.Bindings, binding)
+	s.ClearPendingPreservation(local)
 	return nil
+}
+
+// RecordPendingPreservation remembers the Omnisave a failed answer created
+// for this local save's unsynced progress, so the next answer can resume it.
+func (s *State) RecordPendingPreservation(local LocalSave, omnisaveID string) {
+	if omnisaveID == "" {
+		return
+	}
+	if s.PendingPreservations == nil {
+		s.PendingPreservations = make(map[string]string)
+	}
+	s.PendingPreservations[pendingPreservationKey(local)] = omnisaveID
+}
+
+// PendingPreservationFor reports the preservation a failed answer recorded.
+func (s State) PendingPreservationFor(local LocalSave) (string, bool) {
+	id, ok := s.PendingPreservations[pendingPreservationKey(local)]
+	return id, ok
+}
+
+// ClearPendingPreservation forgets a recorded preservation. Binding the save
+// clears it implicitly: a settled binding means the story the record was
+// keeping alive has ended.
+func (s *State) ClearPendingPreservation(local LocalSave) {
+	delete(s.PendingPreservations, pendingPreservationKey(local))
+}
+
+func pendingPreservationKey(local LocalSave) string {
+	return localSaveKey(Binding{Adapter: local.Adapter, TargetID: local.TargetID, LocalSaveID: local.ID})
 }
 
 // Unbind removes any mapping for a discovered local save.
@@ -377,6 +415,7 @@ func (s *State) RecordSynced(local LocalSave, omnisaveID, revisionID string) err
 			now := time.Now().UTC()
 			s.Bindings[index].LastSyncedRevisionID = &revisionID
 			s.Bindings[index].LastSyncedAt = &now
+			s.ClearPendingPreservation(local)
 			// A sync just moved what is on disk, or what current means, and
 			// the old summary described neither. Dropping it costs the next
 			// pass one read of this save and keeps a stale summary from ever

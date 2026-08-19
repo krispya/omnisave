@@ -17,9 +17,11 @@ is a synchronization baseline that later passes can use without guessing.
   existing Omnisave can be synchronized to the Device
   ([FDR-004](FDR-004-sync-to-device.md)).
 - A game has one save representation per Device: a save its adapter itself
-  discovered wins, and community save-location rules stand in only for games
-  whose adapter found no save content. One game therefore never tracks two
-  Local Saves holding the same progress in different layouts (decision 10).
+  discovered wins when it demonstrably holds the same save family the
+  community save-location rules locate, so one game does not track the same
+  progress twice in layouts that can never converge. An adapter save sharing
+  nothing with the profile's files elects nothing, and both representations
+  stay tracked (decision 10).
 - If the game has no Omnisaves, the local content becomes the initial revision
   of a new Omnisave and that revision becomes the binding baseline.
 - Otherwise, local content is matched exactly against the full revision history
@@ -131,30 +133,36 @@ Revision does not fit the save's layout — is refused before anything is
 preserved.
 **Why:** The conflict is already known, so deferring it to a second divergence
 question would repeat the decision. Checking applicability first means a
-failed answer leaves no half-taken state behind, and content that was
-preserved before an interruption is found by matching on a later pass rather
-than preserved again.
+failed answer leaves no half-taken state behind; an answer that fails after
+preserving records what it created, and a later pass recognizes that content
+as already safe rather than preserving it again.
 **Tradeoff:** Preservation creates another Omnisave that the user may later
 choose to delete.
 
 ### 10. One save representation per game per Device
 
 **Decision:** A Device tracks one representation of a game's save. A save the
-game's adapter discovered — Steam Cloud's mirror — is that representation,
-and community save-location rules stand in only for games whose adapter found
-no save content.
+game's adapter discovered — Steam Cloud's mirror — is that representation
+when it demonstrably holds the save family the community rules locate: files
+under the same names the profile's own resolution finds. A mirror sharing no
+names with the profile's files is treated as auxiliary content and elects
+nothing; both representations stay tracked.
 **Why:** A Steam Cloud game holds the same progress twice on one machine: the
 game's native folder and the mirror Steam replicates between Devices. The two
 spell their content in different layouts, so a lineage built from one can
 never be adopted by the other, and discovering both invites binding them into
 exactly that impossibility while storing every save twice. The mirror wins
 because its layout is identical on every Device and OS, which is what lets a
-Steam Deck and a desktop share one lineage.
-**Tradeoff:** The native folder's extras — backup twins, replays — go
-unprotected for Cloud games, and a Device where Steam Cloud is disabled for a
-game keeps synchronizing a mirror that no longer moves. Election is per
-Device and evidence-based, so a game changes representation only when what
-the adapter can discover changes.
+Steam Deck and a desktop share one lineage. Mere existence is not evidence:
+a mirror can carry only settings, or a subset synced for another OS, and
+electing it on presence alone would silently displace the save that holds the
+real progress.
+**Tradeoff:** Shared names corroborate the family, not completeness — a
+mirror carrying the right names but a partial file set is still elected, and
+the native folder's extras (backup twins, replays) go unprotected for Cloud
+games. A Device where Steam Cloud is disabled for a game keeps synchronizing
+a mirror that no longer moves. Election is per Device and evidence-based, so
+a game changes representation only when what discovery can see changes.
 
 ## Related
 

@@ -104,14 +104,18 @@ or rejoin the existing Omnisave at current. Rejoining first preserves local
 progress as a branch of the baseline; a baseline-less save is preserved
 independently because it has no node to branch from. Rejoining is refused
 before anything is preserved when the Current Revision cannot be applied into
-the Local Save's layout, and progress an earlier answer already preserved —
-in the lineage's own history or in a sibling Omnisave — is found by content
-and continued from rather than preserved again.
+the Local Save's layout. An answer that fails after preserving records the
+preservation it created, and the next answer continues that exact Omnisave —
+binding it, verifying against it, or completing its unfinished push — instead
+of minting another.
 **Why:** Both histories contain real progress. The choice is about whether they
 remain independently synchronized, not which content should be discarded. An
 answer that cannot finish must cost nothing, and repeating an answer that
 failed partway must converge on one preservation instead of stacking one per
-attempt.
+attempt. The record is the only proof of ownership honored: content equality
+cannot tell this Device's own preservation from an independent lineage that
+briefly holds the same bytes, and adopting such a twin would cross two
+playthroughs.
 **Tradeoff:** Preserved branches and forks remain until deliberately pruned, and
 two Devices that keep progressing independently may diverge again. A binding
 whose lineage lives in another layout can only fork; the one-representation
