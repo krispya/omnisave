@@ -234,3 +234,41 @@ func TestUnbindRemovesTheMappingSoTheSaveCanBindFresh(t *testing.T) {
 		t.Fatalf("expected a fresh binding after unbind, got %+v", state.Bindings)
 	}
 }
+
+// A recorded preservation outlives the failed answer that made it and ends
+// with the binding that settles the save's story — however it settles.
+func TestAPendingPreservationSurvivesUntilTheSaveBinds(t *testing.T) {
+	state := tracking.NewState()
+	local := tracking.LocalSave{
+		ID:       "steam:game:cloud:account",
+		Adapter:  "steam",
+		TargetID: "steam:installer",
+		GameID:   "steam:game",
+	}
+	if _, ok := state.PendingPreservationFor(local); ok {
+		t.Fatal("expected no recorded preservation to begin with")
+	}
+	state.RecordPendingPreservation(local, "preserved-1")
+	if recorded, ok := state.PendingPreservationFor(local); !ok || recorded != "preserved-1" {
+		t.Fatalf("expected the preservation recorded, got %q %v", recorded, ok)
+	}
+	other := local
+	other.ID = "steam:game:profile:rules"
+	if _, ok := state.PendingPreservationFor(other); ok {
+		t.Fatal("expected the record to belong to one local save alone")
+	}
+	if err := state.Bind(local, "save-a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := state.PendingPreservationFor(local); ok {
+		t.Fatal("expected binding to clear the recorded preservation")
+	}
+
+	state.RecordPendingPreservation(local, "preserved-2")
+	if err := state.RecordSynced(local, "save-a", "revision-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := state.PendingPreservationFor(local); ok {
+		t.Fatal("expected a settled sync to clear the recorded preservation")
+	}
+}

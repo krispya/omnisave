@@ -298,6 +298,33 @@ func Materialize(ctx context.Context, source ArtifactSource, destination target.
 	}, nil
 }
 
+// CanApply reports whether current maps into the local save's layout: every
+// canonical path must resolve under a location root this save carries. It
+// validates layout only and does not inspect or change the filesystem, so a
+// flow that ends in ApplyCurrent can refuse an impossible adoption before
+// spending a preservation or a prompt on it.
+func CanApply(save target.Save, current omnisave.Revision) error {
+	if current.ID == "" || len(current.Files) == 0 {
+		return fmt.Errorf("apply needs a non-empty current revision")
+	}
+	layout, err := describeLocalLayout(save)
+	if err != nil {
+		return err
+	}
+	targets := make(map[string]bool, len(current.Files))
+	for _, file := range current.Files {
+		targetPath, _, err := layout.pathFor(file.Path)
+		if err != nil {
+			return err
+		}
+		if targets[targetPath] {
+			return fmt.Errorf("current revision has duplicate local paths")
+		}
+		targets[targetPath] = true
+	}
+	return nil
+}
+
 // CanMaterialize reports whether one current maps into one native destination.
 // It validates layout only and does not inspect or change the filesystem.
 func CanMaterialize(destination target.SaveDestination, current omnisave.Revision) error {
