@@ -16,6 +16,12 @@ is a synchronization baseline that later passes can use without guessing.
   binding pass. Games without local content are left untouched unless an
   existing Omnisave can be synchronized to the Device
   ([FDR-004](FDR-004-sync-to-device.md)).
+- A game has one save representation per Device: a save its adapter itself
+  discovered wins when it demonstrably holds the same save family the
+  community save-location rules locate, so one game does not track the same
+  progress twice in layouts that can never converge. An adapter save sharing
+  nothing with the profile's files elects nothing, and both representations
+  stay tracked (decision 10).
 - If the game has no Omnisaves, the local content becomes the initial revision
   of a new Omnisave and that revision becomes the binding baseline.
 - Otherwise, local content is matched exactly against the full revision history
@@ -26,7 +32,10 @@ is a synchronization baseline that later passes can use without guessing.
 - A Local Save matching no revision is an Unmatched Local Save. The user can
   synchronize it with an existing Omnisave or create a new Omnisave from it.
   Synchronizing first preserves the unmatched local content independently, then
-  applies and binds the selected Omnisave's Current Revision.
+  applies and binds the selected Omnisave's Current Revision. Only Omnisaves
+  whose Current Revision can be applied into this save's layout are offered;
+  when none qualify and nothing matches, creating a new Omnisave is the one
+  safe outcome left and is taken without a question.
 - A Local Save matching several Omnisaves requires the user to choose one of the
   matches or preserve the content as another independent Omnisave.
 - Interactive binding offers no ignore outcome: tracking expresses an intent to
@@ -119,11 +128,41 @@ and may be reused after deletion.
 
 **Decision:** When unmatched local content adopts an existing Omnisave, the
 local content is preserved first and the selected Current Revision is applied
-in the same run.
+in the same run. An adoption that cannot finish — the selected Current
+Revision does not fit the save's layout — is refused before anything is
+preserved.
 **Why:** The conflict is already known, so deferring it to a second divergence
-question would repeat the decision.
+question would repeat the decision. Checking applicability first means a
+failed answer leaves no half-taken state behind; an answer that fails after
+preserving records what it created, and a later pass recognizes that content
+as already safe rather than preserving it again.
 **Tradeoff:** Preservation creates another Omnisave that the user may later
 choose to delete.
+
+### 10. One save representation per game per Device
+
+**Decision:** A Device tracks one representation of a game's save. A save the
+game's adapter discovered — Steam Cloud's mirror — is that representation
+when it demonstrably holds the save family the community rules locate: files
+under the same names the profile's own resolution finds. A mirror sharing no
+names with the profile's files is treated as auxiliary content and elects
+nothing; both representations stay tracked.
+**Why:** A Steam Cloud game holds the same progress twice on one machine: the
+game's native folder and the mirror Steam replicates between Devices. The two
+spell their content in different layouts, so a lineage built from one can
+never be adopted by the other, and discovering both invites binding them into
+exactly that impossibility while storing every save twice. The mirror wins
+because its layout is identical on every Device and OS, which is what lets a
+Steam Deck and a desktop share one lineage. Mere existence is not evidence:
+a mirror can carry only settings, or a subset synced for another OS, and
+electing it on presence alone would silently displace the save that holds the
+real progress.
+**Tradeoff:** Shared names corroborate the family, not completeness — a
+mirror carrying the right names but a partial file set is still elected, and
+the native folder's extras (backup twins, replays) go unprotected for Cloud
+games. A Device where Steam Cloud is disabled for a game keeps synchronizing
+a mirror that no longer moves. Election is per Device and evidence-based, so
+a game changes representation only when what discovery can see changes.
 
 ## Related
 

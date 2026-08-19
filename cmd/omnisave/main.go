@@ -1004,7 +1004,8 @@ func reconcileSaves(
 		if bound, isBound := state.BindingFor(candidate.local); isBound {
 			if remoteSave, exists := savesByID[bound.OmnisaveID]; exists {
 				if err := syncBoundSave(ctx, server, state, candidate.local, candidate.save,
-					bound, remoteSave, loadHistory, outcome, report, prompts, gate, pushFloor); err != nil {
+					bound, remoteSave, savesByGame[candidate.serverGameID], loadHistory,
+					outcome, report, prompts, gate, pushFloor); err != nil {
 					return err
 				}
 				continue
@@ -1164,11 +1165,29 @@ func reconcileSaves(
 		}
 		options := make([]tui.AmbiguousBindingOption, 0, len(gameSaves))
 		for _, remoteSave := range gameSaves {
+			if matchedRevisions[remoteSave.ID] == "" {
+				// Adopting an unmatched lineage ends by applying its Current
+				// Revision to this save's files, so a lineage whose current
+				// cannot land in this save's layout has no adoptable future
+				// here and is not offered.
+				current, exists := revisionByID(histories[remoteSave.ID], remoteSave.CurrentRevisionID)
+				if !exists || binding.CanApply(candidate.save, current) != nil {
+					continue
+				}
+			}
 			options = append(options, tui.AmbiguousBindingOption{
 				OmnisaveID:        remoteSave.ID,
 				Name:              omnisaveDisplayName(remoteSave),
 				MatchedRevisionID: matchedRevisions[remoteSave.ID],
 			})
+		}
+		if len(options) == 0 {
+			// Nothing matched and nothing is adoptable from this save's
+			// layout, so creating a new Omnisave is the one safe outcome
+			// left and the pass takes it without a question (FDR-003,
+			// decision 1).
+			seedCandidateSave(ctx, server, state, candidate.local, candidate.save, candidate.serverGameID, outcome, report)
+			continue
 		}
 		choice, err := prompts.ambiguous(candidate.local.GameTitle, options)
 		if err != nil {
@@ -1386,8 +1405,16 @@ func syncUnmatchedSave(
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 ) error {
+	// Adoption ends by applying the chosen save's Current Revision to this
+	// save's files, so prove the layout can take it before local progress is
+	// preserved toward it.
+	if err := binding.CanApply(save, current); err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return nil
+	}
 	deviceName := truncateRunes(strings.TrimSpace(state.Device.Name), maxDisplayName)
-	preserved, preservedRevision, err := preserveLocalProgress(ctx, server, save, selected, nil,
+	preserved, preservedRevision, err := binding.Seed(ctx, server, selected.GameID, save,
 		deconflictName(selected, deviceName))
 	if err != nil {
 		outcome.Failed++
@@ -1397,18 +1424,23 @@ func syncUnmatchedSave(
 	outcome.Seeded++
 	report.PreservedAs(local.GameTitle, omnisaveDisplayName(*preserved))
 
+	// Past here the preservation exists; a failure records it so a later
+	// pass recognizes it as this save's own rather than starting over.
 	if err := binding.ApplyCurrent(ctx, server, save, *preservedRevision, current); err != nil {
 		outcome.Failed++
+		state.RecordPendingPreservation(local, preserved.ID)
 		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
 	if err := state.Bind(local, selected.ID); err != nil {
 		outcome.Failed++
+		state.RecordPendingPreservation(local, preserved.ID)
 		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
 	if err := state.RecordSynced(local, selected.ID, current.ID); err != nil {
 		outcome.Failed++
+		state.RecordPendingPreservation(local, preserved.ID)
 		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
@@ -1464,6 +1496,8 @@ func omnisaveDisplayName(save omnisave.Omnisave) string {
 }
 
 // syncBoundSave compares local content, its baseline, and the Current Revision.
+// gameSaves is every lineage the game has, so a divergence answer can find
+// progress an earlier answer already preserved.
 func syncBoundSave(
 	ctx context.Context,
 	server *remote.Client,
@@ -1472,6 +1506,7 @@ func syncBoundSave(
 	save target.Save,
 	bound tracking.Binding,
 	remoteSave omnisave.Omnisave,
+	gameSaves []omnisave.Omnisave,
 	loadHistory func(string) ([]omnisave.Revision, error),
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
@@ -1521,7 +1556,8 @@ func syncBoundSave(
 	if !baselineOK {
 		// A binding without a baseline (a manual bind to non-matching
 		// content) is diverged from the start (FDR-005, decision 1).
-		return resolveDivergence(ctx, server, state, local, save, remoteSave, current, nil, history, manifest, outcome, report, prompts)
+		return resolveDivergence(ctx, server, state, local, save, remoteSave, current, nil,
+			history, manifest, gameSaves, loadHistory, outcome, report, prompts)
 	}
 
 	if current.ID == baseline.ID {
@@ -1621,7 +1657,8 @@ func syncBoundSave(
 		report.SyncedWith(local.GameTitle, name, time.Now())
 		return nil
 	}
-	return resolveDivergence(ctx, server, state, local, save, remoteSave, current, &baseline, history, manifest, outcome, report, prompts)
+	return resolveDivergence(ctx, server, state, local, save, remoteSave, current, &baseline,
+		history, manifest, gameSaves, loadHistory, outcome, report, prompts)
 }
 
 // resolveDivergence keeps both sides recoverable, prompting only during
@@ -1640,6 +1677,8 @@ func resolveDivergence(
 	baseline *omnisave.Revision,
 	history []omnisave.Revision,
 	manifest []omnisave.RevisionFile,
+	gameSaves []omnisave.Omnisave,
+	loadHistory func(string) ([]omnisave.Revision, error),
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 	prompts *reconcilePrompts,
@@ -1687,19 +1726,33 @@ func resolveDivergence(
 	if err != nil {
 		return err
 	}
+	// Unsynced content preserves into its own Omnisave, and an answer that
+	// failed partway recorded the preservation it created. Resolving that
+	// record now keeps a repeated answer from minting another.
+	var earlier, resumable *preservedProgress
+	if !contentKnown {
+		earlier, resumable, err = recordedPreservation(state, local, manifest, baseline, gameSaves, loadHistory)
+		if err != nil {
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+	}
 	if choice == tui.DivergedBindingFork {
 		return forkDivergedSave(ctx, server, state, local, save, remoteSave,
-			matched, contentKnown, baseline, deviceName, outcome, report)
+			matched, contentKnown, baseline, earlier, resumable, deviceName, outcome, report)
 	}
 	return jumpDivergedSave(ctx, server, state, local, save, remoteSave, current,
-		matched, contentKnown, baseline, deviceName, outcome, report)
+		matched, contentKnown, baseline, earlier, resumable, deviceName, outcome, report)
 }
 
 // forkDivergedSave continues this Device's progress as a new lineage named
 // after the Device. Content the history already holds forks at the matched
 // revision and pushes nothing; unsynced content forks at the baseline and
 // commits on the fork — or seeds a new Omnisave when no baseline exists to
-// fork from.
+// fork from. A preservation a failed earlier answer recorded is continued —
+// bound when it already holds the content, pushed onto when its push never
+// landed — instead of created again.
 func forkDivergedSave(
 	ctx context.Context,
 	server *remote.Client,
@@ -1710,6 +1763,8 @@ func forkDivergedSave(
 	matched omnisave.Revision,
 	contentKnown bool,
 	baseline *omnisave.Revision,
+	earlier *preservedProgress,
+	resumable *preservedProgress,
 	deviceName string,
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
@@ -1717,7 +1772,8 @@ func forkDivergedSave(
 	forkName := deconflictName(remoteSave, deviceName)
 	var preserved *omnisave.Omnisave
 	var preservedRevision *omnisave.Revision
-	if contentKnown {
+	switch {
+	case contentKnown:
 		fork, err := server.ForkOmnisave(ctx, remoteSave.ID, omnisave.ForkOmnisave{
 			RevisionID:  matched.ID,
 			DisplayName: forkName,
@@ -1728,23 +1784,40 @@ func forkDivergedSave(
 			return nil
 		}
 		preserved, preservedRevision = &fork.Omnisave, &fork.Revision
-	} else {
-		var err error
-		preserved, preservedRevision, err = preserveLocalProgress(ctx, server, save, remoteSave, baseline, forkName)
+		outcome.Forked++
+	case earlier != nil:
+		// The preservation this answer would create already stands, and the
+		// record proves it is this Device's own; the fork is a rebind to it.
+		preserved, preservedRevision = &earlier.omnisave, &earlier.revision
+		outcome.Rebound++
+	case baseline == nil:
+		created, revision, err := binding.Seed(ctx, server, remoteSave.GameID, save, forkName)
 		if err != nil {
 			outcome.Failed++
 			report.SaveFailed(local.GameTitle, err)
 			return nil
 		}
+		preserved, preservedRevision = created, revision
+		outcome.Forked++
+	default:
+		created, revision, err := forkLocalProgress(ctx, server, state, local, save, remoteSave, *baseline, resumable, forkName)
+		if err != nil {
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+		preserved, preservedRevision = created, revision
+		outcome.Forked++
 	}
-	outcome.Forked++
 	if err := state.Bind(local, preserved.ID); err != nil {
 		outcome.Failed++
+		state.RecordPendingPreservation(local, preserved.ID)
 		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
 	if err := state.RecordSynced(local, preserved.ID, preservedRevision.ID); err != nil {
 		outcome.Failed++
+		state.RecordPendingPreservation(local, preserved.ID)
 		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
@@ -1752,12 +1825,55 @@ func forkDivergedSave(
 	return nil
 }
 
+// forkLocalProgress continues unsynced content as a fork of the baseline: the
+// fork is created — or resumed, when a failed answer recorded one whose push
+// never landed — and the local content committed onto it. A push that fails
+// removes the empty fork so retries cannot stack them; when the same outage
+// blocks the removal too, the fork is recorded and the next answer resumes it.
+func forkLocalProgress(
+	ctx context.Context,
+	server *remote.Client,
+	state *tracking.State,
+	local tracking.LocalSave,
+	save target.Save,
+	remoteSave omnisave.Omnisave,
+	baseline omnisave.Revision,
+	resumable *preservedProgress,
+	name string,
+) (*omnisave.Omnisave, *omnisave.Revision, error) {
+	fork := resumable
+	if fork == nil {
+		created, err := server.ForkOmnisave(ctx, remoteSave.ID, omnisave.ForkOmnisave{
+			RevisionID:  baseline.ID,
+			DisplayName: name,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		fork = &preservedProgress{omnisave: created.Omnisave, revision: created.Revision}
+	}
+	revision, err := binding.Push(ctx, server, fork.omnisave.ID, save, fork.revision.ID, fork.revision.Files)
+	if err != nil {
+		// A fork holding none of the progress it was made to preserve reads
+		// as that progress saved when it is not; remove it so a retry starts
+		// clean instead of stacking another.
+		if deleteErr := server.DeleteOmnisave(context.WithoutCancel(ctx), fork.omnisave.ID); deleteErr != nil {
+			state.RecordPendingPreservation(local, fork.omnisave.ID)
+		} else {
+			state.ClearPendingPreservation(local)
+		}
+		return nil, nil, err
+	}
+	return &fork.omnisave, revision, nil
+}
+
 // jumpDivergedSave adopts the Current Revision after making sure the local
 // progress survives. Content the history already holds needs nothing.
 // Unsynced content is kept as a branch of the baseline, named for the Device
 // and left behind the current pointer — no new Omnisave. Without a baseline
 // there is no node to branch from, so the progress seeds a new Omnisave
-// instead (FDR-005, decision 4).
+// instead (FDR-005, decision 4). A preservation a failed earlier answer
+// recorded stands in for either, so a repeated answer creates nothing new.
 func jumpDivergedSave(
 	ctx context.Context,
 	server *remote.Client,
@@ -1769,16 +1885,33 @@ func jumpDivergedSave(
 	matched omnisave.Revision,
 	contentKnown bool,
 	baseline *omnisave.Revision,
+	earlier *preservedProgress,
+	resumable *preservedProgress,
 	deviceName string,
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 ) error {
 	name := omnisaveDisplayName(remoteSave)
+	// The jump ends by applying the Current Revision over this save's files,
+	// so prove the layout can take it before the answer preserves or commits
+	// anything toward an adoption that cannot happen.
+	if err := binding.CanApply(save, current); err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return nil
+	}
 	// The revision proved equal to the local content, so the staged placement
-	// can verify against it (and stage unchanged files locally).
+	// can verify against it (and stage unchanged files locally). A failure
+	// past a preservation this answer created records it, so the next answer
+	// continues from it instead of preserving again.
 	verifyAgainst := matched
-	if !contentKnown && baseline == nil {
-		preserved, preservedRevision, err := preserveLocalProgress(ctx, server, save, remoteSave, nil,
+	preservedID := ""
+	if !contentKnown && earlier != nil {
+		// The recorded preservation already holds this exact content, so
+		// nothing new is created and the placement verifies against it.
+		verifyAgainst = earlier.revision
+	} else if !contentKnown && baseline == nil {
+		preserved, preservedRevision, err := binding.Seed(ctx, server, remoteSave.GameID, save,
 			deconflictName(remoteSave, deviceName))
 		if err != nil {
 			outcome.Failed++
@@ -1788,6 +1921,7 @@ func jumpDivergedSave(
 		outcome.Forked++
 		report.Forked(local.GameTitle, omnisaveDisplayName(*preserved))
 		verifyAgainst = *preservedRevision
+		preservedID = preserved.ID
 	} else if !contentKnown {
 		branch, err := binding.PushBranchAside(ctx, server, remoteSave.ID, save, current.ID, *baseline, deviceName)
 		if err != nil {
@@ -1807,22 +1941,89 @@ func jumpDivergedSave(
 	}
 	if err := binding.ApplyCurrent(ctx, server, save, verifyAgainst, current); err != nil {
 		outcome.Failed++
+		state.RecordPendingPreservation(local, preservedID)
 		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
 	if err := state.Bind(local, remoteSave.ID); err != nil {
 		outcome.Failed++
+		state.RecordPendingPreservation(local, preservedID)
 		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
 	if err := state.RecordSynced(local, remoteSave.ID, current.ID); err != nil {
 		outcome.Failed++
+		state.RecordPendingPreservation(local, preservedID)
 		report.SaveFailed(local.GameTitle, err)
 		return nil
+	}
+	if resumable != nil {
+		// The recorded fork never received its push and this answer kept the
+		// progress elsewhere, so the empty shell has nothing left to say;
+		// removing it is best-effort cleanup, not part of the answer.
+		server.DeleteOmnisave(context.WithoutCancel(ctx), resumable.omnisave.ID)
 	}
 	outcome.Pulled++
 	report.SyncedWith(local.GameTitle, name, time.Now())
 	return nil
+}
+
+// preservedProgress is a preservation a failed earlier answer recorded, with
+// the revision it currently stands at.
+type preservedProgress struct {
+	omnisave omnisave.Omnisave
+	revision omnisave.Revision
+}
+
+// recordedPreservation resolves the preservation a failed earlier answer
+// recorded for this save, so a repeated answer continues it instead of
+// minting another. Only the recorded identity is trusted — never content
+// equality alone, which cannot tell this Device's own preservation from an
+// independent lineage that happens to hold the same bytes for a moment.
+// earlier is a preservation that holds the local content; resumable is a
+// fork of the baseline whose push never landed, still waiting for it. A
+// record that no longer describes either — the Omnisave is gone, or the
+// local content has moved on since — is cleared and the answer starts fresh.
+func recordedPreservation(
+	state *tracking.State,
+	local tracking.LocalSave,
+	manifest []omnisave.RevisionFile,
+	baseline *omnisave.Revision,
+	gameSaves []omnisave.Omnisave,
+	loadHistory func(string) ([]omnisave.Revision, error),
+) (earlier, resumable *preservedProgress, err error) {
+	pendingID, pending := state.PendingPreservationFor(local)
+	if !pending {
+		return nil, nil, nil
+	}
+	var recorded *omnisave.Omnisave
+	for index := range gameSaves {
+		if gameSaves[index].ID == pendingID {
+			recorded = &gameSaves[index]
+			break
+		}
+	}
+	if recorded == nil {
+		state.ClearPendingPreservation(local)
+		return nil, nil, nil
+	}
+	history, err := loadHistory(pendingID)
+	if err != nil {
+		return nil, nil, err
+	}
+	current, exists := revisionByID(history, recorded.CurrentRevisionID)
+	if !exists {
+		state.ClearPendingPreservation(local)
+		return nil, nil, nil
+	}
+	if binding.MatchesManifest(manifest, current) {
+		return &preservedProgress{omnisave: *recorded, revision: current}, nil, nil
+	}
+	if baseline != nil && current.ID == baseline.ID {
+		return nil, &preservedProgress{omnisave: *recorded, revision: current}, nil
+	}
+	state.ClearPendingPreservation(local)
+	return nil, nil, nil
 }
 
 // matchHistory finds the newest revision whose content equals the local
@@ -1841,33 +2042,6 @@ func matchHistory(manifest []omnisave.RevisionFile, history []omnisave.Revision)
 		}
 	}
 	return matched, found
-}
-
-// preserveLocalProgress stores unsynced content as a fork or a new seed,
-// both carrying the deconflicting Device's name.
-func preserveLocalProgress(
-	ctx context.Context,
-	server *remote.Client,
-	save target.Save,
-	remoteSave omnisave.Omnisave,
-	baseline *omnisave.Revision,
-	name string,
-) (*omnisave.Omnisave, *omnisave.Revision, error) {
-	if baseline == nil {
-		return binding.Seed(ctx, server, remoteSave.GameID, save, name)
-	}
-	fork, err := server.ForkOmnisave(ctx, remoteSave.ID, omnisave.ForkOmnisave{
-		RevisionID:  baseline.ID,
-		DisplayName: name,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	revision, err := binding.Push(ctx, server, fork.Omnisave.ID, save, fork.Revision.ID, fork.Revision.Files)
-	if err != nil {
-		return nil, nil, err
-	}
-	return &fork.Omnisave, revision, nil
 }
 
 func lastSyncedAt(bound tracking.Binding) time.Time {
