@@ -5,7 +5,7 @@ description: "Keep track of an app's features as Feature Decision Records (FDRs)
 
 # Feature Decision Records (FDRs)
 
-Manage the app's features as structured markdown documents in `docs/fdr/`. Each FDR captures what a feature does from a user perspective **and** the design decisions that shaped it, with rationale.
+Manage the app's features as structured markdown documents in `docs/fdr/`. Each FDR captures the feature's durable user-facing contract **and** the design decisions that shaped it, with rationale.
 
 ## What an FDR Is
 
@@ -22,11 +22,22 @@ FDRs sit alongside [ADRs](../adr/INDEX.md). The split:
 
 A single feature may cite several ADRs; a single ADR may underpin several FDRs. That's fine and expected.
 
+Use a durability test before adding or updating anything: would this fact still
+help a maintainer understand the feature if the UI were rearranged or the code
+were reorganized? Record stable semantics, invariants, and meaningful
+tradeoffs. Leave incidental presentation and implementation to the code and
+tests.
+
 ## What an FDR Is NOT
 
 - **NOT** a code walkthrough. No function signatures, no proto field tags, no API schema dumps, no KV key patterns, no NATS subject formats.
 - **NOT** a file index. No "Key Files" tables.
 - **NOT** an implementation guide. Agents can `grep` for those things.
+- **NOT** a UI specification or copy deck. Do not record option order, exact
+  labels, key bindings, layout, component type, animation, or loading treatment
+  unless one is itself a durable product requirement with meaningful rationale.
+- **NOT** a snapshot of incidental behavior. Concrete examples should clarify a
+  stable rule, not freeze today's presentation or test fixture into the record.
 - **NOT** a changelog. Old design decisions that have been superseded should be rewritten, not appended. The FDR describes the feature *today*.
 
 If you're writing proto definitions, ConnectRPC handler details, or Go/TypeScript code in an FDR, you're going too deep. Stop and pull back to behavior + rationale.
@@ -117,10 +128,16 @@ nothing to say.
 
 ### Updating an FDR
 
-1. Read the FDR
-2. Make targeted edits. Don't append "Update: ..." notes — rewrite the affected section so the doc describes the feature *today*.
-3. Bump **Last reviewed** to today's date
-4. If the title changed, update `docs/fdr/INDEX.md`
+1. Read the FDR.
+2. Decide whether a durable behavior, invariant, tradeoff, or feature decision
+   changed. If the change only rearranges equivalent UI choices, revises
+   non-canonical copy, refactors code, or changes another incidental detail, do
+   not edit the FDR.
+3. Make targeted edits. Don't append "Update: ..." notes — rewrite the affected section so the doc describes the feature *today*.
+4. Bump **Last reviewed** to today's date only when the FDR was materially
+   reviewed or changed, not as a side effect of an unrelated implementation
+   change.
+5. If the title changed, update `docs/fdr/INDEX.md`.
 
 ### Retiring an FDR
 
@@ -133,6 +150,9 @@ When a feature is removed:
 
 - **Behavior section: bullet points, short paragraphs.** No code blocks. Describe what users see and experience.
 - **Design Decisions: numbered, with explicit Why + Tradeoff.** Each entry should be defensible to a future maintainer who didn't live through the original conversation.
+- **Prefer rules over snapshots.** Preserve what choices mean and why they
+  exist; omit their current order, exact non-canonical wording, and rendering
+  mechanics.
 - **Mention permission strings** (e.g., `message.react`) — they're part of the feature design. But don't describe *how* permission checks are implemented.
 - **Cite ADRs by number** when a design decision is downstream of an architectural choice. Don't restate the ADR; just point to it.
 - **Omit sections that don't add value.** A simple feature might just need Overview + Behavior + Permissions. Don't pad.
@@ -161,11 +181,15 @@ For each FDR being audited, launch a dedicated Explore subagent that:
    - Behavioral claims — does the code actually work this way?
    - Design Decisions — are the stated rationales still accurate? Has the implementation drifted?
    - Related ADRs/FDRs — do the cited records still exist and still apply?
+   - Durability — is the claim a stable product rule or decision rather than an
+     implementation or presentation snapshot?
 3. **Returns a structured report** with:
    - **Verified**: claims confirmed by code
    - **Discrepancies**: claims that contradict the code
    - **Stale claims**: behaviors or decisions that no longer apply
    - **Missing**: significant user-facing behavior the FDR doesn't mention
+   - **Overspecified**: implementation or presentation details that should be
+     removed or generalized
 
 Run audits in parallel via the Agent tool when auditing multiple FDRs.
 
@@ -184,6 +208,8 @@ When auditing or creating an FDR, verify:
 - [ ] Permission strings use hyphens, not underscores
 - [ ] User-facing behaviors match the code
 - [ ] Design Decisions still reflect the current implementation
+- [ ] Every claim passes the durability test; incidental UI and implementation
+      details are absent
 - [ ] Cited ADRs / FDRs exist and are relevant
 - [ ] `INDEX.md` lists this FDR with the correct title
 
