@@ -1,7 +1,7 @@
 # FDR-004: Syncing Saves to a Device
 
 **Status:** Experimental
-**Last reviewed:** 2026-08-03
+**Last reviewed:** 2026-08-18
 
 ## Overview
 
@@ -19,8 +19,10 @@ onto a new machine.
 
 - During the binding pass, a tracked and confirmed game with no local save
   whose server has Omnisaves triggers the offer.
-- The offer lists the game's Omnisaves by name, plus "decide later". It is
-  always asked, even when exactly one Omnisave exists.
+- The offer lists only the game's Omnisave names and "Leave this device
+  without a save"; the question carries the context instead of repeating a
+  description on every choice. It is always asked, even when exactly one
+  Omnisave exists.
 - Choosing an Omnisave syncs it immediately: its Current Revision's files are
   downloaded, verified, and placed at the game's native save location for
   this Device. The binding records that revision as the sync baseline, so the
@@ -29,8 +31,9 @@ onto a new machine.
 - The result names the selected omnisave and shows it synced just now; the
   closing tally counts it. Nothing changes on the server: syncing down
   reads content and records a machine-local binding.
-- Deciding later changes nothing; the offer repeats on the next track run
-  while the game still has no local save.
+- Leaving the Device without a save keeps the game tracked and changes
+  nothing else; the offer repeats on the next track run while the game still
+  has no local save.
 - The game's native save location is determined by its adapter even though
   no save exists there yet. When the adapter cannot determine it, nothing
   downloads and the result says the game is waiting for its first local

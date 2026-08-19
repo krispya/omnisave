@@ -18,7 +18,7 @@ type SyncToDeviceChoice struct {
 	OmnisaveID string
 }
 
-const syncToDeviceDefer = ":decide-later"
+const syncToDeviceLeaveWithoutSave = ":leave-without-save"
 
 // PromptSyncToDevice asks which server save should be placed on a Device that
 // has no local save for the game.
@@ -31,7 +31,7 @@ func PromptSyncToDevice(gameTitle string, options []SyncToDeviceOption) (SyncToD
 		}
 		return SyncToDeviceChoice{}, err
 	}
-	if selected == syncToDeviceDefer {
+	if selected == syncToDeviceLeaveWithoutSave {
 		return SyncToDeviceChoice{}, nil
 	}
 	return SyncToDeviceChoice{OmnisaveID: selected}, nil
@@ -43,11 +43,10 @@ func syncToDeviceForm(gameTitle string, options []SyncToDeviceOption, selected *
 	}
 	selections := make([]huh.Option[string], 0, len(options)+1)
 	for _, option := range options {
-		selections = append(selections,
-			huh.NewOption(option.Name+" · sync current revision to this device", option.OmnisaveID))
+		selections = append(selections, huh.NewOption(option.Name, option.OmnisaveID))
 	}
 	selections = append(selections,
-		huh.NewOption("Decide later · leave this device without a save", syncToDeviceDefer))
+		huh.NewOption("Leave this device without a save", syncToDeviceLeaveWithoutSave))
 	prompt := huh.NewSelect[string]().
 		Title("No local save exists on this device").
 		Options(selections...).

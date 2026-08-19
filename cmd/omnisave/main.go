@@ -1152,7 +1152,7 @@ func reconcileSaves(
 				return fmt.Errorf("unknown stale binding choice %q", choice)
 			}
 		}
-		// Leave zero or multiple matches for an explicit choice.
+		// Zero or multiple matches need an explicit choice.
 		if !prompts.asksAmbiguous() {
 			outcome.Unbound++
 			report.Unbound(candidate.local.GameTitle)
@@ -1175,38 +1175,45 @@ func reconcileSaves(
 			return err
 		}
 		switch {
-		case choice.Seed:
+		case choice.Create:
 			seedCandidateSave(ctx, server, state, candidate.local, candidate.save, candidate.serverGameID, outcome, report)
 		case choice.OmnisaveID != "":
-			if err := state.Bind(candidate.local, choice.OmnisaveID); err != nil {
-				outcome.Failed++
-				report.SaveFailed(candidate.local.GameTitle, err)
-				continue
-			}
 			matchedRevisionID := matchedRevisions[choice.OmnisaveID]
 			if matchedRevisionID != "" {
+				if err := state.Bind(candidate.local, choice.OmnisaveID); err != nil {
+					outcome.Failed++
+					report.SaveFailed(candidate.local.GameTitle, err)
+					continue
+				}
 				if err := state.RecordSynced(candidate.local, choice.OmnisaveID, matchedRevisionID); err != nil {
 					outcome.Failed++
 					report.SaveFailed(candidate.local.GameTitle, err)
 					continue
 				}
-			}
-			name := choice.OmnisaveID
-			for _, option := range options {
-				if option.OmnisaveID == choice.OmnisaveID {
-					name = option.Name
-					break
-				}
-			}
-			outcome.Bound++
-			if matchedRevisionID != "" {
+				outcome.Bound++
+				name := omnisaveDisplayName(savesByID[choice.OmnisaveID])
 				report.SyncedWith(candidate.local.GameTitle, name, time.Now())
-			} else {
-				report.BoundUnsynced(candidate.local.GameTitle, name)
+				continue
+			}
+
+			selected, exists := savesByID[choice.OmnisaveID]
+			if !exists || selected.GameID != candidate.serverGameID {
+				outcome.Failed++
+				report.SaveFailed(candidate.local.GameTitle, errors.New("chosen save is no longer available"))
+				continue
+			}
+			current, currentFound := revisionByID(histories[selected.ID], selected.CurrentRevisionID)
+			if !currentFound {
+				outcome.Failed++
+				report.SaveFailed(candidate.local.GameTitle, errors.New("chosen save has no readable current revision"))
+				continue
+			}
+			if err := syncUnmatchedSave(ctx, server, state, candidate.local, candidate.save,
+				selected, current, outcome, report); err != nil {
+				return err
 			}
 		default:
-			outcome.Unbound++
-			report.Unbound(candidate.local.GameTitle)
+			return errors.New("ambiguous binding prompt returned no choice")
 		}
 	}
 	// Achievements are reported once every save this pass touched has settled,
@@ -1363,6 +1370,51 @@ func seedCandidateSave(
 	}
 	outcome.Seeded++
 	report.SyncedWith(local.GameTitle, omnisaveDisplayName(*created), time.Now())
+}
+
+// syncUnmatchedSave preserves unmatched local progress as a new save before
+// adopting the chosen save. The two saves have no common revision, so the
+// preservation is a seed rather than a branch or fork.
+func syncUnmatchedSave(
+	ctx context.Context,
+	server *remote.Client,
+	state *tracking.State,
+	local tracking.LocalSave,
+	save target.Save,
+	selected omnisave.Omnisave,
+	current omnisave.Revision,
+	outcome *tui.TrackOutcome,
+	report *tui.TrackReport,
+) error {
+	deviceName := truncateRunes(strings.TrimSpace(state.Device.Name), maxDisplayName)
+	preserved, preservedRevision, err := preserveLocalProgress(ctx, server, save, selected, nil,
+		deconflictName(selected, deviceName))
+	if err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return nil
+	}
+	outcome.Seeded++
+	report.PreservedAs(local.GameTitle, omnisaveDisplayName(*preserved))
+
+	if err := binding.ApplyCurrent(ctx, server, save, *preservedRevision, current); err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return nil
+	}
+	if err := state.Bind(local, selected.ID); err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return nil
+	}
+	if err := state.RecordSynced(local, selected.ID, current.ID); err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
+		return nil
+	}
+	outcome.Pulled++
+	report.SyncedWith(local.GameTitle, omnisaveDisplayName(selected), time.Now())
+	return nil
 }
 
 func revisionByID(history []omnisave.Revision, id *string) (omnisave.Revision, bool) {
