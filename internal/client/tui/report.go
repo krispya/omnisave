@@ -72,10 +72,14 @@ const PendingDiverged PendingKind = "diverged"
 
 // PendingDecision is what a save is waiting to be asked, carried as data so
 // the view can key an answer back to the save that asked. The game's title
-// is the row it rides, so only the Omnisave has to be named here.
+// is the row it rides, so only the Omnisave has to be named here. ForkName
+// and Keep let the raised question promise exactly what each answer does
+// (see DivergedQuestion).
 type PendingDecision struct {
 	Kind         PendingKind
 	OmnisaveName string
+	ForkName     string
+	Keep         DivergedKeep
 }
 
 func (r *TrackReport) game(title string) *trackedGameReport {
@@ -247,10 +251,13 @@ func (r *TrackReport) BranchKept(title, omnisaveName string) {
 }
 
 // Diverged records a save with new progress on both sides, waiting for an
-// interactive run to resolve.
-func (r *TrackReport) Diverged(title, omnisaveName string) {
+// interactive run to resolve. forkName and keep describe what the answers
+// would do, so a view raising the question can say so.
+func (r *TrackReport) Diverged(title, omnisaveName, forkName string, keep DivergedKeep) {
 	r.mark(title, mutedStyle.Render("○"))
-	r.game(title).pending = &PendingDecision{Kind: PendingDiverged, OmnisaveName: omnisaveName}
+	r.game(title).pending = &PendingDecision{
+		Kind: PendingDiverged, OmnisaveName: omnisaveName, ForkName: forkName, Keep: keep,
+	}
 	r.event(title, "save diverged from "+omnisaveName+", run omnisave track to resolve")
 }
 

@@ -208,7 +208,12 @@ func firstPending(snapshot ReportSnapshot) *watchQuestion {
 		return &watchQuestion{
 			title:    game.Title,
 			omnisave: game.Pending.OmnisaveName,
-			options:  DivergedOptions(),
+			options: DivergedOptions(DivergedQuestion{
+				GameTitle:    game.Title,
+				OmnisaveName: game.Pending.OmnisaveName,
+				ForkName:     game.Pending.ForkName,
+				Keep:         game.Pending.Keep,
+			}),
 		}
 	}
 	return nil
@@ -376,8 +381,9 @@ var questionStyle = lipgloss.NewStyle().
 	Padding(0, 1).
 	MarginLeft(2)
 
-// view renders the modal: what is being asked about, then the answers. No
-// explanation — the labels are the whole interface.
+// view renders the modal: what is being asked about, then the answers as the
+// same "label · description" line the track form shows, so both surfaces
+// promise identically what each answer would do.
 func (q watchQuestion) view() string {
 	var body strings.Builder
 	body.WriteString(nameStyle.Render(q.title) + "\n")
@@ -387,10 +393,12 @@ func (q watchQuestion) view() string {
 			body.WriteString("\n")
 		}
 		if index == q.cursor {
-			body.WriteString(accentStyle.Render("› ") + nameStyle.UnsetBold().Render(option.Label))
+			body.WriteString(accentStyle.Render("› ") +
+				nameStyle.UnsetBold().Render(option.Label) +
+				mutedStyle.Render(" · "+option.Description))
 			continue
 		}
-		body.WriteString("  " + mutedStyle.Render(option.Label))
+		body.WriteString("  " + mutedStyle.Render(option.Label+" · "+option.Description))
 	}
 	return questionStyle.Render(body.String())
 }

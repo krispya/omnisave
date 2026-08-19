@@ -329,7 +329,10 @@ func divergedSnapshot() ReportSnapshot {
 			Glyph:   "○",
 			Title:   "Project Zomboid",
 			Events:  []string{"Save diverged from Save 2, run omnisave track to resolve"},
-			Pending: &PendingDecision{Kind: PendingDiverged, OmnisaveName: "Save 2"},
+			Pending: &PendingDecision{
+				Kind: PendingDiverged, OmnisaveName: "Save 2",
+				ForkName: "Save 2 (Steam Deck)", Keep: KeepAsBranch,
+			},
 		},
 	}}
 }
@@ -369,6 +372,7 @@ func TestTheQuestionTakesOverTheBlock(t *testing.T) {
 		"Project Zomboid",
 		"Save 2 diverged from the server",
 		"› Fork here",
+		"continue this device's progress as Save 2 (Steam Deck)",
 		"Take current",
 		"↑↓ choose · enter confirm · esc dismiss",
 	} {

@@ -592,9 +592,9 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 				})
 				return choice, err
 			},
-			diverged: func(gameTitle, omnisaveName string) (choice tui.DivergedBindingChoice, err error) {
+			diverged: func(question tui.DivergedQuestion) (choice tui.DivergedBindingChoice, err error) {
 				session.Interact(func() {
-					choice, err = tui.PromptDivergedBinding(gameTitle, omnisaveName)
+					choice, err = tui.PromptDivergedBinding(question)
 				})
 				return choice, err
 			},
@@ -851,7 +851,7 @@ type reconcilePrompts struct {
 	empty     func(gameTitle string, options []tui.SyncToDeviceOption) (tui.SyncToDeviceChoice, error)
 	stale     func(gameTitle, omnisaveName string) (tui.StaleBindingChoice, error)
 	ambiguous func(gameTitle string, options []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error)
-	diverged  func(gameTitle, omnisaveName string) (tui.DivergedBindingChoice, error)
+	diverged  func(question tui.DivergedQuestion) (tui.DivergedBindingChoice, error)
 }
 
 // errUnanswered is how a replayed answer says a question is not the one it
@@ -1599,15 +1599,29 @@ func resolveDivergence(
 		report.SyncedWith(local.GameTitle, name, time.Now())
 		return nil
 	}
+	// The question promises what each answer would do to this save, so the
+	// shape is worked out before anything is asked or reported.
+	deviceName := strings.TrimSpace(state.Device.Name)
+	question := tui.DivergedQuestion{
+		GameTitle:    local.GameTitle,
+		OmnisaveName: name,
+		ForkName:     deconflictName(remoteSave, deviceName),
+		Keep:         tui.KeepAsBranch,
+	}
+	if contentKnown {
+		question.Keep = tui.KeepNothing
+	} else if baseline == nil {
+		question.Keep = tui.KeepAsSave
+	}
 	waiting := func() error {
 		outcome.Diverged++
-		report.Diverged(local.GameTitle, name)
+		report.Diverged(local.GameTitle, name, question.ForkName, question.Keep)
 		return nil
 	}
 	if !prompts.asksDiverged() {
 		return waiting()
 	}
-	choice, err := prompts.diverged(local.GameTitle, name)
+	choice, err := prompts.diverged(question)
 	// A replayed answer belongs to one save. Every other divergence the pass
 	// meets is one nobody has answered, so it waits exactly as it would have
 	// under a headless pass.
@@ -1617,7 +1631,6 @@ func resolveDivergence(
 	if err != nil {
 		return err
 	}
-	deviceName := strings.TrimSpace(state.Device.Name)
 	if choice == tui.DivergedBindingFork {
 		return forkDivergedSave(ctx, server, state, local, save, remoteSave,
 			matched, contentKnown, baseline, deviceName, outcome, report)

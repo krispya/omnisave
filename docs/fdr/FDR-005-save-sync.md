@@ -70,6 +70,10 @@ path, syncing-down built the read path; sync makes both routine.
   A baseline-less binding whose content turns out to equal the Current
   Revision is rebound silently, even by a headless pass — there was
   nothing to resolve.
+- Both surfaces word each answer for the save at hand: fork here names the
+  save it would create ("Save 1 (Steam Deck)"), and take current says what
+  it would keep — a branch, a new save when there is no baseline to branch
+  from, or nothing when the history already holds the content.
 - The answer can be given from the live watch view without stopping it:
   the row says which Omnisave is waiting, `r` raises the question as a
   modal over the pinned block, and the choice is applied by the pass that

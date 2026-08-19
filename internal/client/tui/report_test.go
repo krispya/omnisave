@@ -58,7 +58,7 @@ func TestTheStandingTableDropsEventLinesAndKeepsTheCondition(t *testing.T) {
 	report.Linked("Slay the Spire 2", "")
 	report.SyncedWith("Slay the Spire 2", "Save 1", time.Now().Add(-2*time.Minute))
 	report.Linked("Project Zomboid", "")
-	report.Diverged("Project Zomboid", "Save 2")
+	report.Diverged("Project Zomboid", "Save 2", "Save 2 (Steam Deck)", KeepAsBranch)
 
 	rendered := strings.Join(ComposeStanding(report.Snapshot(), Marks{}, time.Now()), "\n")
 
@@ -77,7 +77,7 @@ func TestTheStandingTableDropsEventLinesAndKeepsTheCondition(t *testing.T) {
 func TestThePrintedReportStillNamesWhatResolvesADivergedSave(t *testing.T) {
 	report := &TrackReport{}
 	report.Linked("Project Zomboid", "")
-	report.Diverged("Project Zomboid", "Save 2")
+	report.Diverged("Project Zomboid", "Save 2", "Save 2 (Steam Deck)", KeepAsBranch)
 
 	rendered := strings.Join(report.render(), "\n")
 
@@ -181,7 +181,7 @@ func TestTrackReportExplainsAServerDeletionUnderTheUntrackedGame(t *testing.T) {
 
 func TestTrackReportSpeaksSyncExceptions(t *testing.T) {
 	report := &TrackReport{}
-	report.Diverged("Chrono Trigger", "New Game+")
+	report.Diverged("Chrono Trigger", "New Game+", "New Game+ (Steam Deck)", KeepAsBranch)
 	report.Stale("Stardew Valley", "Farm run")
 	report.CurrentMoved("Project Zomboid", "Save 2")
 	report.PullDeferred("Slay the Spire 2", "Main")

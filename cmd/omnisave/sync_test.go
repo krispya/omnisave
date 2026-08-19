@@ -437,7 +437,11 @@ func TestSyncLifecyclePushesPullsAndReportsDivergence(t *testing.T) {
 	fixture.state.Device.Name = "Steam Deck"
 	beforeJump, _ := fixture.state.BindingFor(local)
 	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
-	prompts.diverged = func(string, string) (tui.DivergedBindingChoice, error) {
+	prompts.diverged = func(question tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
+		// The question promises what the answers would do to this save.
+		if question.ForkName != "Save 1 (Steam Deck)" || question.Keep != tui.KeepAsBranch {
+			t.Fatalf("expected the question to carry the fork name and shape, got %+v", question)
+		}
 		return tui.DivergedBindingJump, nil
 	}
 	outcome = syncOnce(t, server, &fixture, prompts, 0)
@@ -745,7 +749,7 @@ func TestDivergedSaveCanForkHereAndContinueLocally(t *testing.T) {
 
 	fixture.state.Device.Name = "Steam Deck"
 	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
-	prompts.diverged = func(string, string) (tui.DivergedBindingChoice, error) {
+	prompts.diverged = func(tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
 		return tui.DivergedBindingFork, nil
 	}
 	outcome := syncOnce(t, server, &fixture, prompts, 0)
@@ -804,7 +808,7 @@ func TestJumpingFromContentTheHistoryAlreadyHoldsKeepsNoBranch(t *testing.T) {
 	before := revisionsOf(t, server, bound.OmnisaveID)
 
 	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
-	prompts.diverged = func(string, string) (tui.DivergedBindingChoice, error) {
+	prompts.diverged = func(tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
 		return tui.DivergedBindingJump, nil
 	}
 	outcome := syncOnce(t, server, &fixture, prompts, 0)
@@ -833,7 +837,7 @@ func TestForkingFromContentTheHistoryAlreadyHoldsSharesTheMatchedRevision(t *tes
 
 	fixture.state.Device.Name = "Steam Deck"
 	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
-	prompts.diverged = func(string, string) (tui.DivergedBindingChoice, error) {
+	prompts.diverged = func(tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
 		return tui.DivergedBindingFork, nil
 	}
 	outcome := syncOnce(t, server, &fixture, prompts, 0)

@@ -658,9 +658,9 @@ func failingSyncToDeviceChooser(t *testing.T) func(string, []tui.SyncToDeviceOpt
 	}
 }
 
-func failingDivergedChooser(t *testing.T) func(string, string) (tui.DivergedBindingChoice, error) {
-	return func(gameTitle, _ string) (tui.DivergedBindingChoice, error) {
-		t.Fatalf("unexpected diverged prompt for %q", gameTitle)
+func failingDivergedChooser(t *testing.T) func(tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
+	return func(question tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
+		t.Fatalf("unexpected diverged prompt for %q", question.GameTitle)
 		return "", nil
 	}
 }
