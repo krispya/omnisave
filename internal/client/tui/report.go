@@ -213,7 +213,7 @@ func (r *TrackReport) SyncedWith(title, omnisaveName string, at time.Time) {
 // waiting for an interactive run to choose between jumping and forking.
 func (r *TrackReport) Stale(title, omnisaveName string) {
 	r.mark(title, mutedStyle.Render("○"))
-	r.event(title, "save matches a revision of "+omnisaveName+" that is not current, run omnisave track to resolve")
+	r.event(title, "save is at a different point of "+omnisaveName+", run omnisave track to resolve")
 }
 
 // CurrentMoved records a commit the server refused because the Omnisave's

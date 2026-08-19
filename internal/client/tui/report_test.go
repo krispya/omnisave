@@ -189,7 +189,7 @@ func TestTrackReportSpeaksSyncExceptions(t *testing.T) {
 	rendered := strings.Join(report.render(), "\n")
 	for _, sentence := range []string{
 		"Save diverged from New Game+, run omnisave track to resolve",
-		"Save matches a revision of Farm run that is not current, run omnisave track to resolve",
+		"Save is at a different point of Farm run, run omnisave track to resolve",
 		"Save 2 moved on the server; the next sync pass will reconcile",
 		"Main · waiting for game to close",
 	} {

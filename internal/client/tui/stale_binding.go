@@ -47,7 +47,7 @@ func PromptStaleBinding(question StaleQuestion) (StaleBindingChoice, error) {
 
 func staleBindingForm(question StaleQuestion, choice *StaleBindingChoice) *huh.Form {
 	prompt := huh.NewSelect[StaleBindingChoice]().
-		Title(fmt.Sprintf("Save matches a revision of %s that is not its current one", question.OmnisaveName)).
+		Title(fmt.Sprintf("%s is at a different point on this device and the server", question.OmnisaveName)).
 		Options(
 			huh.NewOption("Jump to current", StaleBindingJump),
 			huh.NewOption(ForkLabel(question.ForkName), StaleBindingFork),

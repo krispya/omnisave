@@ -20,7 +20,7 @@ func TestStaleBindingPromptUsesGameEventOptionHierarchy(t *testing.T) {
 	view := ansi.Strip(form.View())
 	for _, text := range []string{
 		"Slay the Spire 2",
-		"Save matches a revision of Save 1 that is not its current one",
+		"Save 1 is at a different point on this device and the server",
 		"› Jump to current",
 		"Fork as Save 1 (Steam Deck)",
 	} {
