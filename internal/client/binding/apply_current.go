@@ -32,6 +32,12 @@ type localLayout struct {
 	// refused when the save has several roots, since nothing then says which
 	// one the alias means.
 	aliases map[string]bool
+	// singleFlatFile is, for a location holding exactly one file directly at
+	// its root, that file's relative path. Such a location is shaped like a
+	// single save file, and an aliased spelling may only address that file by
+	// its native name — placing a foreign name beside it would swap the save
+	// for a file the game never reads.
+	singleFlatFile map[string]string
 }
 
 type stagedFile struct {
@@ -108,11 +114,12 @@ func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, 
 	}
 	staged := make([]stagedFile, 0, len(current.Files))
 	currentTargets := make(map[string]bool, len(current.Files))
+	currentLocation := singleLocation(current.Files)
 	// Counted before the loop, where the revision is still what current means.
 	incoming := len(current.Files)
 	held := heldArtifacts(layout, matched)
 	for index, file := range current.Files {
-		targetPath, root, err := layout.pathFor(file.Path)
+		targetPath, root, err := layout.pathFor(file.Path, currentLocation, incoming)
 		if err != nil {
 			return err
 		}
@@ -318,8 +325,9 @@ func CanApply(save target.Save, current omnisave.Revision) error {
 		return err
 	}
 	targets := make(map[string]bool, len(current.Files))
+	currentLocation := singleLocation(current.Files)
 	for _, file := range current.Files {
-		targetPath, _, err := layout.pathFor(file.Path)
+		targetPath, _, err := layout.pathFor(file.Path, currentLocation, len(current.Files))
 		if err != nil {
 			return err
 		}
@@ -360,17 +368,18 @@ func planMaterialization(destination target.SaveDestination, current omnisave.Re
 	for _, alias := range destination.LocationAliases {
 		aliases[alias] = true
 	}
+	currentLocation := singleLocation(current.Files)
 	// resolveLocation honors another OS's spelling of the destination's one
 	// location (FDR-003, decision 11); several locations leave nothing to
 	// say which one an alias means.
-	resolveLocation := func(locationID string) (target.SaveLocation, bool) {
+	resolveLocation := func(locationID string) (target.SaveLocation, bool, bool) {
 		if location, exists := locations[locationID]; exists {
-			return location, true
+			return location, false, true
 		}
-		if aliases[locationID] && len(destination.Locations) == 1 {
-			return destination.Locations[0], true
+		if locationID == currentLocation && aliases[locationID] && len(destination.Locations) == 1 {
+			return destination.Locations[0], true, true
 		}
-		return target.SaveLocation{}, false
+		return target.SaveLocation{}, false, false
 	}
 	counts := make(map[string]int)
 	for _, file := range current.Files {
@@ -378,7 +387,7 @@ func planMaterialization(destination target.SaveDestination, current omnisave.Re
 		if err != nil {
 			return nil, err
 		}
-		if location, exists := resolveLocation(locationID); exists {
+		if location, _, exists := resolveLocation(locationID); exists {
 			counts[location.ID]++
 		}
 	}
@@ -390,11 +399,11 @@ func planMaterialization(destination target.SaveDestination, current omnisave.Re
 		if err != nil {
 			return nil, err
 		}
-		location, exists := resolveLocation(locationID)
+		location, viaAlias, exists := resolveLocation(locationID)
 		if !exists {
 			return nil, fmt.Errorf("current revision uses an unknown save location")
 		}
-		targetPath, err := materializedPath(location, relative, counts[location.ID])
+		targetPath, err := materializedPath(location, relative, counts[location.ID], viaAlias)
 		if err != nil {
 			return nil, err
 		}
@@ -420,13 +429,22 @@ func splitCanonicalPath(canonical string) (string, string, error) {
 	return locationID, relative, nil
 }
 
-func materializedPath(location target.SaveLocation, relative string, count int) (string, error) {
+func materializedPath(location target.SaveLocation, relative string, count int, viaAlias bool) (string, error) {
 	base := filepath.Clean(location.Path)
 	nativeRelative := filepath.FromSlash(relative)
 	kind := location.Kind
 	if kind == target.SaveLocationUnknown {
 		if count == 1 && nativeRelative == filepath.Base(base) {
 			kind = target.SaveLocationFile
+		} else if viaAlias && count == 1 {
+			// The revision's one file arrived under another OS's spelling
+			// with a name that is not this location's own. A location that
+			// does not exist yet cannot say whether it is that file or a
+			// directory holding it, and guessing directory would bury a
+			// save file inside a folder wearing its name — an unusable
+			// placement reported as success. Refusing keeps the strict
+			// fallback honest (FDR-003, decision 11).
+			return "", fmt.Errorf("current revision does not fit its save location")
 		} else {
 			kind = target.SaveLocationDirectory
 		}
@@ -530,12 +548,17 @@ func rollbackMaterialization(applied, createdDirectories []string) error {
 
 func describeLocalLayout(save target.Save) (localLayout, error) {
 	layout := localLayout{
-		roots:       make(map[string]string),
-		currentPath: make(map[string]string),
-		aliases:     make(map[string]bool, len(save.LocationAliases)),
+		roots:          make(map[string]string),
+		currentPath:    make(map[string]string),
+		aliases:        make(map[string]bool, len(save.LocationAliases)),
+		singleFlatFile: make(map[string]string),
 	}
 	for _, alias := range save.LocationAliases {
 		layout.aliases[alias] = true
+	}
+	fileCounts := make(map[string]int, len(save.Files))
+	for _, file := range save.Files {
+		fileCounts[file.LocationID]++
 	}
 	for _, file := range save.Files {
 		relative := filepath.Clean(filepath.FromSlash(file.RelativePath))
@@ -558,6 +581,9 @@ func describeLocalLayout(save target.Save) (localLayout, error) {
 			return localLayout{}, fmt.Errorf("local save location has inconsistent roots")
 		}
 		layout.roots[file.LocationID] = root
+		if fileCounts[file.LocationID] == 1 && !strings.ContainsRune(relative, filepath.Separator) {
+			layout.singleFlatFile[file.LocationID] = filepath.ToSlash(relative)
+		}
 		fullPath := filepath.Clean(file.Path)
 		if _, duplicate := layout.currentPath[fullPath]; duplicate {
 			return localLayout{}, fmt.Errorf("local save has duplicate native paths")
@@ -567,16 +593,25 @@ func describeLocalLayout(save target.Save) (localLayout, error) {
 	return layout, nil
 }
 
-func (l localLayout) pathFor(canonical string) (string, string, error) {
+// pathFor maps one revision path into this save. aliasLocation is the
+// revision's sole location; empty keeps a several-location revision strict.
+func (l localLayout) pathFor(canonical, aliasLocation string, aliasFileCount int) (string, string, error) {
 	locationID, relative, err := splitCanonicalPath(canonical)
 	if err != nil {
 		return "", "", err
 	}
 	root := l.roots[locationID]
-	if root == "" && l.aliases[locationID] && len(l.roots) == 1 {
+	if root == "" && locationID == aliasLocation && l.aliases[locationID] && len(l.roots) == 1 {
 		// Another OS's spelling of this save's one location (FDR-003,
 		// decision 11).
-		for _, only := range l.roots {
+		for own, only := range l.roots {
+			if flat, isFile := l.singleFlatFile[own]; isFile && aliasFileCount == 1 && flat != relative {
+				// The location is shaped like a single save file, and the
+				// foreign spelling names something else. Placing that name
+				// would swap the file the game reads for one it never will,
+				// so the translation is refused rather than guessed.
+				return "", "", fmt.Errorf("current revision does not fit its save location")
+			}
 			root = only
 		}
 	}
@@ -606,8 +641,9 @@ func relativeEscapesRoot(relative string) bool {
 // which is what makes matched a truthful index of what is on disk.
 func heldArtifacts(layout localLayout, matched omnisave.Revision) map[string]string {
 	held := make(map[string]string, len(matched.Files))
+	matchedLocation := singleLocation(matched.Files)
 	for _, file := range matched.Files {
-		targetPath, _, err := layout.pathFor(file.Path)
+		targetPath, _, err := layout.pathFor(file.Path, matchedLocation, len(matched.Files))
 		if err != nil {
 			// A matched file this layout cannot place is simply not offered
 			// as a source; its artifact downloads exactly as before.
