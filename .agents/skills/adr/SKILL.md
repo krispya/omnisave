@@ -7,6 +7,12 @@ description: "Keep track of architectural decisions in a structured format using
 
 Manage architectural decisions as structured markdown documents in `docs/adr/`.
 
+ADRs record durable, cross-cutting architectural choices and their
+consequences. Do not create or update one for routine implementation work,
+refactors that preserve the architecture, UI copy or ordering, or other
+incidental presentation details. Before changing an ADR, ask whether the
+architectural choice or one of its meaningful consequences actually changed.
+
 ## Directory Structure
 
 ```
@@ -35,8 +41,10 @@ docs/adr/
 
 1. Read `docs/adr/INDEX.md` to find the ADR
 2. Read the specific ADR file
-3. Make changes (typically amending the consequences or adding context)
-4. Update the TOC in `docs/adr/INDEX.md` if the title changed
+3. Confirm that a durable architectural decision, constraint, or consequence
+   changed. Otherwise leave the ADR alone.
+4. Make changes (typically amending the consequences or adding context)
+5. Update the TOC in `docs/adr/INDEX.md` if the title changed
 
 ### Superseding an ADR
 
