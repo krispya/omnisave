@@ -4,19 +4,17 @@
 
 ## Context
 
-The steam adapter's only native save source is Steam Cloud's `userdata`
-directories, and a game that opts out of Steam Cloud — Undertale is the
-canonical case — scanned as having no save at all. The Save Profile pipeline
-(`internal/client/saveprofile`) was built to close that gap with save-location
-rules from the community Ludusavi manifest, and
+The Steam adapter's only native save source was Steam Cloud, so a game that opts
+out of Steam Cloud — Undertale is the canonical case — scanned as having no save
+at all. Save Profiles close that gap with save-location rules from the community
+Ludusavi manifest, and
 [FDR-004](../fdr/FDR-004-sync-to-device.md) already describes Steam locations
-as "save-location rules expanded against the environment", but no data ever
-reached it: the shipping client constructed its scanner without a profile
-provider, and nothing shipped or fetched a manifest.
+as "save-location rules expanded against the environment", but the distributed
+client did not yet include or fetch that knowledge.
 
-The manifest itself is ~17 MB of YAML covering the PCGamingWiki catalog. The
-client consumes a fraction of it: entries carrying a Steam id, and only their
-save-tagged paths. The question is how that data reaches a device. Scanning is
+The community manifest covers far more than the client needs. Omnisave consumes
+only entries associated with Steam games and their save paths. The question is
+how that data reaches a Device. Scanning is
 deliberately client-local and offline — detection is cheap and indiscriminate
 ([FDR-002](../fdr/FDR-002-game-lifecycle.md)), and `omnisave scan` works with
 no server and no configuration — which any answer has to preserve.
@@ -25,23 +23,20 @@ no server and no configuration — which any answer has to preserve.
 
 Ship the manifest inside the client binary, pruned to what the client reads.
 
-`make refresh-save-profiles` downloads the community manifest and rewrites it
-through the same rule interpretation the parser applies at runtime
-(`ludusavi.Prune`), so the pruned copy parses into exactly the profiles the
-full manifest would produce. Pruning keeps entries with a Steam id and only
-their save rules, which reduces 17 MB to 4.3 MB, and 0.6 MB gzip-compressed.
-The result is checked into the repository and embedded with `go:embed`, so
-builds are offline and reproducible, and the tool's output is byte-stable to
-keep refresh diffs reviewable. The client parses the manifest lazily on first
-profile lookup; commands that never scan pay nothing.
+A maintained build step downloads the community manifest, applies the same
+interpretation used by the client, and keeps only the Steam save rules the
+client consumes. The result is checked into the repository and embedded in the
+client, so builds and scans are offline and reproducible. Deterministic output
+keeps upstream refreshes reviewable, and the data is loaded only when a profile
+is first needed.
 
 The distributed client archives include `THIRD_PARTY_NOTICES`, which preserves
 the Ludusavi Manifest's MIT copyright and permission notice alongside the
 derived data embedded in the binary.
 
 A handful of interpretation rules make community data safe to consume.
-Duplicate Steam ids — the manifest holds over a hundred, from renamed wiki
-pages and split editions — resolve deterministically to the first title in
+Duplicate Steam ids from renamed pages and split editions resolve
+deterministically to the first title in
 sorted order that actually carries save rules, so a stub page never shadows
 the entry that locates saves. Rules over Steam's `userdata` directories are
 dropped however the manifest spells them: those are Steam Cloud's, already
@@ -84,7 +79,7 @@ More difficult:
 
 - Save-location knowledge ages with the release; a newly catalogued game waits
   for the next client release to be discoverable.
-- The client binary carries 0.6 MB of manifest whether or not it ever scans.
+- The client binary carries embedded profile data whether or not it ever scans.
 - Refreshing the manifest is a step someone must run; nothing fails when it is
   forgotten, the knowledge just stays stale.
 - Community data quality is inherited — a wrong path in the manifest ships
@@ -95,5 +90,5 @@ More difficult:
 - `<storeUserId>` matches any account directory, so a machine with several
   Steam accounts aggregates them into one profile save, and a template
   containing both a glob and a bracketed real path is still misread.
-- The compressed asset is byte-stable per Go toolchain; a different Go
-  release rewrites the whole blob on refresh even when the data is unchanged.
+- The generated asset may change when its build tooling changes even if the
+  upstream rules do not.

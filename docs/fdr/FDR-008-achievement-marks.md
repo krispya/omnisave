@@ -1,155 +1,105 @@
 # FDR-008: Achievement Marks
 
 **Status:** Experimental
-**Last reviewed:** 2026-08-13
+**Last reviewed:** 2026-08-18
 
 ## Overview
 
-Achievement marks put a game's unlocks on the save history that surrounds
-them, so a revision rail reads as a playthrough rather than a column of
-timestamps. A mark answers one question: this is the save where the
-achievement had been earned, and everything before it is from before. It is
-an orientation aid for choosing where to go back to, not a trophy case.
+Achievement marks place observed unlocks on the save history surrounding them,
+helping someone identify which revision first belongs to the achieved state. A
+mark is an orientation aid for restoring progress, not a complete account-wide
+trophy history.
 
 ## Behavior
 
-- A Device watching a game notices when its store records an achievement and
-  tells the server, which places the unlock on the first revision committed at
-  or after it — the earliest snapshot known to carry it. The Dash places a
-  compact trophy beside that revision's name. One trophy represents the first
-  achievement, `+1`, `+2`, and so on count any others on the same revision,
-  and hovering or focusing the badge reveals their names.
-- Only unlocks a Device watched happen are marked. The first pass over a
-  bound save records where the game's unlock history already stood and reports
-  nothing, because achievements earned before Omnisave was watching belong to
-  sessions it holds no revisions for.
-- An unlock reported before the save is written waits, and the next commit on
-  that save claims it. That is the ordinary order — the toast comes before the
-  autosave — and it is why placement is decided by time rather than by
-  whichever request happens to arrive first.
-- Repeating a report never moves a mark: the placement an achievement was
-  first given is the one it keeps, however many Devices report it.
-- Deleting a marked revision leaves the achievement waiting again rather than
-  taking it away; the next commit claims it. Nothing about a mark is lost with
-  a node.
-- Steam is the first supported store: the client reads the unlock times and
-  achievement names out of Steam's own caches on disk, with no API key, no
-  account, and no network. A game with no achievements, a store that cannot
-  report them, and a cache Steam is midway through rewriting all read the same
-  way — no marks, and the save syncs exactly as it always did.
+- A Device observing an achievement reports its store-provided unlock time. The
+  server places it on the earliest revision committed at or after that time.
+- If no qualifying revision exists yet, the achievement waits for the next
+  commit on that Omnisave.
+- Only achievements observed after Omnisave begins watching are marked. Existing
+  account history establishes a starting point and is not backfilled.
+- Repeated reports do not move a mark. Reports may arrive in any order or from
+  several Devices without changing the result.
+- Deleting the marked revision leaves the achievement waiting to be placed on a
+  later commit rather than deleting the achievement observation.
+- Revision history indicates that one or more achievements were first observed
+  around a marked snapshot and makes their names available on demand.
+- Steam is the first supported source and is read locally without requiring an
+  account connection or network request. Unsupported, unavailable, or unstable
+  store data produces no marks and never blocks save synchronization.
 
 ## Design Decisions
 
-### 1. A mark is placed by time, not attached at commit
+### 1. Marks are placed by time
 
-**Decision:** A Device reports unlocks with the store's own unlock times; the
-server places each on the first revision whose commit is at or after it. An
-unlock newer than every revision is stored unplaced and claimed by the next
-commit.
-**Why:** An unlock and a save write are two independent events, and neither
-reliably comes first — a game may autosave then fire the achievement, or fire
-it and autosave a minute later. Attaching marks to whatever revision the
-reporting pass happened to write would make the answer depend on polling
-timing. Placing by time makes the mark mean exactly what it claims, and makes
-reports idempotent and order-independent: a report may arrive before its
-commit, after it, twice, or from a second Device, and the mark lands the same.
-**Tradeoff:** Placement is a rule the server has to run, including at commit
-time for waiting marks, rather than a field the client fills in. Unlock times
-are whole seconds, so an unlock and a commit within the same second resolve in
-the commit's favor.
+**Decision:** The server places each unlock on the first revision committed at
+or after the store's unlock time, leaving newer unlocks unplaced until a commit
+exists.
+**Why:** Achievement notification and save writing are independent events and
+may occur in either order. Time-based placement remains stable regardless of
+polling or report order.
+**Tradeoff:** Store timestamps and revision timestamps may have limited
+precision, so events close together can only be ordered as precisely as their
+sources allow.
 
-### 2. Marks are lineage state, not part of a revision
+### 2. Marks belong to lineage state, not revision content
 
-**Decision:** Achievements are stored against the Omnisave, in their own table
-and in the portable lineage record, alongside revision names — never inside a
-revision manifest.
-**Why:** [FDR-007](FDR-007-revision-labeling.md) rests on a label being
-derivable from a snapshot's content, identical on every Device and
-reproducible from the store. An achievement satisfies none of that: it belongs
-to an account, not to bytes, and the same snapshot restored under another
-account has earned nothing. Manifests are immutable besides, so a mark that
-can be claimed, released by a deletion, and claimed again could not live in
-one. The lineage record already carries exactly this kind of mutable
-per-revision state.
-**Tradeoff:** Two places now describe a revision — its manifest and its
-lineage record — and a rebuild has to import marks after the nodes they name.
+**Decision:** Achievement placement is mutable state associated with an
+Omnisave's history rather than part of an immutable revision snapshot.
+**Why:** Achievements belong to a player's store account, not to save bytes, and
+may need to become unplaced and placed again after revision deletion.
+**Tradeoff:** Recovering complete revision presentation requires both immutable
+snapshot history and mutable lineage metadata.
 
-### 3. Detection belongs to the adapter, reading the store's own records
+### 3. Achievement detection belongs to the Device adapter
 
-**Decision:** `target.Achievements` is an optional adapter capability
-answering, for one discovered save, what that target records as unlocked and
-when. Steam implements it by reading `UserGameStats_<account>_<app>.bin` and
-the schema beside it out of its install root.
-**Why:** Only the adapter knows where a store keeps this, and the same shape
-serves any other store later. Reading Steam's local caches specifically was
-chosen over Steam's Web API because it needs no owner credential, no public
-profile, and no network, and still carries Valve's own unlock timestamps —
-which is what makes two Devices agree on when an unlock happened. Detection
-has to run on the Device because that is where the store's records are, even
-though everything else about a mark is the server's.
-**Tradeoff:** A binary format Valve does not document, read defensively: a
-schema that no longer names a bit, a cache being rewritten, and a cache that
-changed shape all report nothing rather than failing.
+**Decision:** Each adapter may report the achievements and unlock times its local
+store records; the server owns placement after receiving them.
+**Why:** Store records live on the Device and differ by platform, while placement
+must remain consistent across all Devices.
+**Tradeoff:** Omnisave inherits the availability and quality limits of local,
+sometimes undocumented store data.
 
-### 4. No backfill of achievements earned before Omnisave watched
+### 4. Existing achievement history is not backfilled
 
-**Decision:** The first look at a bound save records the newest unlock already
-present and reports nothing; later passes report only what is newer.
-**Why:** Every achievement a Steam account has ever earned is sitting in that
-cache with its unlock time. Reporting them all would pile a decade of unlocks
-onto whichever revision happens to be the oldest one Omnisave holds, which is
-a claim about that snapshot that is simply untrue. A mark is only worth
-trusting if it means what it says.
-**Tradeoff:** A library adopted mid-playthrough shows no marks for what came
-before, and rebinding a save starts its watch over.
+**Decision:** The first observation establishes a watermark and reports no prior
+unlocks.
+**Why:** Placing years of account history onto the oldest revision Omnisave
+happens to hold would make claims that snapshot cannot support.
+**Tradeoff:** A library adopted mid-playthrough has no marks for earlier
+achievements, and rebinding begins observation again.
 
-### 5. The client keeps a bounded watermark per binding, not a full history
+### 5. Observation state is bounded and retryable
 
-**Decision:** A binding remembers the newest unlock time it has accounted for
-and the achievement identities seen at that exact second. Anything later, or
-anything new at the boundary second, is reported.
-**Why:** Store times have whole-second precision, so several achievements may
-tie and a report-size boundary may split them across passes. Remembering the
-identities only at the newest second prevents those ties from being skipped
-without growing state with every achievement in a library. A failed report
-leaves the watermark where it was, which is what makes the next pass retry.
-**Tradeoff:** An achievement earned before the watch began but synced to this
-Device afterwards carries its true, older time and is therefore never
-reported — correctly, since Omnisave did not watch it happen. The binding may
-briefly retain several identities when a game unlocks many achievements in
-one second.
+**Decision:** A binding retains only enough progress to report new unlocks
+without skipping ties, and advances that progress only after successful
+reporting.
+**Why:** Detection must tolerate several achievements sharing a timestamp and
+failed reports without storing an account's complete achievement history.
+**Tradeoff:** Unlocks that predate observation but appear locally later remain
+outside the feature by design.
 
-### 6. Revision rows show compact marks and reveal names on demand
+### 6. Marks stay compact while names remain available
 
-**Decision:** A marked revision shows a trophy-only badge beside its name,
-plus the number of additional achievements when several landed there. Hovering
-or focusing the badge opens the achievement-name list.
-**Why:** The mark should orient someone scanning history without letting long
-or numerous achievement names compete with revision names and status. The
-generic trophy remains recognizable at a glance, while the popover keeps the
-specific unlocks one interaction away.
-**Tradeoff:** Achievement names are not visible until the badge is inspected,
-and the generic mark does not carry a store's achievement artwork.
+**Decision:** Revision history represents the presence and count of marks
+compactly, with achievement names available through further inspection.
+**Why:** Marks should orient someone scanning history without competing with
+revision names and save status.
+**Tradeoff:** Individual achievement names are not always visible at a glance.
 
 ## Related
 
-- **FDRs:** [FDR-005](FDR-005-save-sync.md) (the sync pass is where unlocks are
-  noticed and reported), [FDR-007](FDR-007-revision-labeling.md) (names are
-  derived from content; marks deliberately are not)
-- **ADRs:** [ADR-012](../adr/ADR-012-portable-save-store.md) (marks travel in
-  the lineage record and survive a rebuild),
-  [ADR-014](../adr/ADR-014-durable-proof-before-forgetting.md) (placement at
-  commit rides the same transaction as the commit)
+- **FDRs:** [FDR-005](FDR-005-save-sync.md) — synchronization observes and
+  commits the history marks attach to; [FDR-007](FDR-007-revision-labeling.md) —
+  labels derive from content while achievement marks deliberately do not.
+- **ADRs:** [ADR-012](../adr/ADR-012-portable-save-store.md) — portable lineage
+  metadata; [ADR-014](../adr/ADR-014-durable-proof-before-forgetting.md) — safe
+  placement and deletion.
 
 ## Open Questions
 
-- Store artwork. Marks use a generic trophy. Steam's schema carries an icon
-  hash whose image lives on Valve's CDN; showing the store-specific image
-  means either a request from the Dash to a third party or storing it as an
-  artifact. Neither has been argued yet.
-- Whether a mark should be visible on a revision's descendants rather than
-  only on the one that first carried it. The rail's order already says
-  "everything below predates this", so it has not been needed.
-- Other stores. The capability is shaped for them, but nothing but Steam
-  implements it, and stores without a local record of unlock times may need
-  the credentialed path this deliberately avoided.
+- Whether store-specific artwork is worth third-party fetching or durable
+  storage.
+- Whether descendants should also display marks inherited from an earlier
+  revision.
+- Which other stores can provide trustworthy local unlock times.

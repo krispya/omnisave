@@ -1,7 +1,7 @@
 # FDR-002: Game Lifecycle
 
 **Status:** Active
-**Last reviewed:** 2026-08-09
+**Last reviewed:** 2026-08-18
 
 ## Overview
 
@@ -9,8 +9,6 @@ How a game enters the Library, what the server remembers about where it came
 from, and what it takes for a game to leave. The lifecycle runs detect → track
 → bind: a Device's adapters discover installed games, the user tracks the ones
 Omnisave should know about, and binding connects native saves to Omnisaves.
-Save synchronization is not built yet; until it exists, liveness updates come
-from registration and tracking alone.
 
 ## Behavior
 
@@ -41,11 +39,8 @@ from registration and tracking alone.
   unshared artifacts, and provenance — and records immutable game, save, and
   revision deletion markers so restoring an older portable copy cannot undo
   it. This is the lifecycle's only act of forgetting.
-- Game reads include provenance so any game view can present it without a
-  separate request.
-- An open view refreshes automatically when games, saves, revisions, or
-  provenance change. Initial view loading uses a spinner; background refreshes
-  keep settled content visible until its replacement is ready.
+- Game views include provenance and refresh when games, saves, revisions, or
+  provenance change.
 - Device liveness (last seen) updates on explicit acts — registration,
   tracking, sync — not on every request.
 
@@ -96,13 +91,14 @@ self-hosted trust model.
 Sync cadence is fresh enough for "last seen 3 days ago".
 **Tradeoff:** Liveness granularity is one sync interval.
 
-### 6. Provenance is embedded in game reads
+### 6. Provenance is part of the Game view
 
-**Decision:** Reading a game returns its provenance alongside media and
-identifiers rather than through a separate fetch.
-**Why:** Game views show provenance alongside the game; one request keeps
-clients simple, and response weight is irrelevant at self-hosted scale.
-**Tradeoff:** List responses carry data most views ignore.
+**Decision:** A Game is presented with its provenance rather than making
+provenance a separate feature or destination.
+**Why:** Where a game has lived is part of understanding that Library entry,
+especially after it is no longer installed anywhere.
+**Tradeoff:** Views that do not need provenance still receive a richer Game
+representation.
 
 ### 7. "Device" is a new term; "Target" is not reused
 
@@ -142,8 +138,8 @@ server is the authority ([ADR-001](../adr/ADR-001-server-authority.md)).
 The earlier behavior — silently re-creating a deleted game from scan
 evidence, or reseeding a deleted save from local content — meant a deletion
 could never win while any device still remembered the game. Untracking
-honors the deletion and keeps re-protection explicit: re-tracking is one
-prompt away and starts fresh.
+honors the deletion and keeps re-protection explicit: re-tracking is deliberate
+and starts fresh.
 **Tradeoff:** A full server data reset untracks every game on every device
 instead of self-healing invisibly, so users re-track after a reset. A save
 deleted with the intent of reseeding it also requires that re-track first.
