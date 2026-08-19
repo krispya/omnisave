@@ -102,11 +102,25 @@ later pass.
 **Decision:** A true divergence may continue local progress as another Omnisave
 or rejoin the existing Omnisave at current. Rejoining first preserves local
 progress as a branch of the baseline; a baseline-less save is preserved
-independently because it has no node to branch from.
+independently because it has no node to branch from. Rejoining is refused
+before anything is preserved when the Current Revision cannot be applied into
+the Local Save's layout. An answer that fails after preserving records the
+preservation it created, and the next answer continues that exact Omnisave —
+binding it, verifying against it, or completing its unfinished push — instead
+of minting another.
 **Why:** Both histories contain real progress. The choice is about whether they
-remain independently synchronized, not which content should be discarded.
+remain independently synchronized, not which content should be discarded. An
+answer that cannot finish must cost nothing, and repeating an answer that
+failed partway must converge on one preservation instead of stacking one per
+attempt. The record is the only proof of ownership honored: content equality
+cannot tell this Device's own preservation from an independent lineage that
+briefly holds the same bytes, and adopting such a twin would cross two
+playthroughs.
 **Tradeoff:** Preserved branches and forks remain until deliberately pruned, and
-two Devices that keep progressing independently may diverge again.
+two Devices that keep progressing independently may diverge again. A binding
+whose lineage lives in another layout can only fork; the one-representation
+election ([FDR-003](FDR-003-automatic-save-binding.md), decision 10) is what
+keeps such bindings from arising.
 
 ### 5. Sync completes only decision-free binding work
 
@@ -174,6 +188,18 @@ from when the server accepted it.
 today. Only the Device that reads the native files can provide that evidence.
 **Tradeoff:** File times depend on Device clocks and file-copy behavior, so they
 are informative rather than authoritative ordering.
+
+## Open Questions
+
+- When Steam Cloud carries a game's save between Devices, every bound Device
+  follows the same mirror Steam itself replicates, and a restore should enter
+  that transport exactly once. The settled direction is a server-granted
+  placement claim: one Device wins the claim and writes its mirror, Steam
+  fans the content out, and every other Device reports the wait and adopts
+  the arriving content through the existing exact-match rebind. Not built
+  yet — today each bound Device still applies a pull to its own mirror
+  independently, which can make Steam see the same change as several local
+  edits.
 
 ## Related
 

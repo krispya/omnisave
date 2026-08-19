@@ -253,6 +253,107 @@ Local Save Game:
 	}
 }
 
+// A game whose adapter-discovered save demonstrably holds the same save
+// family the profile rules locate — files by the same names — keeps that one
+// representation, so one game never tracks two saves whose lineages could
+// never converge (FDR-003, decision 10).
+func TestManualScanElectsTheCloudSaveOverProfileRules(t *testing.T) {
+	steamRoot := t.TempDir()
+	installRoot := writeSteamApp(t, steamRoot, "413150", "Stardew Valley", "Stardew Valley")
+	remoteDirectory := filepath.Join(steamRoot, "userdata", "76561198000000000", "413150", "remote")
+	if err := os.MkdirAll(remoteDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteDirectory, "SaveGameInfo"), []byte("summary"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteDirectory, "progress.sav"), []byte("cloud-progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	saveDirectory := filepath.Join(installRoot, "Saves")
+	if err := os.MkdirAll(saveDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(saveDirectory, "progress.sav"), []byte("native-progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	profiles, err := ludusavi.New([]byte(`
+Stardew Valley:
+  files:
+    <base>/Saves:
+      tags: [save]
+  steam:
+    id: 413150
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := client.NewScanner(profiles, steamtarget.New(steamlocator.NewInstaller(steamRoot)))
+	scans, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scans) != 1 || len(scans[0].Games) != 1 {
+		t.Fatalf("expected one Steam game, got %+v", scans)
+	}
+	saves := scans[0].Games[0].Saves
+	if len(saves) != 1 || saves[0].Kind != "cloud" {
+		t.Fatalf("expected only the Cloud save representation, got %+v", saves)
+	}
+	destinations := scans[0].Games[0].Destinations
+	if len(destinations) != 1 || destinations[0].Kind != "cloud" {
+		t.Fatalf("expected only the Cloud destination, got %+v", destinations)
+	}
+}
+
+// A mirror holding files that share no names with what the profile rules
+// locate is auxiliary content — settings a game syncs, a leftover — and is
+// no evidence the real progress is covered, so both representations stay
+// tracked exactly as they were before election existed.
+func TestManualScanKeepsBothSavesWhenTheMirrorSharesNoNames(t *testing.T) {
+	steamRoot := t.TempDir()
+	installRoot := writeSteamApp(t, steamRoot, "413150", "Stardew Valley", "Stardew Valley")
+	remoteDirectory := filepath.Join(steamRoot, "userdata", "76561198000000000", "413150", "remote")
+	if err := os.MkdirAll(remoteDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteDirectory, "options.cfg"), []byte("settings"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	saveDirectory := filepath.Join(installRoot, "Saves")
+	if err := os.MkdirAll(saveDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(saveDirectory, "progress.sav"), []byte("native-progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	profiles, err := ludusavi.New([]byte(`
+Stardew Valley:
+  files:
+    <base>/Saves:
+      tags: [save]
+  steam:
+    id: 413150
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := client.NewScanner(profiles, steamtarget.New(steamlocator.NewInstaller(steamRoot)))
+	scans, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scans) != 1 || len(scans[0].Games) != 1 {
+		t.Fatalf("expected one Steam game, got %+v", scans)
+	}
+	saves := scans[0].Games[0].Saves
+	if len(saves) != 2 || saves[0].Kind != "cloud" || saves[1].Kind != "local" {
+		t.Fatalf("expected the Cloud save and the uncovered native save, got %+v", saves)
+	}
+}
+
 func TestScanFindsDarkSoulsIIISavesUnderProtonFromTheEmbeddedManifest(t *testing.T) {
 	steamRoot := t.TempDir()
 	writeSteamApp(t, steamRoot, "374320", "DARK SOULS III", "DARK SOULS III")

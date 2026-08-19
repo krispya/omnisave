@@ -57,6 +57,29 @@ func TestApplyCurrentAppliesACompleteVerifiedHeadSnapshot(t *testing.T) {
 	}
 }
 
+// CanApply is an answer's pre-flight: it must refuse a current revision
+// spelled in another save's layout, and it must decide from the layout
+// alone — the local files here do not exist on disk.
+func TestCanApplyChecksLayoutWithoutTouchingTheFilesystem(t *testing.T) {
+	local := target.Save{Files: []target.File{{
+		Path:       filepath.Join(string(filepath.Separator), "nowhere", "saves", "progress.sav"),
+		LocationID: "battery", RelativePath: "progress.sav",
+	}}}
+	fits := omnisave.Revision{ID: "revision-1", Files: []omnisave.RevisionFile{
+		revisionFile("battery/progress.sav", "content", "application/octet-stream"),
+		revisionFile("battery/deeper/new.dat", "sidecar", "application/octet-stream"),
+	}}
+	if err := binding.CanApply(local, fits); err != nil {
+		t.Fatalf("expected a same-layout current to be appliable, got %v", err)
+	}
+	foreign := omnisave.Revision{ID: "revision-2", Files: []omnisave.RevisionFile{
+		revisionFile("remote/progress.sav", "content", "application/octet-stream"),
+	}}
+	if err := binding.CanApply(local, foreign); err == nil {
+		t.Fatal("expected a foreign-layout current to be refused")
+	}
+}
+
 // countingSource is an artifactSource that remembers what was asked of it,
 // so a test can hold the apply to the transfers it actually needs.
 type countingSource struct {
