@@ -718,6 +718,20 @@ func TestAKeepCurrentCommitAttachesABranchWithoutMovingCurrent(t *testing.T) {
 		t.Fatalf("expected the current pointer to stay at %s, got %v", current.ID, after.CurrentRevisionID)
 	}
 
+	// Keeping current needs a current to keep: an empty save has none, and
+	// honoring it there would leave history no reader could use.
+	empty, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = saves.CommitRevision(ctx, empty.ID, omnisave.CreateRevision{
+		KeepCurrent: true,
+		Upserts:     []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeBlob(t, ctx, saves, "first")}},
+	})
+	if !errors.Is(err, omnisave.ErrInvalid) {
+		t.Fatalf("expected keeping current on an empty save to be refused, got %v", err)
+	}
+
 	// The pointer is still guarded: a keep-current commit with a stale
 	// expectation is refused like any other.
 	_, err = saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{

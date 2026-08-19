@@ -196,6 +196,12 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 	if input.ParentRevisionID != nil && *input.ParentRevisionID == "" {
 		return nil, omnisave.ErrInvalid
 	}
+	if input.KeepCurrent && save.CurrentRevisionID == nil {
+		// Keeping current needs a current to keep. Honoring it on an empty
+		// save would leave history with no current revision at all, which
+		// every reader treats as an unusable save.
+		return nil, omnisave.ErrInvalid
+	}
 	suppliedName, validName := normalizeDisplayName(input.DisplayName)
 	if !validName {
 		return nil, omnisave.ErrInvalid

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mattn/go-isatty"
 
@@ -1600,8 +1601,10 @@ func resolveDivergence(
 		return nil
 	}
 	// The question names the save forking would create, so it is worked out
-	// before anything is asked or reported.
-	deviceName := strings.TrimSpace(state.Device.Name)
+	// before anything is asked or reported. The Device's name is trimmed to
+	// what the server will accept, since it also names a branch revision on
+	// its own.
+	deviceName := truncateRunes(strings.TrimSpace(state.Device.Name), maxDisplayName)
 	question := tui.DivergedQuestion{
 		GameTitle:    local.GameTitle,
 		OmnisaveName: name,
@@ -1822,21 +1825,34 @@ func lastSyncedAt(bound tracking.Binding) time.Time {
 // the source's name is the only link the name can carry. A Device without a
 // name has no provenance to record, so the empty result lets the server pick
 // its own default. The server numbers a repeat — a second divergence becomes
-// "Save 1 (Steam Deck) 2" (FDR-003, decision 8). The result is capped at the
-// server's 100-rune display name limit.
+// "Save 1 (Steam Deck) 2" (FDR-003, decision 8). A name too long for the
+// server's limit loses base name, never the Device: the Device is the whole
+// point of the name, and two Devices trimmed to the same text would be
+// indistinguishable.
 func deconflictName(source omnisave.Omnisave, deviceName string) string {
 	if deviceName == "" {
 		return ""
 	}
-	name := deviceName
-	if base := strings.TrimSpace(source.DisplayName); base != "" {
-		name = base + " (" + deviceName + ")"
+	base := strings.TrimSpace(source.DisplayName)
+	suffix := " (" + deviceName + ")"
+	room := maxDisplayName - utf8.RuneCountInString(suffix)
+	if base == "" || room < 1 {
+		return truncateRunes(deviceName, maxDisplayName)
 	}
-	runes := []rune(name)
-	if len(runes) > 100 {
-		runes = runes[:100]
+	return truncateRunes(base, room) + suffix
+}
+
+// maxDisplayName is the server's display name limit, in runes. A name past it
+// is rejected outright, so the client trims rather than let a Device with a
+// long hostname fail the same way on every retry.
+const maxDisplayName = 100
+
+func truncateRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
 	}
-	return string(runes)
+	return string(runes[:limit])
 }
 
 func deviceName() string {

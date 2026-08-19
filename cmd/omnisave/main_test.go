@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	accessservice "github.com/krisbaumgartner/omnisave/internal/access/service"
@@ -952,5 +953,25 @@ func assertBinding(t *testing.T, fixture bindingFixture, omnisaveID, revisionID 
 	bound, ok := fixture.state.BindingFor(local)
 	if !ok || bound.OmnisaveID != omnisaveID || bound.LastSyncedRevisionID == nil || *bound.LastSyncedRevisionID != revisionID {
 		t.Fatalf("expected binding to %s at %s, got %+v", omnisaveID, revisionID, bound)
+	}
+}
+
+// The Device is what a deconflict name exists to record, so a name too long
+// for the server loses source name rather than the Device that identifies it.
+func TestADeconflictNameKeepsTheDeviceWhenItMustTrim(t *testing.T) {
+	long := omnisave.Omnisave{DisplayName: strings.Repeat("A", 120)}
+	name := deconflictName(long, "Steam Deck")
+	if len([]rune(name)) > maxDisplayName {
+		t.Fatalf("expected the name within the server's limit, got %d runes", len([]rune(name)))
+	}
+	if !strings.HasSuffix(name, " (Steam Deck)") {
+		t.Fatalf("expected the device to survive the trim, got %q", name)
+	}
+
+	// A Device whose own name fills the limit leaves no room for a source
+	// name, and is still trimmed to something the server accepts.
+	huge := deconflictName(long, strings.Repeat("D", 150))
+	if len([]rune(huge)) != maxDisplayName || strings.Contains(huge, "A") {
+		t.Fatalf("expected the device name alone, trimmed, got %q", huge)
 	}
 }

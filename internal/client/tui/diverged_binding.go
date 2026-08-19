@@ -21,10 +21,12 @@ const (
 	DivergedBindingJump DivergedBindingChoice = "jump"
 )
 
-// DivergedBindingDefault is the answer both surfaces open on. Taking current
-// is the one answer that leaves the save count where it was — it keeps this
-// device's progress in the tree rather than minting a lineage — so it is the
-// safe thing to land on when someone confirms without reading.
+// DivergedBindingDefault is the answer both surfaces open on. Jumping is the
+// answer that ends the divergence — this Device rejoins the lineage everyone
+// else is on — while forking is the deliberate decision to keep two
+// playthroughs apart, so the default resolves rather than multiplies. Landing
+// on it destroys nothing either way: both answers keep the local progress
+// (FDR-005, decision 4).
 const DivergedBindingDefault = DivergedBindingJump
 
 // DivergedQuestion is one diverged save put to the user: the game, the
