@@ -434,16 +434,16 @@ func TestAnsweringSendsTheChoiceAndTheSaveItBelongsTo(t *testing.T) {
 		t.Fatalf("expected the default answer to take current, got %q", request.Diverged)
 	}
 
-	// Moving off the default reaches the other answer.
+	// Moving down from the default reaches the other answer.
 	reasked, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	<-requests
-	moved, _ := reasked.(watchModel).Update(tea.KeyMsg{Type: tea.KeyUp})
+	moved, _ := reasked.(watchModel).Update(tea.KeyMsg{Type: tea.KeyDown})
 	forked, _ := moved.(watchModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if forked.(watchModel).question != nil {
 		t.Fatal("expected answering to close the question")
 	}
 	if request := <-requests; request.Diverged != DivergedBindingFork {
-		t.Fatalf("expected moving up to answer fork, got %q", request.Diverged)
+		t.Fatalf("expected moving down to answer fork, got %q", request.Diverged)
 	}
 }
 

@@ -71,11 +71,11 @@ path, syncing-down built the read path; sync makes both routine.
   A baseline-less binding whose content turns out to equal the Current
   Revision is rebound silently, even by a headless pass — there was
   nothing to resolve.
-- Both surfaces show the same two labels and nothing else: "Fork as Save 1
-  (Steam Deck)", naming the save that answer would create, and "Jump to
-  current" — the same pair, worded the same way, as the stale-save prompt
-  in [FDR-003](FDR-003-automatic-save-binding.md), decision 5. Both open on
-  jumping — it is the answer that adds no save, so
+- Both surfaces show the same two labels and nothing else: "Jump to current"
+  first, followed by "Fork as Save 1 (Steam Deck)", naming the save that
+  answer would create — the same pair, worded the same way, as the stale-save
+  prompt in [FDR-003](FDR-003-automatic-save-binding.md), decision 5. Both
+  open on jumping — it is the answer that adds no save, so
   confirming without reading keeps the poster wall as it was.
 - The answer can be given from the live watch view without stopping it:
   the row says which Omnisave is waiting, `r` raises the question as a
