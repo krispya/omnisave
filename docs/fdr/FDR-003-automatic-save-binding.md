@@ -1,16 +1,16 @@
 # FDR-003: Automatic Save Binding
 
 **Status:** Experimental
-**Last reviewed:** 2026-08-03
+**Last reviewed:** 2026-08-18
 
 ## Overview
 
 How a Device's Local Saves get connected to Omnisaves without a separate
 bind step. Tracking ends with a binding pass: games whose saves the server
 has never seen are seeded from the local save, games the server already
-knows are re-attached by content match, and only genuine ambiguity asks the
-user. Manual `bind` remains for corrections. This is the first slice of the
-synchronization flow — seeding builds the client's write path and
+knows are re-attached by content match, and unmatched or ambiguous saves ask
+the user. Manual `bind` remains for corrections. This is the first slice of
+the synchronization flow — seeding builds the client's write path and
 establishes the baseline that sync will later diff against.
 
 ## Behavior
@@ -41,13 +41,17 @@ establishes the baseline that sync will later diff against.
   wall the source's name is the only link the fork's name can carry. A
   Device with no name requests nothing and the server's " (fork)"
   suffix applies.
-- If the local save matches nothing, or matches more than one Omnisave, the
-  user chooses: bind to one of the existing Omnisaves (matches are marked),
-  create a new one seeded from the local save, or decide later — the save
-  stays unbound and the result points at `omnisave bind`.
-- Choosing an existing Omnisave that does not match the local save records
-  the binding with no baseline; nothing is uploaded or overwritten.
-  Reconciling that divergence is synchronization's job.
+- A local save matching no revision is an Unmatched Local Save. It offers
+  only "Sync with save" and "Create a new save". Creating seeds and binds a
+  new save from the local content. Syncing opens the list of existing save
+  names; choosing one first preserves the unmatched local content as a new
+  Device-named save, then applies and binds the selected save's Current
+  Revision. There is no ignore choice; leaving either prompt aborts the run
+  without changing anything.
+- If the local save matches more than one Omnisave, the prompt lists the
+  matching save names plus "Create a new save". Choosing a match binds at
+  the matched revision; creating keeps the content as another independent
+  save.
 - Each Local Save binds independently; a game with several local saves can
   seed several Omnisaves.
 - Untracking and re-tracking a game does not duplicate its saves: the
@@ -141,15 +145,22 @@ the complete Current Revision before moving any local file, then restore the mat
 snapshot if applying it fails. The replaced content also remains
 recoverable as the older server revision that triggered the choice.
 
-### 6. Ambiguity prompts; the pass never guesses
+### 6. Unmatched and ambiguous saves ask; the pass never guesses
 
 **Decision:** Automatic rebinding requires exactly one matching Omnisave.
-Zero or several matches ask the user.
+An Unmatched Local Save first asks "Sync with save" or "Create a new save";
+syncing then asks which existing save to adopt. Several matches ask which
+matching save to use or whether to create a new one. Neither prompt offers
+an ignore choice.
 **Why:** Binding decides which lineage future revisions extend. A silent
 wrong guess writes new history onto the wrong playthrough — strictly worse
-than one prompt in an otherwise automatic flow.
+than one prompt in an otherwise automatic flow. Tracking already says the
+game should synchronize, so an ignore action would leave that intent
+unfulfilled; escape remains the way to abort the run without deciding.
 **Tradeoff:** Forks whose content has not yet diverged always prompt, since
-the same save matches both lineages.
+the same save matches both lineages. An unmatched save cannot remain tracked
+and unbound through an interactive run, though a headless pass still reports
+that it needs attention.
 
 ### 7. No local save, no Omnisave
 
@@ -182,15 +193,18 @@ the same identity.
 playthrough — and a deleted save's number can be reissued later, so a name
 is not a stable identifier; the ID remains the only permanent handle.
 
-### 9. Mismatched choices defer to synchronization
+### 9. Syncing an unmatched save adopts the selected save immediately
 
-**Decision:** Binding to a non-matching existing Omnisave records the
-mapping with an empty baseline and moves no content in either direction.
-**Why:** What to do when both sides have content is exactly the divergence
-question synchronization owns. Answering it at bind time would smuggle a
-conflict policy into a mapping decision.
-**Tradeoff:** That local save stays unprotected until synchronization
-exists and runs.
+**Decision:** "Sync with save" preserves the unmatched local content as a
+new save, then applies the selected save's Current Revision and records it
+as the sync baseline in the same run. It never creates a baseline-less
+binding or raises a later divergence question.
+**Why:** No revision matches, so the conflict is already known before the
+user chooses a save. Asking which save to sync with and later asking whether
+to sync with it repeats one decision. Preserving first retains the product's
+lossless guarantee while making the label mean exactly what it says.
+**Tradeoff:** Syncing an unmatched save creates a preservation save the user
+may later delete. This is visible history rather than silent data loss.
 
 ## Related
 
@@ -204,5 +218,5 @@ exists and runs.
   survival across untracking; [FDR-004](FDR-004-sync-to-device.md) — the
   read counterpart: offering server saves to a Device that has none;
   [FDR-005](FDR-005-save-sync.md) — ongoing sync, which re-runs this
-  pass's automatic half and gives baseline-less bindings their
-  resolution.
+  pass's automatic half and supplies the lossless apply machinery used when
+  an unmatched Local Save adopts an existing save.

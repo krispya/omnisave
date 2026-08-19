@@ -1,7 +1,7 @@
 # FDR-005: Save Sync
 
 **Status:** Experimental
-**Last reviewed:** 2026-08-13
+**Last reviewed:** 2026-08-18
 
 ## Overview
 
@@ -36,9 +36,10 @@ path, syncing-down built the read path; sync makes both routine.
     one sitting on a sibling branch adds nothing this Device is missing, so
     the local progress commits as a branch off the baseline and the Current
     Revision follows it (decision 15).
-- A binding without a baseline (a manual bind to non-matching content,
-  [FDR-003](FDR-003-automatic-save-binding.md) decision 9) is diverged
-  from the start and resolves the same way.
+- A manual binding without a baseline is diverged from the start and
+  resolves the same way. Automatic binding never creates one: an Unmatched
+  Local Save is resolved immediately by [FDR-003](FDR-003-automatic-save-binding.md),
+  decision 9.
 - `omnisave sync` runs one pass over every binding, reports each
   outcome in the track report voice, and exits. It never prompts.
 - `omnisave watch` stays running: it watches bound save locations —
