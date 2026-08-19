@@ -457,7 +457,7 @@ func (r *Repository) RestoreOmnisave(ctx context.Context, id, revisionID string,
 	return r.projectStore(ctx)
 }
 
-func (r *Repository) CommitRevision(ctx context.Context, expectedCurrentRevisionID *string, revision omnisave.Revision) error {
+func (r *Repository) CommitRevision(ctx context.Context, expectedCurrentRevisionID *string, revision omnisave.Revision, keepCurrent bool) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
 	if err := r.requireStoreReady(); err != nil {
@@ -501,22 +501,26 @@ func (r *Repository) CommitRevision(ctx context.Context, expectedCurrentRevision
 	if err := insertRevisionFiles(ctx, tx, revision); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE omnisaves SET current_revision_id = ?
-		WHERE id = ? AND ((current_revision_id IS NULL AND ? IS NULL) OR current_revision_id = ?)`,
-		revision.ID, revision.OmnisaveID, expectedCurrentRevisionID, expectedCurrentRevisionID)
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count == 0 {
-		actual, lookupErr := currentRevision(ctx, tx, revision.OmnisaveID)
-		if lookupErr != nil {
-			return translateNotFound(lookupErr)
+	// A keep-current commit leaves the pointer where the check above proved
+	// it; the guarded UPDATE otherwise doubles as a second conflict check.
+	if !keepCurrent {
+		result, err := tx.ExecContext(ctx, `UPDATE omnisaves SET current_revision_id = ?
+			WHERE id = ? AND ((current_revision_id IS NULL AND ? IS NULL) OR current_revision_id = ?)`,
+			revision.ID, revision.OmnisaveID, expectedCurrentRevisionID, expectedCurrentRevisionID)
+		if err != nil {
+			return err
 		}
-		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: nullableStringPointer(actual)}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			actual, lookupErr := currentRevision(ctx, tx, revision.OmnisaveID)
+			if lookupErr != nil {
+				return translateNotFound(lookupErr)
+			}
+			return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: nullableStringPointer(actual)}
+		}
 	}
 	// Marks waiting on this save now have the snapshot they were waiting for.
 	if err := claimPendingAchievements(ctx, tx, revision); err != nil {

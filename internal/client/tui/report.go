@@ -72,10 +72,13 @@ const PendingDiverged PendingKind = "diverged"
 
 // PendingDecision is what a save is waiting to be asked, carried as data so
 // the view can key an answer back to the save that asked. The game's title
-// is the row it rides, so only the Omnisave has to be named here.
+// is the row it rides, so only the Omnisave has to be named here. ForkName
+// lets the raised question name the save forking would create (see
+// DivergedQuestion).
 type PendingDecision struct {
 	Kind         PendingKind
 	OmnisaveName string
+	ForkName     string
 }
 
 func (r *TrackReport) game(title string) *trackedGameReport {
@@ -210,7 +213,7 @@ func (r *TrackReport) SyncedWith(title, omnisaveName string, at time.Time) {
 // waiting for an interactive run to choose between jumping and forking.
 func (r *TrackReport) Stale(title, omnisaveName string) {
 	r.mark(title, mutedStyle.Render("○"))
-	r.event(title, "save matches a revision of "+omnisaveName+" that is not current, run omnisave track to resolve")
+	r.event(title, "save diverged from "+omnisaveName+", run omnisave track to resolve")
 }
 
 // CurrentMoved records a commit the server refused because the Omnisave's
@@ -238,11 +241,22 @@ func (r *TrackReport) Branched(title, omnisaveName string) {
 	r.event(title, "save branched from "+omnisaveName)
 }
 
+// BranchKept records unsynced local progress preserved as a branch this
+// device is about to leave: a divergence jump keeps the content in the
+// Omnisave's tree, named for the device, before adopting the Current
+// Revision — no separate fork to clean up.
+func (r *TrackReport) BranchKept(title, omnisaveName string) {
+	r.event(title, "progress kept as a branch of "+omnisaveName)
+}
+
 // Diverged records a save with new progress on both sides, waiting for an
-// interactive run to resolve.
-func (r *TrackReport) Diverged(title, omnisaveName string) {
+// interactive run to resolve. forkName is what forking would create, so a
+// view raising the question can name it.
+func (r *TrackReport) Diverged(title, omnisaveName, forkName string) {
 	r.mark(title, mutedStyle.Render("○"))
-	r.game(title).pending = &PendingDecision{Kind: PendingDiverged, OmnisaveName: omnisaveName}
+	r.game(title).pending = &PendingDecision{
+		Kind: PendingDiverged, OmnisaveName: omnisaveName, ForkName: forkName,
+	}
 	r.event(title, "save diverged from "+omnisaveName+", run omnisave track to resolve")
 }
 

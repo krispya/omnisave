@@ -2,7 +2,6 @@ package tui
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/charmbracelet/huh"
 )
@@ -19,11 +18,23 @@ const (
 	StaleBindingFork StaleBindingChoice = "fork"
 )
 
+// StaleQuestion is one stale save put to the user: the game, the Omnisave it
+// matches an older revision of, and the name forking would create. The pass
+// that found the match fills it in, so the answer names the save it makes.
+type StaleQuestion struct {
+	GameTitle    string
+	OmnisaveName string
+	// ForkName is the deconflict name the fork would carry ("Save 1 (Steam
+	// Deck)"); empty when the Device is unnamed and the server's default
+	// applies.
+	ForkName string
+}
+
 // PromptStaleBinding asks whether a local snapshot on a non-current revision
 // should jump to the Current Revision or continue independently as a fork.
-func PromptStaleBinding(gameTitle, omnisaveName string) (StaleBindingChoice, error) {
+func PromptStaleBinding(question StaleQuestion) (StaleBindingChoice, error) {
 	choice := StaleBindingJump
-	form := staleBindingForm(gameTitle, omnisaveName, &choice)
+	form := staleBindingForm(question, &choice)
 	if err := form.Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return "", ErrAborted
@@ -33,14 +44,14 @@ func PromptStaleBinding(gameTitle, omnisaveName string) (StaleBindingChoice, err
 	return choice, nil
 }
 
-func staleBindingForm(gameTitle, omnisaveName string, choice *StaleBindingChoice) *huh.Form {
+func staleBindingForm(question StaleQuestion, choice *StaleBindingChoice) *huh.Form {
 	prompt := huh.NewSelect[StaleBindingChoice]().
-		Title(fmt.Sprintf("Save matches a revision of %s that is not its current one", omnisaveName)).
+		Title(DivergenceTitle(question.OmnisaveName)).
 		Options(
-			huh.NewOption("Jump to current · replace local files with the current revision", StaleBindingJump),
-			huh.NewOption("Fork here · keep these files as a new independent playthrough", StaleBindingFork),
+			huh.NewOption("Jump to current", StaleBindingJump),
+			huh.NewOption(ForkLabel(question.ForkName), StaleBindingFork),
 		).
 		Value(choice)
-	form := huh.NewForm(huh.NewGroup(prompt).Title(gameTitle))
+	form := huh.NewForm(huh.NewGroup(prompt).Title(question.GameTitle))
 	return form.WithTheme(trackingTheme())
 }

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	accessservice "github.com/krisbaumgartner/omnisave/internal/access/service"
@@ -166,9 +167,9 @@ func TestTrackingCanJumpAStaleLocalSaveToTheCurrentRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	outcome := tui.TrackOutcome{Tracked: 1, Synced: true}
-	choose := func(gameTitle, omnisaveName string) (tui.StaleBindingChoice, error) {
-		if gameTitle != "Chrono Trigger" || omnisaveName != "New Game+" {
-			t.Fatalf("unexpected stale-match prompt: %q %q", gameTitle, omnisaveName)
+	choose := func(question tui.StaleQuestion) (tui.StaleBindingChoice, error) {
+		if question.GameTitle != "Chrono Trigger" || question.OmnisaveName != "New Game+" {
+			t.Fatalf("unexpected stale-match prompt: %+v", question)
 		}
 		return tui.StaleBindingJump, nil
 	}
@@ -217,7 +218,9 @@ func TestTrackingCanForkAStaleLocalSaveAtItsMatchingRevision(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
 				t.Fatal(err)
 			}
-			if input.RevisionID != matched.ID || input.DisplayName != "New Game+ (fork)" {
+			// This device has no name, so the fork asks for none and the
+			// server's own "(fork)" default applies.
+			if input.RevisionID != matched.ID || input.DisplayName != "" {
 				t.Fatalf("unexpected fork request: %+v", input)
 			}
 			response.WriteHeader(http.StatusCreated)
@@ -232,7 +235,7 @@ func TestTrackingCanForkAStaleLocalSaveAtItsMatchingRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	outcome := tui.TrackOutcome{Tracked: 1, Synced: true}
-	choose := func(_, _ string) (tui.StaleBindingChoice, error) {
+	choose := func(tui.StaleQuestion) (tui.StaleBindingChoice, error) {
 		return tui.StaleBindingFork, nil
 	}
 
@@ -285,9 +288,9 @@ func TestAReverseStaleSaveGetsTheStalePromptAndCanAdoptTheOlderCurrent(t *testin
 	}
 	outcome := tui.TrackOutcome{Tracked: 1, Synced: true}
 	prompted := false
-	choose := func(gameTitle, omnisaveName string) (tui.StaleBindingChoice, error) {
-		if gameTitle != "Chrono Trigger" || omnisaveName != "New Game+" {
-			t.Fatalf("unexpected stale-match prompt: %q %q", gameTitle, omnisaveName)
+	choose := func(question tui.StaleQuestion) (tui.StaleBindingChoice, error) {
+		if question.GameTitle != "Chrono Trigger" || question.OmnisaveName != "New Game+" {
+			t.Fatalf("unexpected stale-match prompt: %+v", question)
 		}
 		prompted = true
 		return tui.StaleBindingJump, nil
@@ -355,7 +358,7 @@ func TestAReverseStaleSaveCanForkToKeepItsDescendantContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	outcome := tui.TrackOutcome{Tracked: 1, Synced: true}
-	choose := func(_, _ string) (tui.StaleBindingChoice, error) {
+	choose := func(tui.StaleQuestion) (tui.StaleBindingChoice, error) {
 		return tui.StaleBindingFork, nil
 	}
 
@@ -639,7 +642,7 @@ func TestDeletingAGameInTheDashUntracksItBeforeTheNextPrompt(t *testing.T) {
 // testPrompts builds a prompt set whose diverged prompt fails the test —
 // binding-era tests never expect divergence.
 func testPrompts(
-	stale func(string, string) (tui.StaleBindingChoice, error),
+	stale func(tui.StaleQuestion) (tui.StaleBindingChoice, error),
 	ambiguous func(string, []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error),
 	t *testing.T,
 ) *reconcilePrompts {
@@ -656,9 +659,9 @@ func failingSyncToDeviceChooser(t *testing.T) func(string, []tui.SyncToDeviceOpt
 	}
 }
 
-func failingDivergedChooser(t *testing.T) func(string, string) (tui.DivergedBindingChoice, error) {
-	return func(gameTitle, _ string) (tui.DivergedBindingChoice, error) {
-		t.Fatalf("unexpected diverged prompt for %q", gameTitle)
+func failingDivergedChooser(t *testing.T) func(tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
+	return func(question tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
+		t.Fatalf("unexpected diverged prompt for %q", question.GameTitle)
 		return "", nil
 	}
 }
@@ -916,9 +919,9 @@ func TestARunThatDoesNotAskKeepsEveryTrackedGame(t *testing.T) {
 	}
 }
 
-func failingStaleChooser(t *testing.T) func(string, string) (tui.StaleBindingChoice, error) {
-	return func(gameTitle, _ string) (tui.StaleBindingChoice, error) {
-		t.Fatalf("unexpected stale prompt for %q", gameTitle)
+func failingStaleChooser(t *testing.T) func(tui.StaleQuestion) (tui.StaleBindingChoice, error) {
+	return func(question tui.StaleQuestion) (tui.StaleBindingChoice, error) {
+		t.Fatalf("unexpected stale prompt for %q", question.GameTitle)
 		return "", nil
 	}
 }
@@ -950,5 +953,25 @@ func assertBinding(t *testing.T, fixture bindingFixture, omnisaveID, revisionID 
 	bound, ok := fixture.state.BindingFor(local)
 	if !ok || bound.OmnisaveID != omnisaveID || bound.LastSyncedRevisionID == nil || *bound.LastSyncedRevisionID != revisionID {
 		t.Fatalf("expected binding to %s at %s, got %+v", omnisaveID, revisionID, bound)
+	}
+}
+
+// The Device is what a deconflict name exists to record, so a name too long
+// for the server loses source name rather than the Device that identifies it.
+func TestADeconflictNameKeepsTheDeviceWhenItMustTrim(t *testing.T) {
+	long := omnisave.Omnisave{DisplayName: strings.Repeat("A", 120)}
+	name := deconflictName(long, "Steam Deck")
+	if len([]rune(name)) > maxDisplayName {
+		t.Fatalf("expected the name within the server's limit, got %d runes", len([]rune(name)))
+	}
+	if !strings.HasSuffix(name, " (Steam Deck)") {
+		t.Fatalf("expected the device to survive the trim, got %q", name)
+	}
+
+	// A Device whose own name fills the limit leaves no room for a source
+	// name, and is still trimmed to something the server accepts.
+	huge := deconflictName(long, strings.Repeat("D", 150))
+	if len([]rune(huge)) != maxDisplayName || strings.Contains(huge, "A") {
+		t.Fatalf("expected the device name alone, trimmed, got %q", huge)
 	}
 }

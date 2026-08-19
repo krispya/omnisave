@@ -223,6 +223,55 @@ func TestUnnamedForksInheritTheSourceNameWithAForkSuffix(t *testing.T) {
 	}
 }
 
+// Repeat divergences from the same Device request the same name every time;
+// the server numbers the newcomers so the poster wall can tell them apart.
+func TestARequestedNameTheGameAlreadyCarriesIsNumbered(t *testing.T) {
+	ctx := context.Background()
+	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	source, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := storeBlob(t, ctx, saves, "snapshot")
+	root, err := saves.CommitRevision(ctx, source.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := saves.Fork(ctx, source.ID, omnisave.ForkOmnisave{RevisionID: root.ID, DisplayName: "Steam Deck"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := saves.Fork(ctx, source.ID, omnisave.ForkOmnisave{RevisionID: root.ID, DisplayName: "Steam Deck"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Omnisave.DisplayName != "Steam Deck" || second.Omnisave.DisplayName != "Steam Deck 2" {
+		t.Fatalf("expected the repeat to be numbered, got %q and %q",
+			first.Omnisave.DisplayName, second.Omnisave.DisplayName)
+	}
+
+	// Creates are deconflicted the same way, but only within their game.
+	if _, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa", DisplayName: "Steam Deck"}); err != nil {
+		t.Fatal(err)
+	}
+	third, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa", DisplayName: "Steam Deck"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.DisplayName != "Steam Deck 4" {
+		t.Fatalf("expected the create to take the next free number, got %q", third.DisplayName)
+	}
+	otherGame, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "chrono-trigger-usa", DisplayName: "Steam Deck"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherGame.DisplayName != "Steam Deck" {
+		t.Fatalf("expected another game's names to not collide, got %q", otherGame.DisplayName)
+	}
+}
+
 func TestForkCreatesAnotherSelectableSaveWithItsOwnHistory(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
@@ -615,6 +664,85 @@ func TestCommittedRevisionsAreNamedByTheGamesLabeler(t *testing.T) {
 	}
 	if second.DisplayName != "" || second.NameSource != "" {
 		t.Fatalf("a declined name still landed on the revision: %+v", second)
+	}
+}
+
+// A divergence jump preserves unsynced progress as a branch it immediately
+// leaves: the commit attaches to its parent, names itself after the device,
+// and the current pointer never moves.
+func TestAKeepCurrentCommitAttachesABranchWithoutMovingCurrent(t *testing.T) {
+	ctx := context.Background()
+	namer := &notingNamer{name: "labeler name"}
+	saves := omnisaveservice.NewWithNamer(storagetest.NewMemoryRepository(), namer)
+	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeBlob(t, ctx, saves, "baseline")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &baseline.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeBlob(t, ctx, saves, "another device")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	kept, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &current.ID,
+		ParentRevisionID:          &baseline.ID,
+		KeepCurrent:               true,
+		DisplayName:               "Steam Deck",
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeBlob(t, ctx, saves, "shelved progress")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.ParentID == nil || *kept.ParentID != baseline.ID {
+		t.Fatalf("expected the branch to attach to the baseline, got %+v", kept.ParentID)
+	}
+	// The supplied name records the user's answer, so it outranks the labeler
+	// and is never automation's to replace.
+	if kept.DisplayName != "Steam Deck" || kept.NameSource != omnisave.NameSourceManual {
+		t.Fatalf("expected the device's name to take the revision over, got %+v", kept)
+	}
+	after, err := saves.Get(ctx, save.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.CurrentRevisionID == nil || *after.CurrentRevisionID != current.ID {
+		t.Fatalf("expected the current pointer to stay at %s, got %v", current.ID, after.CurrentRevisionID)
+	}
+
+	// Keeping current needs a current to keep: an empty save has none, and
+	// honoring it there would leave history no reader could use.
+	empty, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = saves.CommitRevision(ctx, empty.ID, omnisave.CreateRevision{
+		KeepCurrent: true,
+		Upserts:     []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeBlob(t, ctx, saves, "first")}},
+	})
+	if !errors.Is(err, omnisave.ErrInvalid) {
+		t.Fatalf("expected keeping current on an empty save to be refused, got %v", err)
+	}
+
+	// The pointer is still guarded: a keep-current commit with a stale
+	// expectation is refused like any other.
+	_, err = saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &baseline.ID,
+		ParentRevisionID:          &baseline.ID,
+		KeepCurrent:               true,
+		Upserts:                   []omnisave.RevisionFile{{Path: "save.dat", Artifact: storeBlob(t, ctx, saves, "stale writer")}},
+	})
+	var conflict *omnisave.CurrentRevisionConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a current revision conflict, got %v", err)
 	}
 }
 

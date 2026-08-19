@@ -36,7 +36,11 @@ establishes the baseline that sync will later diff against.
   Device. The user chooses between fast-forwarding — the Current Revision's content
   replaces the local save and the binding starts there — or forking
   at the matched revision, keeping the lineage and continuing this
-  playthrough independently.
+  playthrough independently. The fork is named for its source and the
+  Device it deconflicts — "Save 1 (Steam Deck)" — because on the poster
+  wall the source's name is the only link the fork's name can carry. A
+  Device with no name requests nothing and the server's " (fork)"
+  suffix applies.
 - If the local save matches nothing, or matches more than one Omnisave, the
   user chooses: bind to one of the existing Omnisaves (matches are marked),
   create a new one seeded from the local save, or decide later — the save
@@ -117,7 +121,10 @@ through to the prompt.
 
 **Decision:** When the local save equals an out-of-date revision, the pass
 does not silently rebind. The user picks fast-forward — adopt the Current Revision —
-or fork at the matched revision.
+or fork at the matched revision. The prompt shows two labels and no
+explanation: "Jump to current" and "Fork as Save 1 (Steam Deck)", naming
+the save the fork would create — the same pair, worded the same way, as the
+divergence prompt ([FDR-005](FDR-005-save-sync.md), decision 4).
 **Why:** The match proves what happened: this save was tracked once, went
 stale, and play continued on another Device. The two futures are
 incompatible, and both are safe to offer — fast-forwarding discards
@@ -160,8 +167,11 @@ pass after its first save exists — the same exposure window
 **Decision:** The server guarantees a display name at creation: an unnamed
 create gets "Save N", numbered past the game's highest surviving "Save N";
 an unnamed fork inherits its source's name with a " (fork)" suffix; renaming
-to an empty name is rejected. Records that predate the rule were backfilled
-in creation order.
+to an empty name is rejected. A requested name another of the game's saves
+already carries is numbered — "Save 1 (Steam Deck)", then "Save 1 (Steam
+Deck) 2" — so repeat divergences from the same Device stay distinguishable
+on the poster wall.
+Records that predate the rule were backfilled in creation order.
 **Why:** Names are how saves are told apart everywhere they surface — the
 Dash poster wall, the track report's "seeded as" line, the bind prompt.
 Client-side fallbacks invented a name per surface and could disagree;

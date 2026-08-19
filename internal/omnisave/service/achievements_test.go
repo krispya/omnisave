@@ -51,7 +51,7 @@ func (h *history) commitAt(t *testing.T, id string, at time.Time) string {
 		ParentID:   h.current,
 		CreatedAt:  at,
 	}
-	if err := h.repository.CommitRevision(context.Background(), h.current, revision); err != nil {
+	if err := h.repository.CommitRevision(context.Background(), h.current, revision, false); err != nil {
 		t.Fatal(err)
 	}
 	h.current = &revision.ID

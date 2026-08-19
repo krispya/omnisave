@@ -820,7 +820,7 @@ func TestADeletedSavesRevisionsAreUnreachableThroughItsID(t *testing.T) {
 				t.Fatal(err)
 			}
 			revision := omnisave.Revision{ID: "revision-" + name, OmnisaveID: source.ID, CreatedAt: now}
-			if err := repository.CommitRevision(ctx, nil, revision); err != nil {
+			if err := repository.CommitRevision(ctx, nil, revision, false); err != nil {
 				t.Fatal(err)
 			}
 			fork := omnisave.Omnisave{
