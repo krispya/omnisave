@@ -370,7 +370,7 @@ func TestTheQuestionTakesOverTheBlock(t *testing.T) {
 	for _, text := range []string{
 		"▲ Omnisave · watching",
 		"Project Zomboid",
-		"Save 2 has new progress on this device and on the server",
+		"Save 2 diverges between this device and the server",
 		"› Fork here",
 		"continue as Save 2 (Steam Deck)",
 		"Take current",
