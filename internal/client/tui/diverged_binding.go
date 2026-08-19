@@ -2,53 +2,95 @@ package tui
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/charmbracelet/huh"
 )
 
-// DivergedBindingChoice preserves both sides by forking or preserving-then-jumping.
+// DivergedBindingChoice keeps both sides recoverable: forking continues the
+// local progress as its own lineage, jumping keeps it reachable — as a branch
+// in the same tree when it is unsynced, or not at all when the history
+// already holds it — and takes the Current Revision.
 type DivergedBindingChoice string
 
 const (
 	// DivergedBindingFork continues this device's progress as a new lineage.
 	DivergedBindingFork DivergedBindingChoice = "fork"
-	// DivergedBindingJump preserves this device's progress as a fork, then
-	// takes the Current Revision.
+	// DivergedBindingJump takes the Current Revision, keeping any unsynced
+	// local progress as a branch of the baseline first.
 	DivergedBindingJump DivergedBindingChoice = "jump"
 )
 
+// DivergedBindingDefault is the answer both surfaces open on. Jumping is the
+// answer that ends the divergence — this Device rejoins the lineage everyone
+// else is on — while forking is the deliberate decision to keep two
+// playthroughs apart, so the default resolves rather than multiplies. Landing
+// on it destroys nothing either way: both answers keep the local progress
+// (FDR-005, decision 4).
+const DivergedBindingDefault = DivergedBindingJump
+
+// DivergedQuestion is one diverged save put to the user: the game, the
+// omnisave that diverged, and the name forking would create. The pass that
+// found the divergence fills it in, so both surfaces name the fork the answer
+// would actually produce.
+type DivergedQuestion struct {
+	GameTitle    string
+	OmnisaveName string
+	// ForkName is the deconflict name a fork or seed would carry ("Save 1
+	// (Steam Deck)"); empty when the Device is unnamed and the server's
+	// default applies.
+	ForkName string
+}
+
 // DivergedOption is one answer as the user reads it. The label is shared by
-// the track run's form and the watch view's modal, so the two surfaces
-// cannot drift into naming the same choice differently. "Take current"
-// rather than "jump": the glossary already spends that word on a restore
-// between sibling branches, and neither surface has room to disambiguate.
+// the track run's form and the watch view's modal, so the two surfaces cannot
+// drift into naming the same choice differently. The label is the whole
+// interface: it says what the answer does and, for a fork, what it creates.
 type DivergedOption struct {
-	Label       string
-	Description string
-	Choice      DivergedBindingChoice
+	Label  string
+	Choice DivergedBindingChoice
+}
+
+// DivergenceTitle says what a save that is not the same on both sides has
+// done. The stale and diverged prompts and the watch modal all open on it,
+// so they share the sentence rather than each phrasing it their own way.
+func DivergenceTitle(omnisaveName string) string {
+	return omnisaveName + " diverges between this device and the server"
+}
+
+// ForkLabel names a fork answer for the save it would create. The stale and
+// diverged prompts both offer one, so they share the wording rather than
+// drift apart. An unnamed Device has no deconflict name to show, and the
+// answer says only that a save appears.
+func ForkLabel(forkName string) string {
+	if forkName == "" {
+		return "Fork as a new save"
+	}
+	return "Fork as " + forkName
 }
 
 // DivergedOptions is the answer set, in the order both surfaces show it.
-func DivergedOptions() []DivergedOption {
+func DivergedOptions(question DivergedQuestion) []DivergedOption {
 	return []DivergedOption{
-		{
-			Label:       "Fork here",
-			Description: "continue this device's progress as a new playthrough",
-			Choice:      DivergedBindingFork,
-		},
-		{
-			Label:       "Take current",
-			Description: "keep this progress as a fork and take the current revision",
-			Choice:      DivergedBindingJump,
-		},
+		{Label: ForkLabel(question.ForkName), Choice: DivergedBindingFork},
+		{Label: "Jump to current", Choice: DivergedBindingJump},
 	}
 }
 
+// DivergedDefaultIndex is where a surface parks its cursor: the position of
+// DivergedBindingDefault in the answer set.
+func DivergedDefaultIndex(options []DivergedOption) int {
+	for index, option := range options {
+		if option.Choice == DivergedBindingDefault {
+			return index
+		}
+	}
+	return 0
+}
+
 // PromptDivergedBinding asks how a diverged save should continue.
-func PromptDivergedBinding(gameTitle, omnisaveName string) (DivergedBindingChoice, error) {
-	choice := DivergedBindingFork
-	form := divergedBindingForm(gameTitle, omnisaveName, &choice)
+func PromptDivergedBinding(question DivergedQuestion) (DivergedBindingChoice, error) {
+	choice := DivergedBindingDefault
+	form := divergedBindingForm(question, &choice)
 	if err := form.Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return "", ErrAborted
@@ -58,15 +100,16 @@ func PromptDivergedBinding(gameTitle, omnisaveName string) (DivergedBindingChoic
 	return choice, nil
 }
 
-func divergedBindingForm(gameTitle, omnisaveName string, choice *DivergedBindingChoice) *huh.Form {
-	options := make([]huh.Option[DivergedBindingChoice], 0, len(DivergedOptions()))
-	for _, option := range DivergedOptions() {
-		options = append(options, huh.NewOption(option.Label+" · "+option.Description, option.Choice))
+func divergedBindingForm(question DivergedQuestion, choice *DivergedBindingChoice) *huh.Form {
+	answers := DivergedOptions(question)
+	options := make([]huh.Option[DivergedBindingChoice], 0, len(answers))
+	for _, option := range answers {
+		options = append(options, huh.NewOption(option.Label, option.Choice))
 	}
 	prompt := huh.NewSelect[DivergedBindingChoice]().
-		Title(fmt.Sprintf("Save changed here and %s moved on the server", omnisaveName)).
+		Title(DivergenceTitle(question.OmnisaveName)).
 		Options(options...).
 		Value(choice)
-	form := huh.NewForm(huh.NewGroup(prompt).Title(gameTitle))
+	form := huh.NewForm(huh.NewGroup(prompt).Title(question.GameTitle))
 	return form.WithTheme(trackingTheme())
 }

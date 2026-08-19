@@ -158,8 +158,10 @@ func sameManifest(local, remote []omnisave.RevisionFile) bool {
 
 // Seed creates a new Omnisave for a Library game and commits the local save's
 // current content as its initial revision (FDR-003). The returned revision is
-// the binding's sync baseline.
-func Seed(ctx context.Context, server Server, serverGameID string, save target.Save) (*omnisave.Omnisave, *omnisave.Revision, error) {
+// the binding's sync baseline. An empty displayName lets the server pick its
+// default ("Save N"); a divergence preservation names the seed after the
+// Device it deconflicts (FDR-005, decision 4).
+func Seed(ctx context.Context, server Server, serverGameID string, save target.Save, displayName string) (*omnisave.Omnisave, *omnisave.Revision, error) {
 	if serverGameID == "" {
 		return nil, nil, fmt.Errorf("seed needs a resolved Library game")
 	}
@@ -171,7 +173,7 @@ func Seed(ctx context.Context, server Server, serverGameID string, save target.S
 	if err != nil {
 		return nil, nil, err
 	}
-	created, err := server.CreateOmnisave(ctx, omnisave.CreateOmnisave{GameID: serverGameID})
+	created, err := server.CreateOmnisave(ctx, omnisave.CreateOmnisave{GameID: serverGameID, DisplayName: displayName})
 	if err != nil {
 		return nil, nil, fmt.Errorf("create Omnisave: %w", err)
 	}
@@ -196,7 +198,7 @@ func MatchesManifest(manifest []omnisave.RevisionFile, revision omnisave.Revisio
 // baseline paths the local save no longer has. The returned revision is the
 // binding's next baseline.
 func Push(ctx context.Context, server Server, omnisaveID string, save target.Save, expectedCurrentRevisionID string, currentFiles []omnisave.RevisionFile) (*omnisave.Revision, error) {
-	return push(ctx, server, omnisaveID, save, expectedCurrentRevisionID, "", currentFiles)
+	return push(ctx, server, omnisaveID, save, expectedCurrentRevisionID, "", currentFiles, commitOptions{})
 }
 
 // PushBranch commits local content after parent and moves current to the new branch.
@@ -204,13 +206,31 @@ func PushBranch(ctx context.Context, server Server, omnisaveID string, save targ
 	if parent.ID == "" {
 		return nil, fmt.Errorf("branch push needs the parent revision it continues")
 	}
-	return push(ctx, server, omnisaveID, save, expectedCurrentRevisionID, parent.ID, parent.Files)
+	return push(ctx, server, omnisaveID, save, expectedCurrentRevisionID, parent.ID, parent.Files, commitOptions{})
+}
+
+// PushBranchAside commits local content after parent while leaving the current
+// revision where it stands — the preservation half of a divergence jump
+// (FDR-005, decision 4). Name records where the shelved progress came from,
+// the Device, on the revision itself; empty commits it unnamed.
+func PushBranchAside(ctx context.Context, server Server, omnisaveID string, save target.Save, expectedCurrentRevisionID string, parent omnisave.Revision, name string) (*omnisave.Revision, error) {
+	if parent.ID == "" {
+		return nil, fmt.Errorf("branch push needs the parent revision it continues")
+	}
+	return push(ctx, server, omnisaveID, save, expectedCurrentRevisionID, parent.ID, parent.Files,
+		commitOptions{keepCurrent: true, displayName: name})
+}
+
+// commitOptions carries the commit variations the push helpers choose from.
+type commitOptions struct {
+	keepCurrent bool
+	displayName string
 }
 
 // push commits the local manifest as a child of parentRevisionID — empty
 // meaning the expected current revision — with parentFiles supplying the
 // paths a delete has to cover.
-func push(ctx context.Context, server Server, omnisaveID string, save target.Save, expectedCurrentRevisionID, parentRevisionID string, parentFiles []omnisave.RevisionFile) (*omnisave.Revision, error) {
+func push(ctx context.Context, server Server, omnisaveID string, save target.Save, expectedCurrentRevisionID, parentRevisionID string, parentFiles []omnisave.RevisionFile, options commitOptions) (*omnisave.Revision, error) {
 	if omnisaveID == "" || expectedCurrentRevisionID == "" {
 		return nil, fmt.Errorf("push needs a bound Omnisave and its baseline")
 	}
@@ -233,6 +253,8 @@ func push(ctx context.Context, server Server, omnisaveID string, save target.Sav
 	}
 	input := omnisave.CreateRevision{
 		ExpectedCurrentRevisionID: &expectedCurrentRevisionID,
+		KeepCurrent:               options.keepCurrent,
+		DisplayName:               options.displayName,
 		SavedAt:                   savedAt(save),
 		Upserts:                   upserts,
 		Deletes:                   deletes,

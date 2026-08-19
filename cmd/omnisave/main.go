@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mattn/go-isatty"
 
@@ -580,9 +581,9 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 				})
 				return choice, err
 			},
-			stale: func(gameTitle, omnisaveName string) (choice tui.StaleBindingChoice, err error) {
+			stale: func(question tui.StaleQuestion) (choice tui.StaleBindingChoice, err error) {
 				session.Interact(func() {
-					choice, err = tui.PromptStaleBinding(gameTitle, omnisaveName)
+					choice, err = tui.PromptStaleBinding(question)
 				})
 				return choice, err
 			},
@@ -592,9 +593,9 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 				})
 				return choice, err
 			},
-			diverged: func(gameTitle, omnisaveName string) (choice tui.DivergedBindingChoice, err error) {
+			diverged: func(question tui.DivergedQuestion) (choice tui.DivergedBindingChoice, err error) {
 				session.Interact(func() {
-					choice, err = tui.PromptDivergedBinding(gameTitle, omnisaveName)
+					choice, err = tui.PromptDivergedBinding(question)
 				})
 				return choice, err
 			},
@@ -849,9 +850,9 @@ func isNotFound(err error) bool {
 // reconcilePrompts provides optional interaction; nil leaves decisions for a later run.
 type reconcilePrompts struct {
 	empty     func(gameTitle string, options []tui.SyncToDeviceOption) (tui.SyncToDeviceChoice, error)
-	stale     func(gameTitle, omnisaveName string) (tui.StaleBindingChoice, error)
+	stale     func(question tui.StaleQuestion) (tui.StaleBindingChoice, error)
 	ambiguous func(gameTitle string, options []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error)
-	diverged  func(gameTitle, omnisaveName string) (tui.DivergedBindingChoice, error)
+	diverged  func(question tui.DivergedQuestion) (tui.DivergedBindingChoice, error)
 }
 
 // errUnanswered is how a replayed answer says a question is not the one it
@@ -1093,7 +1094,14 @@ func reconcileSaves(
 				report.Stale(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave))
 				continue
 			}
-			choice, err := prompts.stale(candidate.local.GameTitle, omnisaveDisplayName(matched.Omnisave))
+			// The fork answer names the save it would create, and creates
+			// exactly that one.
+			forkName := deconflictName(matched.Omnisave, strings.TrimSpace(state.Device.Name))
+			choice, err := prompts.stale(tui.StaleQuestion{
+				GameTitle:    candidate.local.GameTitle,
+				OmnisaveName: omnisaveDisplayName(matched.Omnisave),
+				ForkName:     forkName,
+			})
 			if err != nil {
 				return err
 			}
@@ -1120,7 +1128,7 @@ func reconcileSaves(
 			case tui.StaleBindingFork:
 				fork, err := server.ForkOmnisave(ctx, matched.Omnisave.ID, omnisave.ForkOmnisave{
 					RevisionID:  matchedRevision.ID,
-					DisplayName: forkDisplayName(matched.Omnisave),
+					DisplayName: forkName,
 				})
 				if err != nil {
 					outcome.Failed++
@@ -1337,7 +1345,7 @@ func seedCandidateSave(
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 ) {
-	created, revision, err := binding.Seed(ctx, server, serverGameID, save)
+	created, revision, err := binding.Seed(ctx, server, serverGameID, save, "")
 	if err != nil {
 		outcome.Failed++
 		report.SaveFailed(local.GameTitle, err)
@@ -1461,7 +1469,7 @@ func syncBoundSave(
 	if !baselineOK {
 		// A binding without a baseline (a manual bind to non-matching
 		// content) is diverged from the start (FDR-005, decision 1).
-		return resolveDivergence(ctx, server, state, local, save, remoteSave, current, nil, outcome, report, prompts)
+		return resolveDivergence(ctx, server, state, local, save, remoteSave, current, nil, history, manifest, outcome, report, prompts)
 	}
 
 	if current.ID == baseline.ID {
@@ -1561,10 +1569,14 @@ func syncBoundSave(
 		report.SyncedWith(local.GameTitle, name, time.Now())
 		return nil
 	}
-	return resolveDivergence(ctx, server, state, local, save, remoteSave, current, &baseline, outcome, report, prompts)
+	return resolveDivergence(ctx, server, state, local, save, remoteSave, current, &baseline, history, manifest, outcome, report, prompts)
 }
 
-// resolveDivergence preserves both sides, prompting only during interactive runs.
+// resolveDivergence keeps both sides recoverable, prompting only during
+// interactive runs. Content the history already holds needs no preserving —
+// the matched revision is the proof the server has it — so only genuinely
+// unsynced progress is committed anywhere, and only "fork here" creates a
+// new Omnisave.
 func resolveDivergence(
 	ctx context.Context,
 	server *remote.Client,
@@ -1574,20 +1586,46 @@ func resolveDivergence(
 	remoteSave omnisave.Omnisave,
 	current omnisave.Revision,
 	baseline *omnisave.Revision,
+	history []omnisave.Revision,
+	manifest []omnisave.RevisionFile,
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 	prompts *reconcilePrompts,
 ) error {
 	name := omnisaveDisplayName(remoteSave)
+	matched, contentKnown := matchHistory(manifest, history)
+	if contentKnown && matched.ID == current.ID {
+		// Only reachable without a baseline: the local content is the Current
+		// Revision, so nothing has diverged — the binding just never recorded
+		// where it stands.
+		if err := state.RecordSynced(local, remoteSave.ID, current.ID); err != nil {
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+		outcome.Rebound++
+		report.SyncedWith(local.GameTitle, name, time.Now())
+		return nil
+	}
+	// The question names the save forking would create, so it is worked out
+	// before anything is asked or reported. The Device's name is trimmed to
+	// what the server will accept, since it also names a branch revision on
+	// its own.
+	deviceName := truncateRunes(strings.TrimSpace(state.Device.Name), maxDisplayName)
+	question := tui.DivergedQuestion{
+		GameTitle:    local.GameTitle,
+		OmnisaveName: name,
+		ForkName:     deconflictName(remoteSave, deviceName),
+	}
 	waiting := func() error {
 		outcome.Diverged++
-		report.Diverged(local.GameTitle, name)
+		report.Diverged(local.GameTitle, name, question.ForkName)
 		return nil
 	}
 	if !prompts.asksDiverged() {
 		return waiting()
 	}
-	choice, err := prompts.diverged(local.GameTitle, name)
+	choice, err := prompts.diverged(question)
 	// A replayed answer belongs to one save. Every other divergence the pass
 	// meets is one nobody has answered, so it waits exactly as it would have
 	// under a headless pass.
@@ -1597,36 +1635,125 @@ func resolveDivergence(
 	if err != nil {
 		return err
 	}
-	preservedName := forkDisplayName(remoteSave)
-	if choice == tui.DivergedBindingJump {
-		preservedName = divergedDisplayName(remoteSave)
+	if choice == tui.DivergedBindingFork {
+		return forkDivergedSave(ctx, server, state, local, save, remoteSave,
+			matched, contentKnown, baseline, deviceName, outcome, report)
 	}
-	preserved, preservedRevision, err := preserveLocalProgress(ctx, server, save, remoteSave, baseline, preservedName)
-	if err != nil {
+	return jumpDivergedSave(ctx, server, state, local, save, remoteSave, current,
+		matched, contentKnown, baseline, deviceName, outcome, report)
+}
+
+// forkDivergedSave continues this Device's progress as a new lineage named
+// after the Device. Content the history already holds forks at the matched
+// revision and pushes nothing; unsynced content forks at the baseline and
+// commits on the fork — or seeds a new Omnisave when no baseline exists to
+// fork from.
+func forkDivergedSave(
+	ctx context.Context,
+	server *remote.Client,
+	state *tracking.State,
+	local tracking.LocalSave,
+	save target.Save,
+	remoteSave omnisave.Omnisave,
+	matched omnisave.Revision,
+	contentKnown bool,
+	baseline *omnisave.Revision,
+	deviceName string,
+	outcome *tui.TrackOutcome,
+	report *tui.TrackReport,
+) error {
+	forkName := deconflictName(remoteSave, deviceName)
+	var preserved *omnisave.Omnisave
+	var preservedRevision *omnisave.Revision
+	if contentKnown {
+		fork, err := server.ForkOmnisave(ctx, remoteSave.ID, omnisave.ForkOmnisave{
+			RevisionID:  matched.ID,
+			DisplayName: forkName,
+		})
+		if err != nil {
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+		preserved, preservedRevision = &fork.Omnisave, &fork.Revision
+	} else {
+		var err error
+		preserved, preservedRevision, err = preserveLocalProgress(ctx, server, save, remoteSave, baseline, forkName)
+		if err != nil {
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+	}
+	outcome.Forked++
+	if err := state.Bind(local, preserved.ID); err != nil {
 		outcome.Failed++
 		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
-	outcome.Forked++
-	if choice == tui.DivergedBindingFork {
-		if err := state.Bind(local, preserved.ID); err != nil {
-			outcome.Failed++
-			report.SaveFailed(local.GameTitle, err)
-			return nil
-		}
-		if err := state.RecordSynced(local, preserved.ID, preservedRevision.ID); err != nil {
-			outcome.Failed++
-			report.SaveFailed(local.GameTitle, err)
-			return nil
-		}
-		report.SyncedWith(local.GameTitle, omnisaveDisplayName(*preserved), time.Now())
+	if err := state.RecordSynced(local, preserved.ID, preservedRevision.ID); err != nil {
+		outcome.Failed++
+		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
-	// Jump: name the preservation fork, then adopt the Current Revision.
-	report.Forked(local.GameTitle, omnisaveDisplayName(*preserved))
-	// The preserved revision carries exactly the local content, so the
-	// staged placement can verify against it.
-	if err := binding.ApplyCurrent(ctx, server, save, *preservedRevision, current); err != nil {
+	report.SyncedWith(local.GameTitle, omnisaveDisplayName(*preserved), time.Now())
+	return nil
+}
+
+// jumpDivergedSave adopts the Current Revision after making sure the local
+// progress survives. Content the history already holds needs nothing.
+// Unsynced content is kept as a branch of the baseline, named for the Device
+// and left behind the current pointer — no new Omnisave. Without a baseline
+// there is no node to branch from, so the progress seeds a new Omnisave
+// instead (FDR-005, decision 4).
+func jumpDivergedSave(
+	ctx context.Context,
+	server *remote.Client,
+	state *tracking.State,
+	local tracking.LocalSave,
+	save target.Save,
+	remoteSave omnisave.Omnisave,
+	current omnisave.Revision,
+	matched omnisave.Revision,
+	contentKnown bool,
+	baseline *omnisave.Revision,
+	deviceName string,
+	outcome *tui.TrackOutcome,
+	report *tui.TrackReport,
+) error {
+	name := omnisaveDisplayName(remoteSave)
+	// The revision proved equal to the local content, so the staged placement
+	// can verify against it (and stage unchanged files locally).
+	verifyAgainst := matched
+	if !contentKnown && baseline == nil {
+		preserved, preservedRevision, err := preserveLocalProgress(ctx, server, save, remoteSave, nil,
+			deconflictName(remoteSave, deviceName))
+		if err != nil {
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+		outcome.Forked++
+		report.Forked(local.GameTitle, omnisaveDisplayName(*preserved))
+		verifyAgainst = *preservedRevision
+	} else if !contentKnown {
+		branch, err := binding.PushBranchAside(ctx, server, remoteSave.ID, save, current.ID, *baseline, deviceName)
+		if err != nil {
+			var conflict *remote.CurrentRevisionConflict
+			if errors.As(err, &conflict) {
+				outcome.Conflicted++
+				report.CurrentMoved(local.GameTitle, name)
+				return nil
+			}
+			outcome.Failed++
+			report.SaveFailed(local.GameTitle, err)
+			return nil
+		}
+		outcome.Branched++
+		report.BranchKept(local.GameTitle, name)
+		verifyAgainst = *branch
+	}
+	if err := binding.ApplyCurrent(ctx, server, save, verifyAgainst, current); err != nil {
 		outcome.Failed++
 		report.SaveFailed(local.GameTitle, err)
 		return nil
@@ -1646,7 +1773,26 @@ func resolveDivergence(
 	return nil
 }
 
-// preserveLocalProgress stores unsynced content as a fork or a new seed.
+// matchHistory finds the newest revision whose content equals the local
+// manifest. Any hit means the server already holds this exact content, so
+// nothing needs preserving before this Device moves on.
+func matchHistory(manifest []omnisave.RevisionFile, history []omnisave.Revision) (omnisave.Revision, bool) {
+	var matched omnisave.Revision
+	found := false
+	for _, revision := range history {
+		if !binding.MatchesManifest(manifest, revision) {
+			continue
+		}
+		if !found || revision.CreatedAt.After(matched.CreatedAt) {
+			matched = revision
+			found = true
+		}
+	}
+	return matched, found
+}
+
+// preserveLocalProgress stores unsynced content as a fork or a new seed,
+// both carrying the deconflicting Device's name.
 func preserveLocalProgress(
 	ctx context.Context,
 	server *remote.Client,
@@ -1656,7 +1802,7 @@ func preserveLocalProgress(
 	name string,
 ) (*omnisave.Omnisave, *omnisave.Revision, error) {
 	if baseline == nil {
-		return binding.Seed(ctx, server, remoteSave.GameID, save)
+		return binding.Seed(ctx, server, remoteSave.GameID, save, name)
 	}
 	fork, err := server.ForkOmnisave(ctx, remoteSave.ID, omnisave.ForkOmnisave{
 		RevisionID:  baseline.ID,
@@ -1679,30 +1825,41 @@ func lastSyncedAt(bound tracking.Binding) time.Time {
 	return *bound.LastSyncedAt
 }
 
-func divergedDisplayName(source omnisave.Omnisave) string {
-	name := strings.TrimSpace(source.DisplayName)
-	if name == "" {
-		return "Diverged"
+// deconflictName names a preservation fork or seed for the lineage it left
+// and the Device whose progress it keeps — "Save 1 (Steam Deck)". A branch
+// revision can carry the Device's name alone because the tree around it says
+// what it belongs to; a fork sits beside its source on the poster wall, so
+// the source's name is the only link the name can carry. A Device without a
+// name has no provenance to record, so the empty result lets the server pick
+// its own default. The server numbers a repeat — a second divergence becomes
+// "Save 1 (Steam Deck) 2" (FDR-003, decision 8). A name too long for the
+// server's limit loses base name, never the Device: the Device is the whole
+// point of the name, and two Devices trimmed to the same text would be
+// indistinguishable.
+func deconflictName(source omnisave.Omnisave, deviceName string) string {
+	if deviceName == "" {
+		return ""
 	}
-	suffix := " (diverged)"
-	runes := []rune(name)
-	if len(runes)+len([]rune(suffix)) > 100 {
-		runes = runes[:100-len([]rune(suffix))]
+	base := strings.TrimSpace(source.DisplayName)
+	suffix := " (" + deviceName + ")"
+	room := maxDisplayName - utf8.RuneCountInString(suffix)
+	if base == "" || room < 1 {
+		return truncateRunes(deviceName, maxDisplayName)
 	}
-	return string(runes) + suffix
+	return truncateRunes(base, room) + suffix
 }
 
-func forkDisplayName(source omnisave.Omnisave) string {
-	name := strings.TrimSpace(source.DisplayName)
-	if name == "" {
-		return "Fork"
+// maxDisplayName is the server's display name limit, in runes. A name past it
+// is rejected outright, so the client trims rather than let a Device with a
+// long hostname fail the same way on every retry.
+const maxDisplayName = 100
+
+func truncateRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
 	}
-	suffix := " (fork)"
-	runes := []rune(name)
-	if len(runes)+len([]rune(suffix)) > 100 {
-		runes = runes[:100-len([]rune(suffix))]
-	}
-	return string(runes) + suffix
+	return string(runes[:limit])
 }
 
 func deviceName() string {

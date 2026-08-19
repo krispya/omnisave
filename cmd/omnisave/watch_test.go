@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"os"
@@ -326,8 +328,24 @@ func TestAnAnsweredDivergenceResolvesWithoutLeavingWatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(saves) != 2 {
-		t.Fatalf("expected the local progress preserved as a fork, got %d saves", len(saves))
+	if len(saves) != 1 {
+		t.Fatalf("expected the jump to keep a branch instead of forking, got %d saves", len(saves))
+	}
+	history, err := server.ListRevisions(context.Background(), saves[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte("local-divergence"))
+	kept := false
+	for _, revision := range history {
+		for _, file := range revision.Files {
+			if file.Artifact.SHA256 == hex.EncodeToString(digest[:]) {
+				kept = true
+			}
+		}
+	}
+	if !kept {
+		t.Fatal("expected the shelved local progress to survive as a branch revision")
 	}
 }
 

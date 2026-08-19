@@ -57,9 +57,25 @@ path, syncing-down built the read path; sync makes both routine.
   Windows expose the same commands.
 - Diverged saves are reported — "save diverged from …; run
   omnisave track to resolve" — and skipped until someone answers: fork
-  here, and this Device's progress continues as a new lineage, or take
-  current, which first preserves the unsynced local progress as a fork
-  and then applies the Current Revision. Neither choice destroys content.
+  here, and this Device's progress continues as a new lineage named for
+  the Device, or jump to current, which keeps the unsynced local progress
+  as a Device-named branch of the baseline — inside the same Omnisave,
+  left behind the current pointer — and then applies the Current
+  Revision. Neither choice destroys content, and only forking creates
+  another Omnisave.
+- Before either answer preserves anything, the local content is matched
+  against the Omnisave's full revision history. Content the history
+  already holds needs no copy: jumping simply applies the Current
+  Revision, and forking forks at the matched revision without pushing.
+  A baseline-less binding whose content turns out to equal the Current
+  Revision is rebound silently, even by a headless pass — there was
+  nothing to resolve.
+- Both surfaces show the same two labels and nothing else: "Fork as Save 1
+  (Steam Deck)", naming the save that answer would create, and "Jump to
+  current" — the same pair, worded the same way, as the stale-save prompt
+  in [FDR-003](FDR-003-automatic-save-binding.md), decision 5. Both open on
+  jumping — it is the answer that adds no save, so
+  confirming without reading keeps the poster wall as it was.
 - The answer can be given from the live watch view without stopping it:
   the row says which Omnisave is waiting, `r` raises the question as a
   modal over the pinned block, and the choice is applied by the pass that
@@ -240,19 +256,47 @@ closes most of that window by holding pulls while the game runs.
 **Decision:** Divergence is new progress on *both* sides of one line — a
 Current Revision that descends from this Device's baseline while the local
 content moved too (decision 15 covers every other shape). Headless sync and
-watch report it and skip. Interactive track asks: fork here, or jump to
-latest — and jump first preserves the unsynced local progress as a fork
-before applying the Current Revision.
+watch report it and skip. Interactive track asks: fork, or jump to
+current. Before either answer moves anything, the local content is matched
+against the full revision history; a hit is proof the server already holds
+it, so jump applies the Current Revision with nothing to preserve and fork
+shares the matched revision without pushing. Unsynced content is preserved
+where the answer says the user wants it: forking mints a new Omnisave, and
+jump commits it as a branch of the baseline inside the same Omnisave — a
+keep-current commit, so the pointer never moves — named for the Device it
+came from. A branch revision carries the Device's name alone because the
+tree around it says what it belongs to; a fork or seed sits beside its
+source on the poster wall, so its name keeps the source's name as the link
+("Save 1 (Steam Deck)"). The server numbers a repeat — "Save 1 (Steam
+Deck) 2" — so serial divergences from one Device stay apart
+([FDR-003](FDR-003-automatic-save-binding.md), decision 8). A binding with
+no baseline has no node to branch from, so its
+jump still preserves into a fresh Omnisave; and a baseline-less binding
+whose content equals the Current Revision rebinds silently, even headless,
+because nothing is actually in contention.
 **Why:** Only a Current Revision built on top of the baseline represents
 work this Device has never seen, so only then does continuing locally mean
 choosing between two real playthroughs — and a binding decides which lineage
 future revisions extend, so a silent guess writes history onto the wrong one
 ([FDR-003](FDR-003-automatic-save-binding.md), decision 6). Making jump
-preserve-first means the prompt has no destructive option: nothing is
-ever lost to sync, only ever kept on a lineage you may later delete.
-**Tradeoff:** Jumps leave a fork to clean up in the Dash, and unresolved
-divergences accumulate lineages. Two Devices that both keep playing still
-reach this prompt on every pass until one of them stops.
+preserve-first means the prompt has no destructive option: nothing is ever
+lost to sync, only ever kept on a line you may later delete. Preserving as a
+branch rather than a fork follows decision 12's own rule — branches are
+topology, forks are independent saves — and jump is precisely the answer
+that says the progress should *not* synchronize independently, so minting an
+Omnisave for it was clutter the user then had to clean up. The Device's name
+on the fork or branch revision is the provenance that makes the tree
+readable later: it says whose shelved progress this is. It is recorded as a
+manually chosen name because it states the user's answer, not derived
+presentation, so a labeler backfill must never replace it.
+**Tradeoff:** Unresolved divergences still accumulate lineages, and two
+Devices that both keep playing still reach this prompt on every pass until
+one of them stops. A jumped-away branch stays in the tree until someone
+deletes it tip-first (decision 14) — less visible than a fork on the poster
+wall, which cuts both ways: nothing to clean up, but also nothing shouting
+that shelved progress exists. The full-history match costs a manifest
+comparison per revision at answer time, the same price the binding pass
+already pays ([FDR-003](FDR-003-automatic-save-binding.md), decision 4).
 
 ### 5. Sync completes the automatic half of binding
 

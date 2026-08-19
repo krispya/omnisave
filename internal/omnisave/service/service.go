@@ -69,6 +69,12 @@ func (s *service) Create(ctx context.Context, input omnisave.CreateOmnisave) (*o
 		if err != nil {
 			return nil, translateError(err)
 		}
+	} else {
+		var err error
+		displayName, err = s.uniqueDisplayName(ctx, input.GameID, displayName)
+		if err != nil {
+			return nil, translateError(err)
+		}
 	}
 	now := time.Now().UTC()
 	save := omnisave.Omnisave{
@@ -132,6 +138,10 @@ func (s *service) Fork(ctx context.Context, saveID string, input omnisave.ForkOm
 	if displayName == "" {
 		displayName = truncateDisplayName(source.DisplayName + " (fork)")
 	}
+	displayName, err = s.uniqueDisplayName(ctx, source.GameID, displayName)
+	if err != nil {
+		return nil, translateError(err)
+	}
 	now := time.Now().UTC()
 	fork := omnisave.Omnisave{
 		ID:                uuid.NewString(),
@@ -184,6 +194,16 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 		return nil, omnisave.ErrInvalid
 	}
 	if input.ParentRevisionID != nil && *input.ParentRevisionID == "" {
+		return nil, omnisave.ErrInvalid
+	}
+	if input.KeepCurrent && save.CurrentRevisionID == nil {
+		// Keeping current needs a current to keep. Honoring it on an empty
+		// save would leave history with no current revision at all, which
+		// every reader treats as an unusable save.
+		return nil, omnisave.ErrInvalid
+	}
+	suppliedName, validName := normalizeDisplayName(input.DisplayName)
+	if !validName {
 		return nil, omnisave.ErrInvalid
 	}
 	if !sameString(save.CurrentRevisionID, input.ExpectedCurrentRevisionID) {
@@ -277,13 +297,19 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 		Files:      files,
 		Metadata:   cloneMap(input.Metadata),
 	}
-	if s.namer != nil {
+	if suppliedName != "" {
+		// A committing client that names the revision is recording the user's
+		// answer — divergence provenance, not derived presentation — so the
+		// name outranks the labeler and is never replaced by automation.
+		revision.DisplayName = suppliedName
+		revision.NameSource = omnisave.NameSourceManual
+	} else if s.namer != nil {
 		if name, valid := normalizeDisplayName(s.namer.NameRevision(ctx, save.GameID, files)); valid && name != "" {
 			revision.DisplayName = name
 			revision.NameSource = omnisave.NameSourceLabeler
 		}
 	}
-	if err := s.repository.CommitRevision(ctx, input.ExpectedCurrentRevisionID, revision); err != nil {
+	if err := s.repository.CommitRevision(ctx, input.ExpectedCurrentRevisionID, revision, input.KeepCurrent); err != nil {
 		var conflict *storage.CurrentRevisionConflict
 		if errors.As(err, &conflict) {
 			return nil, &omnisave.CurrentRevisionConflict{
@@ -540,12 +566,44 @@ func (s *service) nextDefaultDisplayName(ctx context.Context, gameID string) (st
 	return fmt.Sprintf("Save %d", highest+1), nil
 }
 
+// uniqueDisplayName keeps a requested display name unique within its game:
+// repeat divergences from the same Device would otherwise stack identical
+// names on the poster wall (FDR-003, decision 8). A taken name gets the
+// lowest free " N" suffix — "Steam Deck 2" — with the base truncated first
+// so the suffix always fits the display name limit.
+func (s *service) uniqueDisplayName(ctx context.Context, gameID, requested string) (string, error) {
+	saves, err := s.repository.ListOmnisaves(ctx)
+	if err != nil {
+		return "", err
+	}
+	taken := make(map[string]bool)
+	for _, save := range saves {
+		if save.GameID == gameID {
+			taken[save.DisplayName] = true
+		}
+	}
+	if !taken[requested] {
+		return requested, nil
+	}
+	for number := 2; ; number++ {
+		suffix := fmt.Sprintf(" %d", number)
+		candidate := truncateDisplayNameTo(requested, maxDisplayNameLength-utf8.RuneCountInString(suffix)) + suffix
+		if !taken[candidate] {
+			return candidate, nil
+		}
+	}
+}
+
 func truncateDisplayName(name string) string {
+	return truncateDisplayNameTo(name, maxDisplayNameLength)
+}
+
+func truncateDisplayNameTo(name string, limit int) string {
 	runes := []rune(name)
-	if len(runes) <= maxDisplayNameLength {
+	if len(runes) <= limit {
 		return name
 	}
-	return string(runes[:maxDisplayNameLength])
+	return string(runes[:limit])
 }
 
 var _ omnisave.Service = (*service)(nil)

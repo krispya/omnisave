@@ -58,7 +58,7 @@ func TestTheStandingTableDropsEventLinesAndKeepsTheCondition(t *testing.T) {
 	report.Linked("Slay the Spire 2", "")
 	report.SyncedWith("Slay the Spire 2", "Save 1", time.Now().Add(-2*time.Minute))
 	report.Linked("Project Zomboid", "")
-	report.Diverged("Project Zomboid", "Save 2")
+	report.Diverged("Project Zomboid", "Save 2", "Save 2 (Steam Deck)")
 
 	rendered := strings.Join(ComposeStanding(report.Snapshot(), Marks{}, time.Now()), "\n")
 
@@ -77,7 +77,7 @@ func TestTheStandingTableDropsEventLinesAndKeepsTheCondition(t *testing.T) {
 func TestThePrintedReportStillNamesWhatResolvesADivergedSave(t *testing.T) {
 	report := &TrackReport{}
 	report.Linked("Project Zomboid", "")
-	report.Diverged("Project Zomboid", "Save 2")
+	report.Diverged("Project Zomboid", "Save 2", "Save 2 (Steam Deck)")
 
 	rendered := strings.Join(report.render(), "\n")
 
@@ -181,7 +181,7 @@ func TestTrackReportExplainsAServerDeletionUnderTheUntrackedGame(t *testing.T) {
 
 func TestTrackReportSpeaksSyncExceptions(t *testing.T) {
 	report := &TrackReport{}
-	report.Diverged("Chrono Trigger", "New Game+")
+	report.Diverged("Chrono Trigger", "New Game+", "New Game+ (Steam Deck)")
 	report.Stale("Stardew Valley", "Farm run")
 	report.CurrentMoved("Project Zomboid", "Save 2")
 	report.PullDeferred("Slay the Spire 2", "Main")
@@ -189,7 +189,7 @@ func TestTrackReportSpeaksSyncExceptions(t *testing.T) {
 	rendered := strings.Join(report.render(), "\n")
 	for _, sentence := range []string{
 		"Save diverged from New Game+, run omnisave track to resolve",
-		"Save matches a revision of Farm run that is not current, run omnisave track to resolve",
+		"Save diverged from Farm run, run omnisave track to resolve",
 		"Save 2 moved on the server; the next sync pass will reconcile",
 		"Main · waiting for game to close",
 	} {
