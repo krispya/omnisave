@@ -582,8 +582,8 @@ func replayedAnswers(answers map[string]tui.DivergedBindingChoice) *reconcilePro
 	replayed := make(map[string]tui.DivergedBindingChoice, len(answers))
 	maps.Copy(replayed, answers)
 	return &reconcilePrompts{
-		diverged: func(gameTitle, omnisaveName string) (tui.DivergedBindingChoice, error) {
-			choice, answered := replayed[answerKey(gameTitle, omnisaveName)]
+		diverged: func(question tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
+			choice, answered := replayed[answerKey(question.GameTitle, question.OmnisaveName)]
 			if !answered {
 				return "", errUnanswered
 			}

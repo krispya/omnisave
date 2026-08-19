@@ -205,10 +205,16 @@ func firstPending(snapshot ReportSnapshot) *watchQuestion {
 		if game.Pending == nil || game.Pending.Kind != PendingDiverged {
 			continue
 		}
+		options := DivergedOptions(DivergedQuestion{
+			GameTitle:    game.Title,
+			OmnisaveName: game.Pending.OmnisaveName,
+			ForkName:     game.Pending.ForkName,
+		})
 		return &watchQuestion{
 			title:    game.Title,
 			omnisave: game.Pending.OmnisaveName,
-			options:  DivergedOptions(),
+			options:  options,
+			cursor:   DivergedDefaultIndex(options),
 		}
 	}
 	return nil
@@ -381,7 +387,7 @@ var questionStyle = lipgloss.NewStyle().
 func (q watchQuestion) view() string {
 	var body strings.Builder
 	body.WriteString(nameStyle.Render(q.title) + "\n")
-	body.WriteString(mutedStyle.Render(q.omnisave+" diverged from the server") + "\n\n")
+	body.WriteString(mutedStyle.Render(DivergenceTitle(q.omnisave)) + "\n\n")
 	for index, option := range q.options {
 		if index > 0 {
 			body.WriteString("\n")

@@ -232,7 +232,7 @@ func (r *MemoryRepository) RestoreOmnisave(_ context.Context, id, revisionID str
 	return nil
 }
 
-func (r *MemoryRepository) CommitRevision(_ context.Context, expectedCurrentRevisionID *string, revision omnisave.Revision) error {
+func (r *MemoryRepository) CommitRevision(_ context.Context, expectedCurrentRevisionID *string, revision omnisave.Revision, keepCurrent bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	save, ok := r.saves[revision.OmnisaveID]
@@ -243,7 +243,9 @@ func (r *MemoryRepository) CommitRevision(_ context.Context, expectedCurrentRevi
 		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: copyStringPointer(save.CurrentRevisionID)}
 	}
 	r.revisions[revision.OmnisaveID] = append(r.revisions[revision.OmnisaveID], revision)
-	save.CurrentRevisionID = &revision.ID
+	if !keepCurrent {
+		save.CurrentRevisionID = &revision.ID
+	}
 	r.saves[revision.OmnisaveID] = save
 	// Marks waiting on this save now have the snapshot they were waiting for,
 	// matching the SQL repository.

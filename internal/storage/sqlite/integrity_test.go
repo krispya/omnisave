@@ -87,7 +87,7 @@ func TestRevisionCommitRequiresArtifactAvailabilityAtThePersistenceBoundary(t *t
 		Files: []omnisave.RevisionFile{{
 			Path: "save.dat", Artifact: artifact,
 		}},
-	})
+	}, false)
 	var unavailable *storage.ArtifactsUnavailable
 	if !errors.As(err, &unavailable) || len(unavailable.SHA256) != 1 || unavailable.SHA256[0] != artifact.SHA256 {
 		t.Fatalf("expected the persistence boundary to reject the missing object, got %v", err)
