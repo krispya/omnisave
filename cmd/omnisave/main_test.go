@@ -673,54 +673,67 @@ func failingAmbiguousChooser(t *testing.T) func(string, []tui.AmbiguousBindingOp
 	}
 }
 
-func TestAmbiguousSaveCanBindToAChosenOmnisaveWithNothingSyncedYet(t *testing.T) {
-	fixture := newBindingFixture(t, "brand-new-content")
-	first := "revision-a"
-	second := "revision-b"
-	remoteSaves := []omnisave.Omnisave{
-		{ID: "omnisave-1", GameID: "server-game-1", DisplayName: "Save 1", CurrentRevisionID: &first},
-		{ID: "omnisave-2", GameID: "server-game-1", DisplayName: "Save 2", CurrentRevisionID: &second},
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/api/v1/omnisaves":
-			writeTestJSON(t, response, remoteSaves)
-		case "/api/v1/omnisaves/omnisave-1/revisions":
-			writeTestJSON(t, response, []omnisave.Revision{testRevision(first, "omnisave-1", "other-content")})
-		case "/api/v1/omnisaves/omnisave-2/revisions":
-			writeTestJSON(t, response, []omnisave.Revision{testRevision(second, "omnisave-2", "different-content")})
-		default:
-			t.Errorf("unexpected server call: %s %s", request.Method, request.URL.Path)
-			http.NotFound(response, request)
-		}
-	}))
-	defer server.Close()
-	remoteClient, err := remote.New(server.URL, "secret", server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	outcome := tui.TrackOutcome{Tracked: 1, Synced: true}
-	chooseAmbiguous := func(gameTitle string, options []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error) {
-		if gameTitle != "Chrono Trigger" || len(options) != 2 ||
-			options[0].MatchedRevisionID != "" || options[1].MatchedRevisionID != "" {
-			t.Fatalf("expected two unmatched options, got %q %+v", gameTitle, options)
-		}
-		return tui.AmbiguousBindingChoice{OmnisaveID: "omnisave-2"}, nil
+func TestAnUnmatchedLocalSaveCanSyncWithAChosenSaveWithoutLosingProgress(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "server-content")
+	fixture.state.Device.Name = "Steam Deck"
+	if outcome := syncOnce(t, server, &fixture, nil, 0); outcome.Seeded != 1 {
+		t.Fatalf("expected the server save seeded, got %+v", outcome)
 	}
 
-	err = reconcileSaves(context.Background(), nil, remoteClient, &fixture.state, fixture.scans,
-		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{},
-		testPrompts(failingStaleChooser(t), chooseAmbiguous, t), nil, 0)
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	original, ok := fixture.state.BindingFor(local)
+	if !ok || !fixture.state.Unbind(local) {
+		t.Fatal("expected the seeded save to be unbound for the unmatched-save story")
+	}
+	if err := os.WriteFile(fixture.localPath, []byte("local-progress"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	chooseAmbiguous := func(gameTitle string, options []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error) {
+		if gameTitle != "Chrono Trigger" || len(options) != 1 || options[0].MatchedRevisionID != "" {
+			t.Fatalf("expected one unmatched server save, got %q %+v", gameTitle, options)
+		}
+		return tui.AmbiguousBindingChoice{OmnisaveID: original.OmnisaveID}, nil
+	}
+	outcome := syncOnce(t, server, &fixture,
+		testPrompts(failingStaleChooser(t), chooseAmbiguous, t), 0)
+
+	content, err := os.ReadFile(fixture.localPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
-	bound, ok := fixture.state.BindingFor(local)
-	if !ok || bound.OmnisaveID != "omnisave-2" || bound.LastSyncedRevisionID != nil {
-		t.Fatalf("expected a baseline-free binding to the chosen Omnisave, got %+v", bound)
+	if string(content) != "server-content" {
+		t.Fatalf("expected the chosen save applied locally, got %q", content)
 	}
-	if outcome.Bound != 1 || outcome.Seeded != 0 || outcome.Unbound != 0 || outcome.Failed != 0 {
-		t.Fatalf("expected one chosen binding, got %+v", outcome)
+	bound, ok := fixture.state.BindingFor(local)
+	if !ok || bound.OmnisaveID != original.OmnisaveID || bound.LastSyncedRevisionID == nil {
+		t.Fatalf("expected a settled binding to the chosen save, got %+v", bound)
+	}
+	saves, err := server.ListOmnisaves(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 2 {
+		t.Fatalf("expected the original and preserved saves, got %+v", saves)
+	}
+	var preserved omnisave.Omnisave
+	for _, save := range saves {
+		if save.ID != original.OmnisaveID {
+			preserved = save
+		}
+	}
+	wantDigest := sha256.Sum256([]byte("local-progress"))
+	history, err := server.ListRevisions(context.Background(), preserved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preserved.DisplayName != "Save 1 (Steam Deck)" || len(history) != 1 ||
+		len(history[0].Files) != 1 || history[0].Files[0].Artifact.SHA256 != hex.EncodeToString(wantDigest[:]) {
+		t.Fatalf("expected unmatched progress preserved in its own named save, save=%+v history=%+v", preserved, history)
+	}
+	if outcome.Seeded != 1 || outcome.Pulled != 1 || outcome.Diverged != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected preservation followed by a completed sync, got %+v", outcome)
 	}
 }
 
@@ -770,7 +783,7 @@ func TestASaveMatchingTwoForkedLineagesBindsAtTheChosenRevision(t *testing.T) {
 	}
 }
 
-func TestAnAmbiguousSaveCanSeedANewOmnisaveOrStayUnbound(t *testing.T) {
+func TestAnUnmatchedLocalSaveCanCreateANewSave(t *testing.T) {
 	fixture := newBindingFixture(t, "brand-new-content")
 	current := "revision-a"
 	seeded := false
@@ -800,31 +813,18 @@ func TestAnAmbiguousSaveCanSeedANewOmnisaveOrStayUnbound(t *testing.T) {
 	}
 
 	outcome := tui.TrackOutcome{Tracked: 1, Synced: true}
-	deferring := func(string, []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error) {
-		return tui.AmbiguousBindingChoice{}, nil
+	creating := func(string, []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error) {
+		return tui.AmbiguousBindingChoice{Create: true}, nil
 	}
 	err = reconcileSaves(context.Background(), nil, remoteClient, &fixture.state, fixture.scans,
-		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, testPrompts(failingStaleChooser(t), deferring, t), nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if outcome.Unbound != 1 || seeded {
-		t.Fatalf("expected deferring to leave the save unbound, got %+v seeded=%v", outcome, seeded)
-	}
-
-	outcome = tui.TrackOutcome{Tracked: 1, Synced: true}
-	seeding := func(string, []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error) {
-		return tui.AmbiguousBindingChoice{Seed: true}, nil
-	}
-	err = reconcileSaves(context.Background(), nil, remoteClient, &fixture.state, fixture.scans,
-		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, testPrompts(failingStaleChooser(t), seeding, t), nil, 0)
+		map[string]bool{"local-game-1": true}, &outcome, &tui.TrackReport{}, testPrompts(failingStaleChooser(t), creating, t), nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
 	bound, ok := fixture.state.BindingFor(local)
 	if !seeded || outcome.Seeded != 1 || !ok || bound.OmnisaveID != "omnisave-new" {
-		t.Fatalf("expected the prompt's seed choice to create and bind, got %+v outcome=%+v", bound, outcome)
+		t.Fatalf("expected the create choice to create and bind, got %+v outcome=%+v", bound, outcome)
 	}
 }
 

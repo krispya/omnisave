@@ -155,13 +155,13 @@ func TestTrackReportNamesTheJumpPreservationFork(t *testing.T) {
 	}
 }
 
-func TestTrackReportSaysWhenABindingHasNothingSyncedYet(t *testing.T) {
+func TestTrackReportSaysWhereAnUnmatchedLocalSaveWasPreserved(t *testing.T) {
 	report := &TrackReport{}
-	report.BoundUnsynced("Chrono Trigger", "New Game+")
+	report.PreservedAs("Chrono Trigger", "New Game+ (Steam Deck)")
 
 	rendered := strings.Join(report.render(), "\n")
-	if !strings.Contains(rendered, "Save bound to New Game+ with nothing synced yet") {
-		t.Fatalf("expected the unsynced binding sentence, got:\n%s", rendered)
+	if !strings.Contains(rendered, "Local save preserved as New Game+ (Steam Deck)") {
+		t.Fatalf("expected the preservation sentence, got:\n%s", rendered)
 	}
 }
 
