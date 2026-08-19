@@ -6,91 +6,120 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
-// AmbiguousBindingOption describes one existing Omnisave a save could sync
-// with, and whether its history contains the save's exact content.
+// AmbiguousBindingOption describes one existing save a Local Save could sync
+// with, and whether its history contains the Local Save's exact content.
 type AmbiguousBindingOption struct {
 	OmnisaveID        string
 	Name              string
 	MatchedRevisionID string
 }
 
-// AmbiguousBindingChoice resolves a save that matches zero or several
-// Omnisaves. The zero value defers the decision to a later bind.
+// AmbiguousBindingChoice resolves a Local Save that matches zero or several
+// saves. Create makes the Local Save a new save instead of choosing one.
 type AmbiguousBindingChoice struct {
 	OmnisaveID string
-	Seed       bool
+	Create     bool
 }
 
-// Sentinel select values for the non-Omnisave choices. A leading colon can
-// never collide with a server-issued Omnisave ID.
+type unmatchedBindingAction string
+
 const (
-	ambiguousChoiceSeed  = ":seed-new"
-	ambiguousChoiceDefer = ":decide-later"
+	unmatchedBindingSync   unmatchedBindingAction = "sync"
+	unmatchedBindingCreate unmatchedBindingAction = "create"
+	ambiguousChoiceCreate                         = ":create-new"
 )
 
-// PromptAmbiguousBinding asks which Omnisave a save should sync with when
-// content matching cannot decide alone.
+// PromptAmbiguousBinding asks where a Local Save belongs when content
+// matching cannot decide alone.
 func PromptAmbiguousBinding(gameTitle string, options []AmbiguousBindingOption) (AmbiguousBindingChoice, error) {
-	var selected string
-	form := ambiguousBindingForm(gameTitle, options, &selected)
-	if err := form.Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return AmbiguousBindingChoice{}, ErrAborted
+	if len(options) == 0 {
+		return AmbiguousBindingChoice{}, ErrNoOmnisaves
+	}
+	if matchCount(options) == 0 {
+		return promptUnmatchedBinding(gameTitle, options)
+	}
+
+	matchedOptions := make([]AmbiguousBindingOption, 0, len(options))
+	for _, option := range options {
+		if option.MatchedRevisionID != "" {
+			matchedOptions = append(matchedOptions, option)
 		}
-		return AmbiguousBindingChoice{}, err
 	}
-	switch selected {
-	case ambiguousChoiceSeed:
-		return AmbiguousBindingChoice{Seed: true}, nil
-	case ambiguousChoiceDefer:
-		return AmbiguousBindingChoice{}, nil
-	default:
-		return AmbiguousBindingChoice{OmnisaveID: selected}, nil
+	selected := matchedOptions[0].OmnisaveID
+	if err := multipleMatchesForm(gameTitle, matchedOptions, &selected).Run(); err != nil {
+		return AmbiguousBindingChoice{}, bindingPromptError(err)
 	}
+	if selected == ambiguousChoiceCreate {
+		return AmbiguousBindingChoice{Create: true}, nil
+	}
+	return AmbiguousBindingChoice{OmnisaveID: selected}, nil
 }
 
-// ambiguousBindingForm selects over plain string values: huh's Select
-// renders struct-typed options incorrectly, so the choice travels as the
-// Omnisave ID with sentinels for seeding and deferring.
-func ambiguousBindingForm(gameTitle string, options []AmbiguousBindingOption, selected *string) *huh.Form {
+func promptUnmatchedBinding(gameTitle string, options []AmbiguousBindingOption) (AmbiguousBindingChoice, error) {
+	action := unmatchedBindingSync
+	if err := unmatchedBindingActionForm(gameTitle, &action).Run(); err != nil {
+		return AmbiguousBindingChoice{}, bindingPromptError(err)
+	}
+	if action == unmatchedBindingCreate {
+		return AmbiguousBindingChoice{Create: true}, nil
+	}
+
+	selected := options[0].OmnisaveID
+	if err := unmatchedBindingSaveForm(gameTitle, options, &selected).Run(); err != nil {
+		return AmbiguousBindingChoice{}, bindingPromptError(err)
+	}
+	return AmbiguousBindingChoice{OmnisaveID: selected}, nil
+}
+
+func bindingPromptError(err error) error {
+	if errors.Is(err, huh.ErrUserAborted) {
+		return ErrAborted
+	}
+	return err
+}
+
+func matchCount(options []AmbiguousBindingOption) int {
 	matched := 0
 	for _, option := range options {
 		if option.MatchedRevisionID != "" {
 			matched++
 		}
 	}
-	// Open with the cursor on the likeliest answer: the first content match,
-	// or the first Omnisave.
-	if *selected == "" && len(options) > 0 {
-		preferred := options[0]
-		for _, option := range options {
-			if option.MatchedRevisionID != "" {
-				preferred = option
-				break
-			}
-		}
-		*selected = preferred.OmnisaveID
-	}
-	title := "Save matches none of this game's Omnisaves"
-	if matched > 1 {
-		title = "Save matches more than one Omnisave"
-	}
-	selections := make([]huh.Option[string], 0, len(options)+2)
+	return matched
+}
+
+func unmatchedBindingActionForm(gameTitle string, action *unmatchedBindingAction) *huh.Form {
+	prompt := huh.NewSelect[unmatchedBindingAction]().
+		Title("Unmatched local save").
+		Options(
+			huh.NewOption("Sync with save", unmatchedBindingSync),
+			huh.NewOption("Create a new save", unmatchedBindingCreate),
+		).
+		Value(action)
+	return huh.NewForm(huh.NewGroup(prompt).Title(gameTitle)).WithTheme(trackingTheme())
+}
+
+func unmatchedBindingSaveForm(gameTitle string, options []AmbiguousBindingOption, selected *string) *huh.Form {
+	selections := make([]huh.Option[string], 0, len(options))
 	for _, option := range options {
-		detail := " · different content"
-		if option.MatchedRevisionID != "" {
-			detail = " · matches this save"
-		}
-		selections = append(selections, huh.NewOption(option.Name+detail, option.OmnisaveID))
+		selections = append(selections, huh.NewOption(option.Name, option.OmnisaveID))
 	}
-	selections = append(selections,
-		huh.NewOption("Seed a new Omnisave · start syncing from this save", ambiguousChoiceSeed),
-		huh.NewOption("Decide later · leave this save unsynced", ambiguousChoiceDefer),
-	)
 	prompt := huh.NewSelect[string]().
-		Title(title).
+		Title("Choose a save").
 		Options(selections...).
 		Value(selected)
-	form := huh.NewForm(huh.NewGroup(prompt).Title(gameTitle))
-	return form.WithTheme(trackingTheme())
+	return huh.NewForm(huh.NewGroup(prompt).Title(gameTitle)).WithTheme(trackingTheme())
+}
+
+func multipleMatchesForm(gameTitle string, options []AmbiguousBindingOption, selected *string) *huh.Form {
+	selections := make([]huh.Option[string], 0, len(options)+1)
+	for _, option := range options {
+		selections = append(selections, huh.NewOption(option.Name, option.OmnisaveID))
+	}
+	selections = append(selections, huh.NewOption("Create a new save", ambiguousChoiceCreate))
+	prompt := huh.NewSelect[string]().
+		Title("Local save matches more than one save").
+		Options(selections...).
+		Value(selected)
+	return huh.NewForm(huh.NewGroup(prompt).Title(gameTitle)).WithTheme(trackingTheme())
 }

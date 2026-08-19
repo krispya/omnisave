@@ -7,39 +7,65 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func TestAmbiguousBindingPromptMarksMatchesAndOffersSeedAndDeferral(t *testing.T) {
-	var choice string
-	form := ambiguousBindingForm("Slay the Spire 2", []AmbiguousBindingOption{
-		{OmnisaveID: "omnisave-1", Name: "Save 1", MatchedRevisionID: "revision-3"},
-		{OmnisaveID: "omnisave-2", Name: "Save 1 (fork)", MatchedRevisionID: "revision-3"},
-	}, &choice).WithWidth(80)
+func TestUnmatchedLocalSaveOffersSyncOrCreateWithoutIgnore(t *testing.T) {
+	action := unmatchedBindingSync
+	form := unmatchedBindingActionForm("Slay the Spire 2", &action).WithWidth(80)
 	form.Update(form.Init())
 
 	view := ansi.Strip(form.View())
 	for _, text := range []string{
 		"Slay the Spire 2",
-		"Save matches more than one Omnisave",
-		"Save 1 · matches this save",
-		"Save 1 (fork) · matches this save",
-		"Seed a new Omnisave · start syncing from this save",
-		"Decide later · leave this save unsynced",
+		"Unmatched local save",
+		"Sync with save",
+		"Create a new save",
 	} {
 		if !strings.Contains(view, text) {
-			t.Fatalf("expected the ambiguous binding prompt to contain %q, got:\n%s", text, view)
+			t.Fatalf("expected the unmatched-save prompt to contain %q, got:\n%s", text, view)
+		}
+	}
+	for _, absent := range []string{"Decide later", "Leave this save unsynced"} {
+		if strings.Contains(view, absent) {
+			t.Fatalf("expected no ignore choice %q, got:\n%s", absent, view)
 		}
 	}
 }
 
-func TestAmbiguousBindingPromptNamesTheNoMatchSituation(t *testing.T) {
-	var choice string
-	form := ambiguousBindingForm("Slay the Spire 2", []AmbiguousBindingOption{
+func TestSyncWithSaveListsExistingSaves(t *testing.T) {
+	options := []AmbiguousBindingOption{
 		{OmnisaveID: "omnisave-1", Name: "Save 1"},
-	}, &choice).WithWidth(80)
+		{OmnisaveID: "omnisave-2", Name: "New Game+"},
+	}
+	selected := options[0].OmnisaveID
+	form := unmatchedBindingSaveForm("Slay the Spire 2", options, &selected).WithWidth(80)
 	form.Update(form.Init())
 
 	view := ansi.Strip(form.View())
-	if !strings.Contains(view, "Save matches none of this game's Omnisaves") ||
-		!strings.Contains(view, "Save 1 · different content") {
-		t.Fatalf("expected the no-match situation to be named, got:\n%s", view)
+	for _, text := range []string{"Slay the Spire 2", "Choose a save", "Save 1", "New Game+"} {
+		if !strings.Contains(view, text) {
+			t.Fatalf("expected the save picker to contain %q, got:\n%s", text, view)
+		}
+	}
+}
+
+func TestMultipleMatchesOfferEachSaveOrANewSave(t *testing.T) {
+	options := []AmbiguousBindingOption{
+		{OmnisaveID: "omnisave-1", Name: "Save 1", MatchedRevisionID: "revision-3"},
+		{OmnisaveID: "omnisave-2", Name: "Save 1 (fork)", MatchedRevisionID: "revision-3"},
+	}
+	selected := options[0].OmnisaveID
+	form := multipleMatchesForm("Slay the Spire 2", options, &selected).WithWidth(80)
+	form.Update(form.Init())
+
+	view := ansi.Strip(form.View())
+	for _, text := range []string{
+		"Slay the Spire 2",
+		"Local save matches more than one save",
+		"Save 1",
+		"Save 1 (fork)",
+		"Create a new save",
+	} {
+		if !strings.Contains(view, text) {
+			t.Fatalf("expected the multiple-match prompt to contain %q, got:\n%s", text, view)
+		}
 	}
 }

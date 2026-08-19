@@ -177,6 +177,12 @@ func (r *TrackReport) Forked(title, omnisaveName string) {
 	r.event(title, "save forked as "+omnisaveName)
 }
 
+// PreservedAs records an unmatched Local Save copied into a new save before
+// this Device adopts an existing one.
+func (r *TrackReport) PreservedAs(title, omnisaveName string) {
+	r.event(title, "local save preserved as "+omnisaveName)
+}
+
 // Unlocked records achievements this pass watched a game unlock and reported.
 // One is named; more are counted, because a run that finishes several at once
 // would otherwise fill the report with them.
@@ -258,12 +264,6 @@ func (r *TrackReport) Diverged(title, omnisaveName, forkName string) {
 		Kind: PendingDiverged, OmnisaveName: omnisaveName, ForkName: forkName,
 	}
 	r.event(title, "save diverged from "+omnisaveName+", run omnisave track to resolve")
-}
-
-// BoundUnsynced records a save mapped to a chosen Omnisave with no
-// matching revision: the mapping exists, but nothing has synced yet.
-func (r *TrackReport) BoundUnsynced(title, omnisaveName string) {
-	r.event(title, "save bound to "+omnisaveName+" with nothing synced yet")
 }
 
 // Unbound records a save left for manual binding.
