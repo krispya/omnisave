@@ -56,8 +56,13 @@ stay literal rather than becoming pattern syntax.
 A rule's identity — the location id recorded in revision file paths on the
 server — derives from its template text, not its position in the entry, so
 canonical paths keep meaning across manifest refreshes that add, remove, or
-reorder a game's other rules. Filesystem trouble while resolving one rule
-narrows what that rule finds; it never fails the scan.
+reorder a game's other rules. An entry's rules are also each other's
+aliases: a resolved save carries every spelling its entry gives the
+location, which is what lets a revision minted under another OS's template
+be recognized as the same place
+([FDR-003](../fdr/FDR-003-automatic-save-binding.md), decision 11).
+Filesystem trouble while resolving one rule narrows what that rule finds;
+it never fails the scan.
 
 Freshness rides releases. A new game's save location becomes known to devices
 through the next client release and `omnisave upgrade`

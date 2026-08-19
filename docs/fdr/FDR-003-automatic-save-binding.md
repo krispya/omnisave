@@ -25,7 +25,10 @@ is a synchronization baseline that later passes can use without guessing.
 - If the game has no Omnisaves, the local content becomes the initial revision
   of a new Omnisave and that revision becomes the binding baseline.
 - Otherwise, local content is matched exactly against the full revision history
-  of every Omnisave for the game.
+  of every Omnisave for the game. Matching, adoption, and placement translate
+  between the per-OS spellings a game's save-location rules give one logical
+  location, so a lineage begun on another OS is recognized, joined, and
+  followed rather than duplicated (decision 11).
 - One match at the Current Revision rebinds automatically. One match at an older
   revision requires a choice between adopting current progress and continuing
   the older progress as a separate Omnisave.
@@ -163,6 +166,32 @@ the native folder's extras (backup twins, replays) go unprotected for Cloud
 games. A Device where Steam Cloud is disabled for a game keeps synchronizing
 a mirror that no longer moves. Election is per Device and evidence-based, so
 a game changes representation only when what discovery can see changes.
+
+### 11. A lineage speaks one location vocabulary; Devices translate
+
+**Decision:** A save resolved from save-location rules carries the identity
+of every spelling those rules give its location across OSes. When a save
+spells exactly one location and a revision spells exactly one location the
+save knows itself under, the two are compared, adopted, and placed as the
+same place; and a commit onto such a lineage keeps the lineage's original
+spelling. A save or revision spelling several locations stays strict, and an
+identity the save has never heard of is refused as before.
+**Why:** The games Omnisave most exists for are the ones Steam does not
+sync, and their community rules spell one save folder differently per OS.
+Without translation each OS would seed its own lineage and one playthrough
+could never follow the player between a desktop and a Steam Deck. Requiring
+a known identity keeps the translation inside one game's own rules — a
+Cloud mirror or another game's location can never be mistaken for the save —
+and keeping the lineage's spelling on commit means history never mixes
+vocabularies, so every Device reads it the same way forever
+([ADR-018](../adr/ADR-018-embedded-save-profiles.md)).
+**Tradeoff:** Games whose rules name several distinct locations do not
+translate and still split per OS. Translation trusts relative paths to
+coincide beneath the location; rules that anchor at different depths per OS
+simply never match and fall back to strict. And a manifest refresh that
+rewords a template changes that spelling's identity, which strands
+translation for revisions minted under the old wording until content is
+committed under the new one.
 
 ## Related
 

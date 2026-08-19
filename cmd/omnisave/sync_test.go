@@ -1241,3 +1241,68 @@ func TestAnUnmatchedSaveWithOnlyForeignLayoutLineagesSeedsWithoutAsking(t *testi
 		t.Fatalf("expected a fresh lineage bound with a baseline, got %+v", bound)
 	}
 }
+
+// The Undertale story: a game Steam does not sync, whose profile rules spell
+// its one save location differently per OS. Two devices with different
+// spellings share one lineage — the second device joins by translated
+// content match, its commits keep the lineage's original spelling, and the
+// first device pulls them back (FDR-003, decision 11).
+func TestAProfileSaveSyncsAcrossOperatingSystems(t *testing.T) {
+	server := newRealServer(t)
+	mac := newSyncFixture(t, "mac-progress")
+	if outcome := syncOnce(t, server, &mac, nil, 0); outcome.Seeded != 1 {
+		t.Fatalf("expected the first device to seed, got %+v", outcome)
+	}
+	macLocal := tracking.LocalSaveFrom(mac.scans[0], mac.scans[0].Games[0], mac.save)
+	macBound, _ := mac.state.BindingFor(macLocal)
+
+	// The second device resolves the same rule under another OS: a different
+	// location identity, the same relative file, the same content.
+	deck := newSyncFixture(t, "mac-progress")
+	deck.save.Files[0].LocationID = "deck"
+	deck.save.LocationAliases = []string{"battery", "deck"}
+	deck.scans[0].Games[0].Saves[0] = deck.save
+	if outcome := syncOnce(t, server, &deck, nil, 0); outcome.Rebound != 1 || outcome.Seeded != 0 {
+		t.Fatalf("expected the second device to join the lineage by content, got %+v", outcome)
+	}
+	deckLocal := tracking.LocalSaveFrom(deck.scans[0], deck.scans[0].Games[0], deck.save)
+	deckBound, _ := deck.state.BindingFor(deckLocal)
+	if deckBound.OmnisaveID != macBound.OmnisaveID {
+		t.Fatalf("expected one shared lineage, got %q and %q", macBound.OmnisaveID, deckBound.OmnisaveID)
+	}
+
+	// The second device plays; its commit keeps the lineage's spelling.
+	if err := os.WriteFile(deck.localPath, []byte("deck-progress"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if outcome := syncOnce(t, server, &deck, nil, 0); outcome.Pushed != 1 || outcome.Failed != 0 {
+		t.Fatalf("expected the second device to commit, got %+v", outcome)
+	}
+	deckBound, _ = deck.state.BindingFor(deckLocal)
+	pushed := false
+	for _, revision := range revisionsOf(t, server, deckBound.OmnisaveID) {
+		if deckBound.LastSyncedRevisionID != nil && revision.ID == *deckBound.LastSyncedRevisionID {
+			pushed = true
+			for _, file := range revision.Files {
+				if !strings.HasPrefix(file.Path, "battery/") {
+					t.Fatalf("expected the commit spelled in the lineage's vocabulary, got %q", file.Path)
+				}
+			}
+		}
+	}
+	if !pushed {
+		t.Fatal("expected the second device's commit in the shared history")
+	}
+
+	// The first device follows the shared lineage.
+	if outcome := syncOnce(t, server, &mac, nil, 0); outcome.Pulled != 1 || outcome.Failed != 0 {
+		t.Fatalf("expected the first device to pull, got %+v", outcome)
+	}
+	content, err := os.ReadFile(mac.localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "deck-progress" {
+		t.Fatalf("expected the first device to hold the second's progress, got %q", content)
+	}
+}
