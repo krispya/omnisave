@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func TestSyncToDevicePromptOffersEverySaveAndDeferral(t *testing.T) {
+func TestSyncToDevicePromptOffersEverySaveWithConciseLabels(t *testing.T) {
 	var choice string
 	form := syncToDeviceForm("Chrono Trigger", []SyncToDeviceOption{
 		{OmnisaveID: "save-1", Name: "Main Playthrough"},
@@ -19,12 +19,17 @@ func TestSyncToDevicePromptOffersEverySaveAndDeferral(t *testing.T) {
 	for _, text := range []string{
 		"Chrono Trigger",
 		"No local save exists on this device",
-		"Main Playthrough · sync current revision to this device",
-		"New Game+ · sync current revision to this device",
-		"Decide later · leave this device without a save",
+		"Main Playthrough",
+		"New Game+",
+		"Leave this device without a save",
 	} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("expected the sync-to-device prompt to contain %q, got:\n%s", text, view)
+		}
+	}
+	for _, description := range []string{"sync current revision"} {
+		if strings.Contains(view, description) {
+			t.Fatalf("expected choices without the description %q, got:\n%s", description, view)
 		}
 	}
 }

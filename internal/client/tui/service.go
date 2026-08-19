@@ -82,22 +82,31 @@ func ServiceSuggested() {
 // up, because that run already has the player's attention and is the last
 // moment before a Steam Deck goes back to Gaming Mode and stops having one.
 func PromptInstallService() (bool, error) {
-	install := true
-	prompt := huh.NewSelect[bool]().
-		Title("Keep syncing after you close this terminal?").
-		Options(
-			huh.NewOption("Yes · run Omnisave in the background from now on", true),
-			huh.NewOption("No · sync when I run omnisave myself", false),
-		).
-		Value(&install)
-	form := huh.NewForm(huh.NewGroup(prompt).Title("Background syncing")).WithTheme(trackingTheme())
+	choice := installServiceYes
+	form := installServiceForm(&choice)
 	if err := form.Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return false, ErrAborted
 		}
 		return false, err
 	}
-	return install, nil
+	return choice == installServiceYes, nil
+}
+
+const (
+	installServiceYes = "yes"
+	installServiceNo  = "no"
+)
+
+func installServiceForm(choice *string) *huh.Form {
+	prompt := huh.NewSelect[string]().
+		Title("Keep syncing after you close this terminal?").
+		Options(
+			huh.NewOption("Yes", installServiceYes),
+			huh.NewOption("No", installServiceNo),
+		).
+		Value(choice)
+	return huh.NewForm(huh.NewGroup(prompt).Title("Background syncing")).WithTheme(trackingTheme())
 }
 
 // ServiceFailed reports an install or removal that changed nothing, in the
