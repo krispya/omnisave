@@ -901,3 +901,214 @@ func TestABaselinelessBindingMatchingCurrentRebindsSilently(t *testing.T) {
 		t.Fatalf("expected the rebind to restore a baseline, got %+v", rebound)
 	}
 }
+
+// seedForeignLayoutLineage resolves the fixture's game and seeds it an
+// Omnisave whose revisions live in another save's layout — the shape a Steam
+// Cloud lineage has next to a native-folder Local Save. No Local Save of the
+// fixture can ever adopt its Current Revision.
+func seedForeignLayoutLineage(t *testing.T, server *remote.Client, fixture *bindingFixture) *omnisave.Omnisave {
+	t.Helper()
+	ctx := context.Background()
+	outcome, _ := syncTracking(ctx, server, &fixture.state, fixture.scans, nil, &tui.TrackReport{})
+	if !outcome.Synced {
+		t.Fatal("expected the library sync to reach the server")
+	}
+	serverGameID := fixture.state.Games["local-game-1"].ServerGameID
+	if serverGameID == "" {
+		t.Fatal("expected tracking to resolve the game")
+	}
+	cloudPath := filepath.Join(t.TempDir(), "profile.save")
+	if err := os.WriteFile(cloudPath, []byte("cloud-progress"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cloudSave := target.Save{
+		ID: "cloud-save", TargetID: "cloud-target", GameID: "cloud-game", Kind: "cloud",
+		Files: []target.File{{Path: cloudPath, LocationID: "remote", RelativePath: "profile.save"}},
+	}
+	seeded, _, err := binding.Seed(ctx, server, serverGameID, cloudSave, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return seeded
+}
+
+// A binding whose lineage is spelled in another save's layout can never adopt
+// that lineage's current: no jump can place its files here. The answer
+// refuses before preserving anything, so repeating it stacks nothing.
+func TestJumpToAForeignLayoutCurrentFailsBeforePreserving(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "local-progress")
+	seeded := seedForeignLayoutLineage(t, server, &fixture)
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	if err := fixture.state.Bind(local, seeded.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
+	prompts.diverged = func(tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
+		return tui.DivergedBindingJump, nil
+	}
+	outcome := syncOnce(t, server, &fixture, prompts, 0)
+	if outcome.Failed != 1 || outcome.Forked != 0 || outcome.Pulled != 0 {
+		t.Fatalf("expected the jump refused with nothing preserved, got %+v", outcome)
+	}
+	content, _ := os.ReadFile(fixture.localPath)
+	if string(content) != "local-progress" {
+		t.Fatalf("expected the local save untouched, got %q", content)
+	}
+	saves, err := server.ListOmnisaves(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 {
+		t.Fatalf("expected no preservation minted for a refused jump, got %+v", saves)
+	}
+}
+
+// A jump that fails after preserving — an outage the preservation itself
+// survived — leaves that preservation behind. The next answer finds it by
+// content and continues from it instead of minting a duplicate.
+func TestARepeatedJumpAnswerReusesTheEarlierPreservation(t *testing.T) {
+	var failDownloads atomic.Bool
+	server := newInterceptedServer(t, func(response http.ResponseWriter, request *http.Request) bool {
+		if failDownloads.Load() && request.Method == http.MethodGet &&
+			strings.Contains(request.URL.Path, "/api/v1/artifacts/") {
+			http.Error(response, "unavailable", http.StatusInternalServerError)
+			return true
+		}
+		return false
+	})
+	fixture := newSyncFixture(t, "server-content")
+	if outcome := syncOnce(t, server, &fixture, nil, 0); outcome.Seeded != 1 {
+		t.Fatalf("expected the first pass to seed, got %+v", outcome)
+	}
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	bound, _ := fixture.state.BindingFor(local)
+	if err := os.WriteFile(fixture.localPath, []byte("local-progress"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Rebinding drops the baseline: unmatched content, diverged from the start.
+	if err := fixture.state.Bind(local, bound.OmnisaveID); err != nil {
+		t.Fatal(err)
+	}
+	fixture.state.Device.Name = "Steam Deck"
+	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
+	prompts.diverged = func(tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
+		return tui.DivergedBindingJump, nil
+	}
+
+	failDownloads.Store(true)
+	outcome := syncOnce(t, server, &fixture, prompts, 0)
+	if outcome.Forked != 1 || outcome.Failed != 1 {
+		t.Fatalf("expected the preservation to land and the pull to fail, got %+v", outcome)
+	}
+	saves, err := server.ListOmnisaves(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 2 {
+		t.Fatalf("expected the lineage and one preservation, got %+v", saves)
+	}
+
+	failDownloads.Store(false)
+	outcome = syncOnce(t, server, &fixture, prompts, 0)
+	if outcome.Pulled != 1 || outcome.Forked != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected the retry to reuse the preservation and pull, got %+v", outcome)
+	}
+	saves, err = server.ListOmnisaves(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 2 {
+		t.Fatalf("expected the retry to mint nothing new, got %+v", saves)
+	}
+	content, _ := os.ReadFile(fixture.localPath)
+	if string(content) != "server-content" {
+		t.Fatalf("expected the jump to adopt the current revision, got %q", content)
+	}
+	rebound, _ := fixture.state.BindingFor(local)
+	if rebound.OmnisaveID != bound.OmnisaveID || rebound.LastSyncedRevisionID == nil {
+		t.Fatalf("expected the binding settled on the rejoined lineage, got %+v", rebound)
+	}
+}
+
+// A preservation fork that failed before its push holds none of the progress
+// it was made to keep, and reads as that progress saved when it is not. The
+// failed answer removes it, so a retry starts clean instead of stacking
+// empty forks.
+func TestAFailedForkPreservationLeavesNoEmptyFork(t *testing.T) {
+	var failCommits atomic.Bool
+	server := newInterceptedServer(t, func(response http.ResponseWriter, request *http.Request) bool {
+		if failCommits.Load() && request.Method == http.MethodPost &&
+			strings.HasSuffix(request.URL.Path, "/revisions") {
+			http.Error(response, "unavailable", http.StatusInternalServerError)
+			return true
+		}
+		return false
+	})
+	fixture := newSyncFixture(t, "first-progress")
+	if outcome := syncOnce(t, server, &fixture, nil, 0); outcome.Seeded != 1 {
+		t.Fatalf("expected the first pass to seed, got %+v", outcome)
+	}
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	bound, _ := fixture.state.BindingFor(local)
+	otherDeviceCommit(t, server, bound.OmnisaveID, "deck-progress")
+	if err := os.WriteFile(fixture.localPath, []byte("local-divergence"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixture.state.Device.Name = "Steam Deck"
+	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
+	prompts.diverged = func(tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
+		return tui.DivergedBindingFork, nil
+	}
+
+	failCommits.Store(true)
+	outcome := syncOnce(t, server, &fixture, prompts, 0)
+	if outcome.Failed != 1 || outcome.Forked != 0 {
+		t.Fatalf("expected the fork answer to fail cleanly, got %+v", outcome)
+	}
+	saves, err := server.ListOmnisaves(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 {
+		t.Fatalf("expected the empty fork removed, got %+v", saves)
+	}
+
+	failCommits.Store(false)
+	outcome = syncOnce(t, server, &fixture, prompts, 0)
+	if outcome.Forked != 1 || outcome.Failed != 0 {
+		t.Fatalf("expected the retried fork to succeed, got %+v", outcome)
+	}
+	saves, err = server.ListOmnisaves(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 2 {
+		t.Fatalf("expected exactly one preservation fork, got %+v", saves)
+	}
+	forked, _ := fixture.state.BindingFor(local)
+	if forked.OmnisaveID == bound.OmnisaveID || forked.LastSyncedRevisionID == nil {
+		t.Fatalf("expected the binding to continue on the fork, got %+v", forked)
+	}
+}
+
+// A game whose only lineages live in another layout offers nothing this save
+// could adopt, so an unmatched Local Save creates its own Omnisave without a
+// question: one safe outcome remains (FDR-003, decision 1).
+func TestAnUnmatchedSaveWithOnlyForeignLayoutLineagesSeedsWithoutAsking(t *testing.T) {
+	server := newRealServer(t)
+	fixture := newSyncFixture(t, "local-progress")
+	seeded := seedForeignLayoutLineage(t, server, &fixture)
+
+	prompts := testPrompts(failingStaleChooser(t), failingAmbiguousChooser(t), t)
+	outcome := syncOnce(t, server, &fixture, prompts, 0)
+	if outcome.Seeded != 1 || outcome.Failed != 0 || outcome.Unbound != 0 {
+		t.Fatalf("expected the unmatched save seeded without asking, got %+v", outcome)
+	}
+	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	bound, ok := fixture.state.BindingFor(local)
+	if !ok || bound.OmnisaveID == seeded.ID || bound.LastSyncedRevisionID == nil {
+		t.Fatalf("expected a fresh lineage bound with a baseline, got %+v", bound)
+	}
+}

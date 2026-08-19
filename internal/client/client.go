@@ -105,7 +105,20 @@ func (s *Scanner) scanAdapter(ctx context.Context, adapter target.Adapter) ([]Ta
 			if err != nil {
 				return nil, fmt.Errorf("discover save locations for %s: %w", game.ID, err)
 			}
-			if s.profiles != nil {
+			// One representation per game: a save the adapter itself found —
+			// Steam Cloud's mirror — carries the device-neutral layout every
+			// other Device shares, so profile rules stand in only for games
+			// whose adapter found no save content. Discovering both would
+			// track the same progress as two saves whose lineages can never
+			// converge (FDR-003, decision 10).
+			adapterHasContent := false
+			for _, save := range saves {
+				if len(save.Files) > 0 {
+					adapterHasContent = true
+					break
+				}
+			}
+			if s.profiles != nil && !adapterHasContent {
 				profile, err := s.profiles.Find(ctx, game.Identity)
 				if err != nil && !errors.Is(err, saveprofile.ErrNotFound) {
 					return nil, fmt.Errorf("find save profile for %s: %w", game.ID, err)
