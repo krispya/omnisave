@@ -1,9 +1,9 @@
-// Package upgrade replaces the running client with a published release.
+// Package update replaces the running client with a published release.
 //
 // It reads the same release layout the installers do (ADR-015): one archive
 // per platform named for its version, and one checksum file covering all of
 // them. A download that does not match its recorded digest is never installed.
-package upgrade
+package update
 
 import (
 	"archive/tar"
@@ -37,8 +37,8 @@ const maxArchiveBytes = 128 << 20
 // it, is not published.
 var ErrNotFound = errors.New("release not found")
 
-// Upgrader resolves and downloads client releases.
-type Upgrader struct {
+// Updater resolves and downloads client releases.
+type Updater struct {
 	// Repo is the owner/name releases are published under.
 	Repo string
 	// APIBase is where release metadata is resolved. Empty means GitHub.
@@ -55,21 +55,21 @@ type Upgrader struct {
 	GOARCH string
 }
 
-func (u *Upgrader) repo() string {
+func (u *Updater) repo() string {
 	if u.Repo != "" {
 		return u.Repo
 	}
 	return DefaultRepo
 }
 
-func (u *Upgrader) client() *http.Client {
+func (u *Updater) client() *http.Client {
 	if u.HTTP != nil {
 		return u.HTTP
 	}
 	return http.DefaultClient
 }
 
-func (u *Upgrader) platform() (string, string) {
+func (u *Updater) platform() (string, string) {
 	goos, goarch := u.GOOS, u.GOARCH
 	if goos == "" {
 		goos = runtime.GOOS
@@ -81,7 +81,7 @@ func (u *Upgrader) platform() (string, string) {
 }
 
 // These names are the release layout itself, shared with scripts/package-client.sh
-// and the installers. Changing one without the others breaks upgrading.
+// and the installers. Changing one without the others breaks updating.
 func archiveName(version, goos, goarch string) string {
 	extension := "tar.gz"
 	if goos == "windows" {
@@ -103,7 +103,7 @@ func binaryName(goos string) string {
 }
 
 // Latest reports the newest published version, without its leading v.
-func (u *Upgrader) Latest(ctx context.Context) (string, error) {
+func (u *Updater) Latest(ctx context.Context) (string, error) {
 	base := u.APIBase
 	if base == "" {
 		base = "https://api.github.com"
@@ -127,7 +127,7 @@ func (u *Upgrader) Latest(ctx context.Context) (string, error) {
 
 // Download returns the client binary from a release, verified against that
 // release's checksum file. It never writes to disk.
-func (u *Upgrader) Download(ctx context.Context, version string) ([]byte, error) {
+func (u *Updater) Download(ctx context.Context, version string) ([]byte, error) {
 	goos, goarch := u.platform()
 	base := u.DownloadBase
 	if base == "" {
@@ -157,7 +157,7 @@ func (u *Upgrader) Download(ctx context.Context, version string) ([]byte, error)
 	return extract(payload, binaryName(goos))
 }
 
-func (u *Upgrader) get(ctx context.Context, url string) ([]byte, error) {
+func (u *Updater) get(ctx context.Context, url string) ([]byte, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -262,7 +262,7 @@ func Replace(path string, binary []byte) error {
 
 	// Windows refuses to overwrite a file that is open for execution, so the
 	// running binary is renamed out of the way first. The displaced copy
-	// cannot be deleted until it stops running; the next upgrade sweeps it.
+	// cannot be deleted until it stops running; the next update sweeps it.
 	if runtime.GOOS == "windows" {
 		displaced := path + ".old-" + strconv.Itoa(os.Getpid())
 		os.Remove(displaced)
@@ -284,7 +284,7 @@ func Replace(path string, binary []byte) error {
 	return nil
 }
 
-// sweepDisplaced removes binaries a previous Windows upgrade could not delete.
+// sweepDisplaced removes binaries a previous Windows update could not delete.
 func sweepDisplaced(directory string) {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
@@ -298,7 +298,7 @@ func sweepDisplaced(directory string) {
 }
 
 // Path is where the running client lives, with symlinks resolved so an
-// upgrade replaces the binary rather than a link to it.
+// update replaces the binary rather than a link to it.
 func Path() (string, error) {
 	executable, err := os.Executable()
 	if err != nil {
