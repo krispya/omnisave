@@ -34,6 +34,42 @@ func TestEmbeddedManifestKeepsBothLisaBuildsSaveRules(t *testing.T) {
 	}
 }
 
+// The Steam package for Lisa: The First nests the original game two levels
+// beneath Steam's install root. The checked-in patch keeps that packaging
+// difference visible until the equivalent path reaches the community data.
+func TestEmbeddedManifestFindsLisaTheFirstSteamSave(t *testing.T) {
+	installRoot := t.TempDir()
+	saveDirectory := filepath.Join(installRoot, "Lisa_1", "Lisa_1")
+	if err := os.MkdirAll(saveDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	savePath := filepath.Join(saveDirectory, "Save01.lsd")
+	if err := os.WriteFile(savePath, []byte("joy"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	game := target.InstalledGame{
+		ID:          "steam:2743030",
+		TargetID:    "steam",
+		InstallRoot: installRoot,
+		Identity: target.GameIdentity{
+			Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "2743030"}},
+		},
+		Environment: target.Environment{HostOS: saveprofile.OSWindows, Runtime: target.RuntimeNative},
+	}
+	profile, err := embedded.Provider().Find(context.Background(), game.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves, err := saveprofile.Resolve(game, *profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 || len(saves[0].Files) != 1 || saves[0].Files[0].Path != savePath {
+		t.Fatalf("expected the nested Steam save, got %+v", saves)
+	}
+}
+
 // Strife and its Veteran Edition share a Steam id and save template but give
 // that template different platform constraints. The merged profile must keep
 // every supported platform, or the shared path never applies there.

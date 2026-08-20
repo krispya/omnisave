@@ -186,8 +186,13 @@ func mergePaths(left, right *manifestPath) *manifestPath {
 	if right == nil {
 		return left
 	}
-	merged := &manifestPath{
-		When: append(append([]manifestWhen(nil), left.When...), right.When...),
+	merged := &manifestPath{}
+	seenConstraints := make(map[manifestWhen]bool, len(left.When)+len(right.When))
+	for _, constraint := range append(append([]manifestWhen(nil), left.When...), right.When...) {
+		if !seenConstraints[constraint] {
+			merged.When = append(merged.When, constraint)
+			seenConstraints[constraint] = true
+		}
 	}
 	if !isSave(left.Tags) && !isSave(right.Tags) {
 		merged.Tags = left.Tags
