@@ -25,6 +25,32 @@ type GameScan struct {
 	Saves []target.Save
 	// Destinations describe native save destinations whether or not files exist.
 	Destinations []target.SaveDestination
+	// Profile explains what the game's save profile did this pass. It is
+	// recorded on every scan and read only by views that ask for it.
+	Profile ProfileTrace
+}
+
+// ProfileTrace explains a game's save-location knowledge and what became of
+// it: whether the community manifest knows the game at all, what each of its
+// rules did, and whether the resolved files were set aside because the
+// adapter's own save already held them. A scan that finds nothing is
+// otherwise indistinguishable from a scan that never looked.
+type ProfileTrace struct {
+	// Consulted is false when the scanner had no profile provider.
+	Consulted bool
+	// Found reports whether the provider knew this game.
+	Found bool
+	// Provider, ProviderID, and Title identify the entry that answered.
+	Provider   string
+	ProviderID string
+	Title      string
+	// Rules is what each of the entry's rules did, in entry order.
+	Rules []saveprofile.RuleOutcome
+	// Suppressed reports that resolved files were dropped because an
+	// adapter's own save already held the same save family.
+	Suppressed bool
+	// Err is a provider failure other than a plain miss.
+	Err error
 }
 
 // TargetScan reports the installed games found through one application target.
@@ -107,16 +133,23 @@ func (s *Scanner) scanAdapter(ctx context.Context, adapter target.Adapter) ([]Ta
 			if err != nil {
 				return nil, fmt.Errorf("discover save locations for %s: %w", game.ID, err)
 			}
+			var trace ProfileTrace
 			if s.profiles != nil {
+				trace.Consulted = true
 				profile, err := s.profiles.Find(ctx, game.Identity)
 				if err != nil && !errors.Is(err, saveprofile.ErrNotFound) {
 					return nil, fmt.Errorf("find save profile for %s: %w", game.ID, err)
 				}
 				if err == nil {
-					resolved, err := saveprofile.Resolve(game, *profile)
+					trace.Found = true
+					trace.Provider = profile.Provider
+					trace.ProviderID = profile.ProviderID
+					trace.Title = profile.Title
+					resolved, ruleTrace, err := saveprofile.ResolveWithTrace(game, *profile)
 					if err != nil {
 						return nil, fmt.Errorf("resolve save profile for %s: %w", game.ID, err)
 					}
+					trace.Rules = ruleTrace
 					// One representation per game: a save the adapter itself
 					// found — Steam Cloud's mirror — carries the device-neutral
 					// layout every Device shares, so the profile stands aside
@@ -128,7 +161,8 @@ func (s *Scanner) scanAdapter(ctx context.Context, adapter target.Adapter) ([]Ta
 					// auxiliary files, or a subset synced for another OS, would
 					// otherwise silently displace the save that holds the real
 					// progress.
-					if !adapterCoversProfile(saves, resolved) {
+					trace.Suppressed = adapterCoversProfile(saves, resolved)
+					if !trace.Suppressed {
 						saves = append(saves, resolved...)
 						resolvedDestinations, err := saveprofile.ResolveDestinations(game, *profile)
 						if err != nil {
@@ -138,7 +172,9 @@ func (s *Scanner) scanAdapter(ctx context.Context, adapter target.Adapter) ([]Ta
 					}
 				}
 			}
-			scan.Games = append(scan.Games, GameScan{Game: game, Saves: saves, Destinations: destinations})
+			scan.Games = append(scan.Games, GameScan{
+				Game: game, Saves: saves, Destinations: destinations, Profile: trace,
+			})
 		}
 		scans = append(scans, scan)
 	}

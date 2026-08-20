@@ -442,12 +442,12 @@ func environmentOr(name, fallback string) string {
 func runScan(ctx context.Context, scanner *client.Scanner, arguments []string) error {
 	var verbose bool
 	flags := flag.NewFlagSet("scan", flag.ContinueOnError)
-	flags.BoolVar(&verbose, "verbose", false, "show targets, save sets, and individual files")
-	flags.BoolVar(&verbose, "v", false, "show targets, save sets, and individual files")
+	flags.BoolVar(&verbose, "verbose", false, "explain where discovery looked for every game's save")
+	flags.BoolVar(&verbose, "v", false, "explain where discovery looked for every game's save")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
-	_, err := tui.Scan(ctx, scanner, verbose)
+	_, err := tui.Scan(ctx, scanner, verbose, formattedVersion())
 	if errors.Is(err, tui.ErrAborted) {
 		return nil
 	}
@@ -2151,7 +2151,10 @@ Commands:
            looks for a server announcing itself on the local network, then
            shows a code to approve in the Dash's server settings. Use --server
            when nothing announces, such as from outside the network.
-  scan     Discover installed targets, games, and saves without changing state
+  scan     Discover installed targets, games, and saves without changing state.
+           Use --verbose when a game is found but its save is not: it explains
+           where discovery looked for every game and what was there, which is
+           what a report about a missing save needs to say.
   bind     Choose which Omnisave a discovered local save should synchronize with
   update   Replace this client with the newest published release, verified
            against the release checksums before anything is installed. Use

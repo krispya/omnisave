@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
+	"github.com/krisbaumgartner/omnisave/internal/client/host"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
@@ -67,6 +68,7 @@ type model struct {
 	scanner  *client.Scanner
 	verbose  bool
 	clear    bool
+	version  string
 	adapters []adapterState
 	events   chan tea.Msg
 	spinner  spinner.Model
@@ -74,6 +76,16 @@ type model struct {
 	done     bool
 	aborted  bool
 	err      error
+}
+
+// provenance is what a reader of a pasted report needs to know about the
+// device that produced it.
+func (m model) provenance() []string {
+	facts := []string{host.Platform() + "/" + runtime.GOARCH}
+	if m.version != "" {
+		return append([]string{m.version}, facts...)
+	}
+	return facts
 }
 
 type progressMsg client.ScanProgress
@@ -96,13 +108,15 @@ var (
 
 // Run scans configured adapters and renders their progress and results.
 func Run(ctx context.Context, scanner *client.Scanner, verbose bool) error {
-	_, err := Scan(ctx, scanner, verbose)
+	_, err := Scan(ctx, scanner, verbose, "")
 	return err
 }
 
-// Scan renders discovery progress and returns the completed results.
-func Scan(ctx context.Context, scanner *client.Scanner, verbose bool) ([]client.TargetScan, error) {
-	return runScan(ctx, scanner, scanOptions{verbose: verbose})
+// Scan renders discovery progress and returns the completed results. A
+// verbose scan explains where discovery looked, and names the build that
+// looked there so its report stands on its own in an issue.
+func Scan(ctx context.Context, scanner *client.Scanner, verbose bool, version string) ([]client.TargetScan, error) {
+	return runScan(ctx, scanner, scanOptions{verbose: verbose, version: version})
 }
 
 // ScanForSelection renders scan progress that clears itself once discovery
@@ -114,6 +128,7 @@ func ScanForSelection(ctx context.Context, scanner *client.Scanner) ([]client.Ta
 type scanOptions struct {
 	verbose bool
 	clear   bool
+	version string
 }
 
 func runScan(ctx context.Context, scanner *client.Scanner, options scanOptions) ([]client.TargetScan, error) {
@@ -133,6 +148,7 @@ func runScan(ctx context.Context, scanner *client.Scanner, options scanOptions) 
 		scanner:  scanner,
 		verbose:  options.verbose,
 		clear:    options.clear,
+		version:  options.version,
 		adapters: adapters,
 		events:   make(chan tea.Msg, len(names)*2+1),
 		spinner:  indicator,
@@ -409,10 +425,16 @@ func (m model) View() string {
 	}
 	var view strings.Builder
 	view.WriteString(titleStyle.Render("Omnisave") + "\n")
-	if m.done {
-		view.WriteString(mutedStyle.Render("Scan complete") + "\n\n")
-	} else {
+	switch {
+	case !m.done:
 		view.WriteString(mutedStyle.Render("Searching for local saves") + "\n\n")
+	case m.verbose:
+		// A verbose report is written to be pasted into an issue, so it
+		// names the build and the platform that produced it.
+		view.WriteString(mutedStyle.Render(strings.Join(
+			append([]string{"Save locations"}, m.provenance()...), " · ")) + "\n\n")
+	default:
+		view.WriteString(mutedStyle.Render("Scan complete") + "\n\n")
 	}
 	for _, adapter := range m.adapters {
 		view.WriteString(renderAdapter(adapter, m.verbose, m.spinner.View()))
@@ -497,51 +519,7 @@ func renderDetails(scans []client.TargetScan, verbose bool) string {
 	if !verbose {
 		return renderGames(scans)
 	}
-
-	var view strings.Builder
-	for scanIndex, scan := range scans {
-		location := scan.Target.Location
-		if location == "" {
-			location = scan.Target.Root
-		}
-		targetLocation := fmt.Sprintf("%s (%s)", filepath.Clean(location), scan.Target.Source)
-		fmt.Fprintf(&view, "  %s %s\n", treeBranch(scanIndex, len(scans)), mutedStyle.Render(targetLocation))
-		childIndent := "  " + treeChildIndent(scanIndex, len(scans))
-		if len(scan.Games) == 0 {
-			fmt.Fprintf(&view, "%s└─ %s\n", childIndent, mutedStyle.Render("No supported games found"))
-			continue
-		}
-		for gameIndex, game := range scan.Games {
-			title := game.Game.Identity.DisplayTitle(game.Game.ID)
-			stats := summarize([]client.TargetScan{{Games: []client.GameScan{game}}})
-			fmt.Fprintf(&view, "%s%s %s  %s\n", childIndent, treeBranch(gameIndex, len(scan.Games)), nameStyle.Render(title), mutedStyle.Render(strings.Join(stats.saveStats(), " · ")))
-			if len(game.Saves) == 0 {
-				continue
-			}
-			saveIndent := childIndent + treeChildIndent(gameIndex, len(scan.Games))
-			for saveIndex, save := range game.Saves {
-				fileSummary := summary{}
-				for _, file := range save.Files {
-					fileSummary.Files++
-					fileSummary.Bytes += file.Size
-					if file.Modified.After(fileSummary.Latest) {
-						fileSummary.Latest = file.Modified
-					}
-				}
-				fmt.Fprintf(&view, "%s%s %s %s", saveIndent, treeBranch(saveIndex, len(game.Saves)), accentStyle.Render(save.Kind), mutedStyle.Render("· "+count(fileSummary.Files, "file")+" · "+formatBytes(fileSummary.Bytes)))
-				if !fileSummary.Latest.IsZero() {
-					fmt.Fprintf(&view, " %s", mutedStyle.Render("· latest "+fileSummary.Latest.Local().Format("Jan 2 15:04")))
-				}
-				view.WriteByte('\n')
-				fileIndent := saveIndent + treeChildIndent(saveIndex, len(game.Saves))
-				for fileIndex, file := range save.Files {
-					fileDetails := fmt.Sprintf("%s (%s)", filepath.Clean(file.Path), formatBytes(file.Size))
-					fmt.Fprintf(&view, "%s%s %s\n", fileIndent, treeBranch(fileIndex, len(save.Files)), mutedStyle.Render(fileDetails))
-				}
-			}
-		}
-	}
-	return view.String()
+	return renderVerbose(scans)
 }
 
 func renderGames(scans []client.TargetScan) string {
@@ -567,13 +545,6 @@ func treeBranch(index, total int) string {
 		return "└─"
 	}
 	return "├─"
-}
-
-func treeChildIndent(index, total int) string {
-	if index == total-1 {
-		return "   "
-	}
-	return "│  "
 }
 
 func displayName(name string) string {
