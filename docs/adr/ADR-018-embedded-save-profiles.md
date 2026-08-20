@@ -48,10 +48,13 @@ game's native folder is not rediscovered as a competing layout, while a
 mirror holding only auxiliary content suppresses nothing
 ([FDR-003](../fdr/FDR-003-automatic-save-binding.md), decision 10). Only absolute expanded
 paths are searched or offered as destinations, which discards the manifest's
-occasional prose and relative entries. Glob matching is case-insensitive,
-as Ludusavi's is, because community casing is unreliable; and metacharacters
-that arrive through real filesystem values (a library named with brackets)
-stay literal rather than becoming pattern syntax.
+occasional prose and relative entries. Path matching — literal rules
+included — is case-insensitive, as Ludusavi's is, because community casing
+is unreliable. When several on-disk spellings fold to one literal rule and
+none is exact, the path is ambiguous and resolves nothing rather than choosing
+a save or restore destination arbitrarily. Metacharacters that arrive through
+real filesystem values (a library named with brackets) stay literal rather
+than becoming pattern syntax.
 
 A rule's identity — the location id recorded in revision file paths on the
 server — derives from its template text, not its position in the entry, so

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
@@ -425,6 +426,138 @@ func TestGlobMatchingIgnoresManifestCasing(t *testing.T) {
 	}
 	if len(saves) != 1 || len(saves[0].Files) != 1 || saves[0].Files[0].Path != savePath {
 		t.Fatalf("expected community casing to still match, got %+v", saves)
+	}
+}
+
+func TestLiteralPathsIgnoreManifestCasing(t *testing.T) {
+	installRoot := t.TempDir()
+	saveDirectory := filepath.Join(installRoot, "SaveData")
+	if err := os.MkdirAll(saveDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	savePath := filepath.Join(saveDirectory, "profile.bin")
+	if err := os.WriteFile(savePath, []byte("progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manifestCased := filepath.Join(installRoot, "savedata", "PROFILE.BIN")
+	_, err := os.Lstat(manifestCased)
+	caseSensitive := err != nil
+
+	game := target.InstalledGame{
+		ID: "steam:123", TargetID: "steam", InstallRoot: installRoot,
+		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeNative},
+	}
+	profile := saveprofile.Profile{
+		Provider: "ludusavi", ProviderID: "123",
+		Rules: []saveprofile.Rule{{ID: "1", Path: "<base>/savedata/PROFILE.BIN", Kind: "save"}},
+	}
+	saves, err := saveprofile.Resolve(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 || len(saves[0].Files) != 1 {
+		t.Fatalf("expected community casing to still match a literal rule, got %+v", saves)
+	}
+	got := saves[0].Files[0].Path
+	if caseSensitive {
+		// The exact spelling is absent, so resolution must report the
+		// file's on-disk casing.
+		if got != savePath {
+			t.Fatalf("expected on-disk casing %q, got %q", savePath, got)
+		}
+	} else if !strings.EqualFold(got, savePath) {
+		t.Fatalf("expected the save under any casing of %q, got %q", savePath, got)
+	}
+
+	destinations, err := saveprofile.ResolveDestinations(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(destinations) != 1 || len(destinations[0].Locations) != 1 {
+		t.Fatalf("expected one destination for the literal rule, got %+v", destinations)
+	}
+	location := destinations[0].Locations[0]
+	if location.Kind != target.SaveLocationFile {
+		t.Fatalf("expected the existing file's kind, got %+v", location)
+	}
+	if caseSensitive && location.Path != savePath {
+		t.Fatalf("expected the destination to carry on-disk casing %q, got %q", savePath, location.Path)
+	}
+}
+
+func TestLiteralDirectoryRulesIgnoreManifestCasing(t *testing.T) {
+	installRoot := t.TempDir()
+	saveDirectory := filepath.Join(installRoot, "SaveData")
+	if err := os.MkdirAll(saveDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	savePath := filepath.Join(saveDirectory, "slot1.sav")
+	if err := os.WriteFile(savePath, []byte("progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	game := target.InstalledGame{
+		ID: "steam:123", TargetID: "steam", InstallRoot: installRoot,
+		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeNative},
+	}
+	profile := saveprofile.Profile{
+		Provider: "ludusavi", ProviderID: "123",
+		Rules: []saveprofile.Rule{{ID: "1", Path: "<base>/savedata", Kind: "save"}},
+	}
+	saves, err := saveprofile.Resolve(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 || len(saves[0].Files) != 1 {
+		t.Fatalf("expected the differently cased directory rule to match, got %+v", saves)
+	}
+	file := saves[0].Files[0]
+	if !strings.EqualFold(file.Path, savePath) || file.RelativePath != "slot1.sav" {
+		t.Fatalf("expected %q relative to its matched directory, got %+v", savePath, file)
+	}
+}
+
+func TestAmbiguousLiteralCasingIsNotGuessed(t *testing.T) {
+	installRoot := t.TempDir()
+	first := filepath.Join(installRoot, "SaveData")
+	second := filepath.Join(installRoot, "savedata")
+	if err := os.Mkdir(first, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(second, 0755); err != nil {
+		if os.IsExist(err) {
+			t.Skip("filesystem does not support case-distinct sibling directories")
+		}
+		t.Fatal(err)
+	}
+	for _, directory := range []string{first, second} {
+		if err := os.WriteFile(filepath.Join(directory, "slot1.sav"), []byte("progress"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	game := target.InstalledGame{
+		ID: "steam:123", TargetID: "steam", InstallRoot: installRoot,
+		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeNative},
+	}
+	profile := saveprofile.Profile{
+		Provider: "ludusavi", ProviderID: "123",
+		Rules: []saveprofile.Rule{{ID: "1", Path: "<base>/SAVEDATA", Kind: "save"}},
+	}
+	saves, err := saveprofile.Resolve(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saves != nil {
+		t.Fatalf("expected ambiguous literal spellings to resolve no save, got %+v", saves)
+	}
+
+	destinations, err := saveprofile.ResolveDestinations(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if destinations != nil {
+		t.Fatalf("expected ambiguous literal spellings to offer no destination, got %+v", destinations)
 	}
 }
 
