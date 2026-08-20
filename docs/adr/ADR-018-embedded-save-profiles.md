@@ -30,6 +30,17 @@ client, so builds and scans are offline and reproducible. Deterministic output
 keeps upstream refreshes reviewable, and the data is loaded only when a profile
 is first needed.
 
+Reviewed patches in `internal/client/saveprofile/ludusavi/patches` cover
+narrowly scoped paths when an upstream entry is known to be wrong and cannot be
+corrected promptly. Patches are additive for now: each file identifies one
+existing upstream title and Steam id, documents the reason and upstream source,
+and adds save rules without removing or replacing community rules. The build
+applies patches before pruning and fails when their title or Steam identity
+drifts or when a patch adds no effective rule. Tests also verify that every
+checked-in patch reached the generated manifest, so the directory remains a
+visible current inventory rather than an untracked fork. A patch is removed
+once the equivalent correction arrives upstream.
+
 The distributed client archives include `THIRD_PARTY_NOTICES`, which preserves
 the Ludusavi Manifest's MIT copyright and permission notice alongside the
 derived data embedded in the binary.
@@ -86,6 +97,8 @@ Easier:
   every platform, including Windows-only games under Proton.
 - Builds and tests need no network: the manifest is repository data with one
   command to refresh it.
+- Known upstream mistakes can be corrected for a release without hiding edits
+  inside the generated manifest.
 - Devices hold no cache and no download state; what a binary knows is exactly
   what its release knew.
 
@@ -96,8 +109,8 @@ More difficult:
 - The client binary carries embedded profile data whether or not it ever scans.
 - Refreshing the manifest is a step someone must run; nothing fails when it is
   forgotten, the knowledge just stays stale.
-- Community data quality is inherited — a wrong path in the manifest ships
-  until a release after someone corrects it upstream.
+- Unpatched community data quality is inherited, and every local correction
+  adds a small review and removal obligation.
 - A leftover Proton prefix misclassifies a game that switched back to its
   native build: profile rules then search the stale prefix and skip the
   native ones. Reading Steam's compat-tool selection would resolve it.

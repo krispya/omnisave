@@ -1,0 +1,9 @@
+steamId: "2743030"
+title: "Lisa: The First"
+reason: "The Steam package nests the game and its .lsd saves beneath the install root."
+upstream: "https://www.pcgamingwiki.com/wiki/Lisa:_The_First"
+addFiles:
+  <base>/Lisa_1/Lisa_1/*.lsd:
+    tags: [save]
+    when:
+      - os: windows
