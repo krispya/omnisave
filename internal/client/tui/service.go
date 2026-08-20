@@ -10,7 +10,7 @@ import (
 )
 
 // The service reads as one plain title with dim sentences under it, the shape
-// upgrade uses: both answer a question about this installation rather than
+// update uses: both answer a question about this installation rather than
 // about anyone's saves, and they should look like the same kind of answer.
 
 func serviceReport(sentences ...string) {

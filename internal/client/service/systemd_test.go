@@ -324,7 +324,7 @@ func TestRestartOnlyRestartsARunningService(t *testing.T) {
 		t.Errorf("restart did not restart a running service: %v", commands.commands)
 	}
 
-	// A service the player stopped stays stopped: an upgrade replacing a
+	// A service the player stopped stays stopped: an update replacing a
 	// binary is no reason to start something that was turned off.
 	commands.answers["systemctl --user show "+service.UnitName+" --property=ActiveState --value"] = "inactive"
 	commands.commands = nil
@@ -349,7 +349,7 @@ func TestRestartWithNoServiceDoesNothing(t *testing.T) {
 }
 
 // A manager that cannot be reached is not a service that is stopped: telling
-// an upgrade "nothing was running" would leave a lingering service executing
+// an update "nothing was running" would leave a lingering service executing
 // the binary it just replaced, silently, on the devices with nobody watching.
 func TestRestartReportsAManagerItCannotReach(t *testing.T) {
 	systemd, commands := manager(t)

@@ -8,11 +8,11 @@ import (
 
 	"github.com/krisbaumgartner/omnisave/internal/client/service"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
-	"github.com/krisbaumgartner/omnisave/internal/client/upgrade"
+	"github.com/krisbaumgartner/omnisave/internal/client/update"
 )
 
 // runService manages the background service that runs watch unattended. It
-// sits beside upgrade rather than beside track: both act on this client's
+// sits beside update rather than beside track: both act on this client's
 // installation rather than on anyone's saves.
 func runService(ctx context.Context, arguments []string) error {
 	flags := flag.NewFlagSet("service", flag.ContinueOnError)
@@ -71,7 +71,7 @@ func installService(ctx context.Context, statePath string) error {
 	if state.Server.Token == "" {
 		return errors.New("this device is not connected; run omnisave connect first")
 	}
-	executable, err := upgrade.Path()
+	executable, err := update.Path()
 	if err != nil {
 		return fmt.Errorf("could not find the installed client: %w", err)
 	}
