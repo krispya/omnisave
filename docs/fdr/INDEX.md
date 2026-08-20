@@ -12,3 +12,4 @@ Feature Decision Records describe Omnisave's supported behavior and the feature-
 | [FDR-006](FDR-006-connecting-a-device.md) | Connecting a Device | Experimental | 2026-08-18 |
 | [FDR-007](FDR-007-revision-labeling.md) | Revision Labeling | Experimental | 2026-08-19 |
 | [FDR-008](FDR-008-achievement-marks.md) | Achievement Marks | Experimental | 2026-08-18 |
+| [FDR-009](FDR-009-save-discovery-reporting.md) | Save Discovery Reporting | Experimental | 2026-08-20 |

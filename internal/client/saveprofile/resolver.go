@@ -16,25 +16,47 @@ import (
 // expected — makes that rule find less, never fails the pass: discovery only
 // ever reports what it could actually read.
 func Resolve(game target.InstalledGame, profile Profile) ([]target.Save, error) {
+	saves, _, err := ResolveWithTrace(game, profile)
+	return saves, err
+}
+
+// ResolveWithTrace resolves a profile and reports what each of its rules did.
+// The trace is recorded by the pass that produced the saves rather than by a
+// second walk, so an explanation can never disagree with the discovery it
+// explains.
+func ResolveWithTrace(game target.InstalledGame, profile Profile) ([]target.Save, []RuleOutcome, error) {
 	seen := make(map[string]bool)
 	var files []target.File
+	trace := make([]RuleOutcome, 0, len(profile.Rules))
 	for _, rule := range profile.Rules {
-		if !applies(rule, game) {
-			continue
-		}
-		pattern := expand(rule.Path, game)
-		if pattern == "" {
-			continue
-		}
-		for _, file := range collect(pattern, rule.ID, templateGlobs(rule.Path)) {
-			if !seen[file.Path] {
-				seen[file.Path] = true
-				files = append(files, file)
+		outcome := RuleOutcome{Rule: rule}
+		switch {
+		case !applies(rule, game):
+			outcome.Outcome = OutcomeInapplicable
+		default:
+			pattern := expand(rule.Path, game)
+			if pattern == "" {
+				outcome.Outcome = OutcomeUnexpandable
+				break
+			}
+			outcome.Path = pattern
+			collected, result := collect(pattern, rule.ID, templateGlobs(rule.Path))
+			outcome.Outcome = result
+			for _, file := range collected {
+				// The trace counts everything the rule located; the save
+				// takes each file once, however many rules name it.
+				outcome.Files++
+				outcome.Bytes += file.Size
+				if !seen[file.Path] {
+					seen[file.Path] = true
+					files = append(files, file)
+				}
 			}
 		}
+		trace = append(trace, outcome)
 	}
 	if len(files) == 0 {
-		return nil, nil
+		return nil, trace, nil
 	}
 	sort.Slice(files, func(left, right int) bool {
 		if files[left].LocationID == files[right].LocationID {
@@ -53,7 +75,7 @@ func Resolve(game target.InstalledGame, profile Profile) ([]target.Save, error) 
 			"profile_provider_id": profile.ProviderID,
 		},
 		LocationAliases: locationAliases(profile),
-	}}, nil
+	}}, trace, nil
 }
 
 // locationAliases is every identity the profile's rules give this game's save
@@ -241,33 +263,58 @@ func expand(template string, game target.InstalledGame) string {
 // discovery can see. Literal patterns match case-insensitively like globbed
 // ones: the manifest's casing is community-authored, and the same rule must
 // find the same save on a case-sensitive filesystem.
-func collect(pattern, locationID string, globby bool) []target.File {
-	matches := expandLiteral(pattern)
+func collect(pattern, locationID string, globby bool) ([]target.File, Outcome) {
+	matches, matchErr := expandLiteral(pattern)
 	if globby {
-		matches = expandGlob(pattern)
-	} else if len(matches) > 1 {
+		matches, matchErr = expandGlob(pattern)
+	}
+	outcome := OutcomeMissing
+	if matchErr != nil {
+		outcome = OutcomeUnreadable
+	}
+	if !globby && len(matches) > 1 {
 		// Case-sensitive filesystems can carry several spellings that fold to
 		// the same literal rule. None is authoritative when no exact spelling
 		// exists, so discovery must not merge them into one save location.
-		return nil
+		if outranks(OutcomeAmbiguous, outcome) {
+			outcome = OutcomeAmbiguous
+		}
+		return nil, outcome
+	}
+	if len(matches) == 0 {
+		return nil, outcome
 	}
 
 	var files []target.File
 	for _, match := range matches {
 		info, err := os.Lstat(match)
 		if err != nil {
+			// A glob whose pattern held no metacharacters reports itself as a
+			// match without checking, so absence still reaches here.
+			if !os.IsNotExist(err) && outranks(OutcomeUnreadable, outcome) {
+				outcome = OutcomeUnreadable
+			}
 			continue
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
+			if outranks(OutcomeLinked, outcome) {
+				outcome = OutcomeLinked
+			}
 			continue
 		}
 		if info.IsDir() {
+			if outranks(OutcomeEmpty, outcome) {
+				outcome = OutcomeEmpty
+			}
 			base := match
 			if globby {
 				base = globBase(pattern)
 			}
 			filepath.WalkDir(match, func(path string, entry fs.DirEntry, walkErr error) error {
 				if walkErr != nil {
+					if outranks(OutcomeUnreadable, outcome) {
+						outcome = OutcomeUnreadable
+					}
 					if entry != nil && entry.IsDir() {
 						return filepath.SkipDir
 					}
@@ -295,6 +342,11 @@ func collect(pattern, locationID string, globby bool) []target.File {
 			continue
 		}
 		if !info.Mode().IsRegular() {
+			// A device or socket where a save was expected is present but
+			// holds nothing discovery can carry.
+			if outranks(OutcomeEmpty, outcome) {
+				outcome = OutcomeEmpty
+			}
 			continue
 		}
 		relativeBase := filepath.Dir(match)
@@ -303,7 +355,10 @@ func collect(pattern, locationID string, globby bool) []target.File {
 		}
 		files = append(files, nativeFile(match, relativeBase, locationID, info))
 	}
-	return files
+	if len(files) > 0 {
+		outcome = OutcomeFound
+	}
+	return files, outcome
 }
 
 var errAmbiguousLiteral = errors.New("literal path has ambiguous case-insensitive spellings")
@@ -319,7 +374,10 @@ func lstatLiteral(path string) (string, fs.FileInfo, error) {
 	if err == nil || !os.IsNotExist(err) {
 		return path, info, err
 	}
-	matches := expandLiteral(path)
+	matches, matchErr := expandLiteral(path)
+	if matchErr != nil {
+		return path, nil, matchErr
+	}
 	if len(matches) == 0 {
 		return path, nil, err
 	}

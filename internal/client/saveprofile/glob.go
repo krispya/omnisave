@@ -11,23 +11,26 @@ import (
 // filepath.Glob, with the extensions the Ludusavi manifest relies on: a `**`
 // segment matches zero or more directories, and matching is case-insensitive
 // because community-authored casing is unreliable. Filesystem errors and
-// unmatchable pattern segments make a rule find nothing rather than fail.
+// unmatchable pattern segments make a rule find nothing rather than fail. The
+// first filesystem error is returned so a trace can distinguish unreadable
+// paths from absent ones.
 // Symlinked directories are followed for named segments, like Glob, but
 // never during `**` recursion, which unbounded traversal could loop.
-func expandGlob(pattern string) []string {
+func expandGlob(pattern string) ([]string, error) {
 	segments := splitPattern(pattern)
 	anchor := 0
 	for anchor < len(segments) && !hasMeta(segments[anchor]) {
 		anchor++
 	}
 	if anchor == len(segments) {
-		return []string{pattern}
+		return []string{pattern}, nil
 	}
 	root := strings.Join(segments[:anchor], "/")
 	if root == "" || strings.HasSuffix(root, ":") {
 		root += "/"
 	}
 	var matches []string
+	var firstErr error
 	var walk func(directory string, remaining []string)
 	walk = func(directory string, remaining []string) {
 		head, rest := remaining[0], remaining[1:]
@@ -37,6 +40,9 @@ func expandGlob(pattern string) []string {
 		}
 		entries, err := os.ReadDir(directory)
 		if err != nil {
+			if !os.IsNotExist(err) && firstErr == nil {
+				firstErr = err
+			}
 			return
 		}
 		if head == "**" {
@@ -55,7 +61,7 @@ func expandGlob(pattern string) []string {
 	}
 	walk(filepath.FromSlash(root), segments[anchor:])
 	sort.Strings(matches)
-	return matches
+	return matches, firstErr
 }
 
 // expandLiteral finds the on-disk spellings of an absolute literal path,
@@ -65,9 +71,11 @@ func expandGlob(pattern string) []string {
 // walking segments, and only unfound segments scan their parent. Unlike
 // glob segments, literal segments never treat metacharacters as pattern
 // syntax: values expanded into a rule stay literal.
-func expandLiteral(path string) []string {
+func expandLiteral(path string) ([]string, error) {
 	if _, err := os.Lstat(path); err == nil {
-		return []string{path}
+		return []string{path}, nil
+	} else if !os.IsNotExist(err) {
+		return nil, err
 	}
 	segments := strings.Split(filepath.ToSlash(path), "/")
 	root := segments[0]
@@ -75,6 +83,7 @@ func expandLiteral(path string) []string {
 		root += "/"
 	}
 	directories := []string{filepath.FromSlash(root)}
+	var firstErr error
 	for _, segment := range segments[1:] {
 		if segment == "" {
 			continue
@@ -85,9 +94,17 @@ func expandLiteral(path string) []string {
 			if _, err := os.Lstat(exact); err == nil {
 				next = append(next, exact)
 				continue
+			} else if !os.IsNotExist(err) {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
 			}
 			entries, err := os.ReadDir(directory)
 			if err != nil {
+				if !os.IsNotExist(err) && firstErr == nil {
+					firstErr = err
+				}
 				continue
 			}
 			for _, entry := range entries {
@@ -97,12 +114,12 @@ func expandLiteral(path string) []string {
 			}
 		}
 		if len(next) == 0 {
-			return nil
+			return nil, firstErr
 		}
 		directories = next
 	}
 	sort.Strings(directories)
-	return directories
+	return directories, firstErr
 }
 
 // matchEntries matches one directory's entries against the head segment,
