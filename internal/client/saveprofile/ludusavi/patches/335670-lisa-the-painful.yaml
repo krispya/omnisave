@@ -1,0 +1,13 @@
+steamId: "335670"
+title: "Lisa: The Painful"
+reason: "The native Linux build writes its .rvdata2 saves beside the game, but upstream records those paths for Windows alone."
+upstream: "https://www.pcgamingwiki.com/wiki/Lisa:_The_Painful"
+addFiles:
+  <base>/*.rvdata2:
+    tags: [save]
+    when:
+      - os: linux
+  <base>/Joyful/*.rvdata2:
+    tags: [save]
+    when:
+      - os: linux
