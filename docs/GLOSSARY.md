@@ -4,9 +4,7 @@ The canonical vocabulary for Omnisave: UI surfaces, product concepts, authorizat
 
 This document is **also a naming surface**: when we need a name for a thing we're building, we add it here first. That's how vocabulary stays consistent across code, UI, docs, and conversation.
 
-This is **not** a tutorial, design doc, implementation index, or API reference.
-If a concept needs more than a paragraph, link to the owning FDR or ADR rather
-than inlining it.
+This is **not** a tutorial, design doc, implementation index, or API reference. If a concept needs more than a paragraph, link to the owning FDR or ADR rather than inlining it.
 
 Entries within each section are ordered by **conceptual flow**, with foundational terms first and derivatives after, not alphabetically. See [`.agents/skills/glossary/SKILL.md`](../.agents/skills/glossary/SKILL.md) for the maintenance workflow.
 

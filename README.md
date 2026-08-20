@@ -31,10 +31,7 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/krispya/omnisave/main/scripts/install.ps1 | iex
 ```
 
-The installer verifies the download against the release's checksums and refuses
-to install if they disagree. It installs to `~/.local/bin`
-(`%LOCALAPPDATA%\omnisave` on Windows) and adds that directory to your shell
-startup file if it is not already on `PATH`, naming the file it changed.
+The installer verifies the download against the release's checksums and refuses to install if they disagree. It installs to `~/.local/bin` (`%LOCALAPPDATA%\omnisave` on Windows) and adds that directory to your shell startup file if it is not already on `PATH`, naming the file it changed.
 
 On Steam Deck, run the Linux installer from Konsole in Desktop Mode. You can also download a prebuilt archive from the [releases page](https://github.com/krispya/omnisave/releases).
 
@@ -60,8 +57,7 @@ omnisave track
 
 ## Keep syncing in the background
 
-Install Omnisave as a background service to keep syncing after you close the
-terminal:
+Install Omnisave as a background service to keep syncing after you close the terminal:
 
 ```sh
 omnisave service install
@@ -69,13 +65,9 @@ omnisave service status
 omnisave service uninstall
 ```
 
-Connect to your server and choose games before installing the service. It runs
-as your user, starts at boot on supported Linux systems, and starts when you
-sign in on macOS and Windows.
+Connect to your server and choose games before installing the service. It runs as your user, starts at boot on supported Linux systems, and starts when you sign in on macOS and Windows.
 
-On Steam Deck, complete setup in Desktop Mode and accept the background-syncing
-prompt before returning to Gaming Mode. Return to Desktop Mode to track newly
-installed games.
+On Steam Deck, complete setup in Desktop Mode and accept the background-syncing prompt before returning to Gaming Mode. Return to Desktop Mode to track newly installed games.
 
 ## Back up and update
 
@@ -95,12 +87,8 @@ omnisave update           # install the newest release
 omnisave update --check   # report whether one is available
 ```
 
-The client verifies the download against the release checksums before replacing
-anything and only moves forward unless you pass `--version`. Re-running the
-installer updates the client in place too.
+The client verifies the download against the release checksums before replacing anything and only moves forward unless you pass `--version`. Re-running the installer updates the client in place too.
 
 ## License
 
-Omnisave is released under the [ISC License](LICENSE). Distributed builds also
-include the licenses for incorporated material in
-[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
+Omnisave is released under the [ISC License](LICENSE). Distributed builds also include the licenses for incorporated material in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
