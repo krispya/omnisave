@@ -57,12 +57,12 @@ connection, and retries forever into a log nobody reads. That device is
 confidently doing nothing, and from the outside it is indistinguishable from
 one that works.
 
-**Restarting is on purpose, and only what is running.** `omnisave upgrade`
+**Restarting is on purpose, and only what is running.** `omnisave update`
 replaces the binary by renaming the new one over the path, which leaves a
 running client executing the file it already opened — deliberate, so nothing
 is interrupted mid-pass, but it means a service keeps running the old client
 until something restarts it. On the devices that most need a service there is
-nobody to notice. So an upgrade restarts a running service and says it did. A
+nobody to notice. So an update restarts a running service and says it did. A
 service that is stopped stays stopped: replacing a binary is no reason to
 start something the player turned off.
 
@@ -79,11 +79,11 @@ Easier:
   Mode, across mode switches and reboots, with no terminal.
 - The service survives a SteamOS update, because it is defined in `$HOME`
   alongside the binary.
-- macOS and Windows players get the same service lifecycle and upgrade behavior
+- macOS and Windows players get the same service lifecycle and update behavior
   through their native per-user managers.
 - A player can ask a device with no display whether it is actually running,
   and get an answer that separates stopped from never installed.
-- Upgrading a headless device leaves it running the client it just installed.
+- Updating a headless device leaves it running the client it just installed.
 
 More difficult:
 

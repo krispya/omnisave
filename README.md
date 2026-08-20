@@ -91,13 +91,13 @@ docker compose up -d
 Update a client in place with:
 
 ```sh
-omnisave upgrade          # install the newest release
-omnisave upgrade --check  # report whether one is available
+omnisave update           # install the newest release
+omnisave update --check   # report whether one is available
 ```
 
 The client verifies the download against the release checksums before replacing
 anything and only moves forward unless you pass `--version`. Re-running the
-installer upgrades the client in place too.
+installer updates the client in place too.
 
 ## License
 

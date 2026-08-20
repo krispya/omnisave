@@ -28,7 +28,7 @@ var ErrNotInstalled = errors.New("the Omnisave service is not installed")
 // Config is what the service is being asked to run.
 type Config struct {
 	// Executable is the client binary the service runs. The caller resolves
-	// it — the same resolution upgrade uses to find what it replaces — so
+	// it — the same resolution update uses to find what it replaces — so
 	// that a device holding more than one client services the one that was
 	// asked, not whichever the PATH would have found.
 	Executable string
@@ -69,7 +69,7 @@ type Status struct {
 type Manager interface {
 	// Install defines the service, starts it, and arranges for it to start
 	// again on its own. It is safe to re-run: the definition is rewritten
-	// from the config given, so an upgrade of the definition is an install.
+	// from the config given, so an update of the definition is an install.
 	Install(ctx context.Context, config Config) (Status, error)
 	// Uninstall stops the service and removes its definition. Uninstalling
 	// what was never installed is not an error — the end state is the one

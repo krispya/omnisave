@@ -69,7 +69,7 @@ Filesystem trouble while resolving one rule narrows what that rule finds;
 it never fails the scan.
 
 Freshness rides releases. A new game's save location becomes known to devices
-through the next client release and `omnisave upgrade`
+through the next client release and `omnisave update`
 ([ADR-015](ADR-015-client-binary-distribution.md)), not through a runtime
 download. Downloading at runtime (Ludusavi's own approach) would add network,
 cache state, and staleness handling on the least-willing hosts Omnisave

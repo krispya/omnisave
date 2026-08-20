@@ -1,4 +1,4 @@
-package upgrade_test
+package update_test
 
 import (
 	"archive/tar"
@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/krisbaumgartner/omnisave/internal/client/upgrade"
+	"github.com/krisbaumgartner/omnisave/internal/client/update"
 )
 
 // release serves one published release the way the installers expect to find
@@ -62,16 +62,16 @@ func archiveOf(t *testing.T, name string, content []byte) []byte {
 	return buffer.Bytes()
 }
 
-func TestUpgradingInstallsTheNewestPublishedRelease(t *testing.T) {
+func TestUpdatingInstallsTheNewestPublishedRelease(t *testing.T) {
 	server := release(t, "0.2.0", []byte("the 0.2.0 client"))
-	upgrader := &upgrade.Upgrader{
+	updater := &update.Updater{
 		APIBase:      server.URL,
 		DownloadBase: server.URL,
 		GOOS:         "linux",
 		GOARCH:       "amd64",
 	}
 
-	newest, err := upgrader.Latest(context.Background())
+	newest, err := updater.Latest(context.Background())
 	if err != nil {
 		t.Fatalf("resolve latest: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestUpgradingInstallsTheNewestPublishedRelease(t *testing.T) {
 		t.Fatalf("latest = %q, want 0.2.0", newest)
 	}
 
-	binary, err := upgrader.Download(context.Background(), newest)
+	binary, err := updater.Download(context.Background(), newest)
 	if err != nil {
 		t.Fatalf("download: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestUpgradingInstallsTheNewestPublishedRelease(t *testing.T) {
 	if err := os.WriteFile(installed, []byte("the 0.1.0 client"), 0o755); err != nil {
 		t.Fatalf("seed the installed client: %v", err)
 	}
-	if err := upgrade.Replace(installed, binary); err != nil {
+	if err := update.Replace(installed, binary); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
 
@@ -108,7 +108,7 @@ func TestUpgradingInstallsTheNewestPublishedRelease(t *testing.T) {
 	}
 }
 
-func TestUpgradingRefusesAnArchiveThatFailsItsChecksum(t *testing.T) {
+func TestUpdatingRefusesAnArchiveThatFailsItsChecksum(t *testing.T) {
 	// A release whose checksum file disagrees with the archive beside it is
 	// what a tampered or truncated download looks like.
 	archive := archiveOf(t, "omnisave", []byte("a substituted client"))
@@ -122,17 +122,17 @@ func TestUpgradingRefusesAnArchiveThatFailsItsChecksum(t *testing.T) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
-	upgrader := &upgrade.Upgrader{DownloadBase: server.URL, GOOS: "linux", GOARCH: "amd64"}
-	if _, err := upgrader.Download(context.Background(), "0.2.0"); err == nil {
+	updater := &update.Updater{DownloadBase: server.URL, GOOS: "linux", GOARCH: "amd64"}
+	if _, err := updater.Download(context.Background(), "0.2.0"); err == nil {
 		t.Fatal("expected the download to be refused")
 	}
 }
 
-func TestUpgradingReportsAReleaseThatDoesNotPublishThisPlatform(t *testing.T) {
+func TestUpdatingReportsAReleaseThatDoesNotPublishThisPlatform(t *testing.T) {
 	server := release(t, "0.2.0", []byte("the 0.2.0 client"))
-	upgrader := &upgrade.Upgrader{DownloadBase: server.URL, GOOS: "linux", GOARCH: "arm64"}
+	updater := &update.Updater{DownloadBase: server.URL, GOOS: "linux", GOARCH: "arm64"}
 
-	_, err := upgrader.Download(context.Background(), "0.2.0")
+	_, err := updater.Download(context.Background(), "0.2.0")
 	if err == nil {
 		t.Fatal("expected an unpublished platform to fail")
 	}
@@ -146,7 +146,7 @@ func TestAReplacedClientKeepsTheDirectoryClean(t *testing.T) {
 	if err := os.WriteFile(installed, []byte("old"), 0o755); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if err := upgrade.Replace(installed, []byte("new")); err != nil {
+	if err := update.Replace(installed, []byte("new")); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
 
@@ -174,12 +174,12 @@ func TestOnlyALaterReleaseCountsAsNewer(t *testing.T) {
 		{"1.0.0", "0.9.9", false},
 		{"0.2.0", "0.2.0", false},
 		// A development build has no released version to compare, so any
-		// published release is an upgrade from it.
+		// published release is an update from it.
 		{"dev", "0.1.0", true},
 		{"0.1.0", "not-a-version", false},
 	}
 	for _, test := range cases {
-		if got := upgrade.Newer(test.installed, test.candidate); got != test.newer {
+		if got := update.Newer(test.installed, test.candidate); got != test.newer {
 			t.Errorf("Newer(%q, %q) = %v, want %v", test.installed, test.candidate, got, test.newer)
 		}
 	}
