@@ -116,6 +116,8 @@ export type CatalogGame = {
   platform_company?: string;
   publisher?: string;
   description?: string;
+  /** Whether this server currently has a labeler matching the game. */
+  labeler_available: boolean;
   metadata_source: string;
   identifiers: GameIdentifier[];
   fingerprints: GameFingerprint[];
@@ -447,6 +449,13 @@ export function updateRevisionDisplayName(
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ display_name: displayName }),
+  });
+}
+
+/** Reruns the game's labeler against one existing revision. */
+export function labelRevision(token: string, omnisaveID: string, revisionID: string) {
+  return request<Revision>(`/api/v1/omnisaves/${omnisaveID}/revisions/${revisionID}/label`, token, {
+    method: 'POST',
   });
 }
 

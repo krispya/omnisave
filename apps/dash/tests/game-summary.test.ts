@@ -12,6 +12,7 @@ function game(overrides: Partial<GameSummary> = {}): GameSummary {
     id: 'game-1',
     label: 'Chrono Trigger',
     sortKey: 'Chrono Trigger',
+    labelerAvailable: false,
     identifiers: [],
     fingerprints: [],
     media: [],

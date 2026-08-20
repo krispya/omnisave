@@ -27,9 +27,8 @@ type ForkOrigin struct {
 	RevisionID string `json:"revision_id"`
 }
 
-// NameSource values record who set a revision's DisplayName. The rule they
-// exist for: automation may replace a labeler-derived name or fill an empty
-// one, but a manually chosen name is never overwritten.
+// NameSource values record who last set a revision's DisplayName. An explicit
+// relabel changes a manual source to labeler along with the name.
 const (
 	NameSourceLabeler = "labeler"
 	NameSourceManual  = "manual"

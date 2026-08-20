@@ -986,6 +986,8 @@ func TestArtifactsRestCompressedButKeepTheirIdentity(t *testing.T) {
 // game's labeler.
 type fixedNamer struct{ name string }
 
+func (n *fixedNamer) HasLabeler(context.Context, string) bool { return true }
+
 func (n *fixedNamer) NameRevision(context.Context, string, []omnisave.RevisionFile) string {
 	return n.name
 }
@@ -1000,7 +1002,8 @@ func TestRevisionNamesRememberWhoSetThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saves := omnisaveservice.NewWithNamer(repository, &fixedNamer{name: "Necro A5, flr 12"})
+	namer := &fixedNamer{name: "Necro A5, flr 12"}
+	saves := omnisaveservice.NewWithNamer(repository, namer)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-spire2"})
 	if err != nil {
 		t.Fatal(err)
@@ -1013,12 +1016,29 @@ func TestRevisionNamesRememberWhoSetThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	namer.name = "Necro A5, flr 13"
+	relabeled, err := saves.LabelRevision(ctx, save.ID, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relabeled.DisplayName != namer.name || relabeled.NameSource != omnisave.NameSourceLabeler {
+		t.Fatalf("the labeler's new answer did not replace its old one: %+v", relabeled)
+	}
 	displayName := "The good run"
 	if _, err := saves.UpdateRevision(ctx, save.ID, first.ID, omnisave.UpdateRevision{
 		DisplayName: &displayName,
 	}); err != nil {
 		t.Fatal(err)
 	}
+	namer.name = "Explicit rerun"
+	overridden, err := saves.LabelRevision(ctx, save.ID, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overridden.DisplayName != namer.name || overridden.NameSource != omnisave.NameSourceLabeler {
+		t.Fatalf("explicit relabel did not replace the manual name: %+v", overridden)
+	}
+	namer.name = "Necro A5, flr 12"
 	second, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
 		ExpectedCurrentRevisionID: &first.ID,
 		Upserts: []omnisave.RevisionFile{{
@@ -1028,13 +1048,18 @@ func TestRevisionNamesRememberWhoSetThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	secondName := "The good run"
+	if _, err := saves.UpdateRevision(ctx, save.ID, second.ID, omnisave.UpdateRevision{
+		DisplayName: &secondName,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := repository.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	// A database rebuilt from a copy of the store alone must still know which
-	// name a person chose and which the labeler wrote, or later automation
-	// could not tell whose names it may replace.
+	// A database rebuilt from a copy of the store alone must retain who last set
+	// each name, including an explicit relabel that replaced a manual name.
 	elsewhere := t.TempDir()
 	copyDirectory(t, filepath.Join(original, "store"), filepath.Join(elsewhere, "store"))
 	rebuilt, err := sqlite.Open(
@@ -1045,19 +1070,19 @@ func TestRevisionNamesRememberWhoSetThem(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rebuilt.Close()
-	renamed, err := rebuilt.GetRevision(ctx, save.ID, first.ID)
+	rebuiltRelabel, err := rebuilt.GetRevision(ctx, save.ID, first.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if renamed.DisplayName != "The good run" || renamed.NameSource != omnisave.NameSourceManual {
-		t.Fatalf("the manual name did not survive the rebuild: %+v", renamed)
+	if rebuiltRelabel.DisplayName != "Explicit rerun" || rebuiltRelabel.NameSource != omnisave.NameSourceLabeler {
+		t.Fatalf("the explicit relabel did not survive the rebuild: %+v", rebuiltRelabel)
 	}
-	labeled, err := rebuilt.GetRevision(ctx, save.ID, second.ID)
+	rebuiltManual, err := rebuilt.GetRevision(ctx, save.ID, second.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if labeled.DisplayName != "Necro A5, flr 12" || labeled.NameSource != omnisave.NameSourceLabeler {
-		t.Fatalf("the labeler's name did not survive the rebuild: %+v", labeled)
+	if rebuiltManual.DisplayName != secondName || rebuiltManual.NameSource != omnisave.NameSourceManual {
+		t.Fatalf("the manual name did not survive the rebuild: %+v", rebuiltManual)
 	}
 }
 

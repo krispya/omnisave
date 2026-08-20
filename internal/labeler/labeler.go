@@ -44,6 +44,15 @@ func New(games GameDirectory, artifacts ArtifactOpener) (*Labeler, error) {
 	return &Labeler{games: games, artifacts: artifacts, scripts: scripts}, nil
 }
 
+// HasLabeler reports whether the game currently matches a registered script.
+func (l *Labeler) HasLabeler(ctx context.Context, gameID string) bool {
+	if l == nil {
+		return false
+	}
+	game, err := l.games.GetGame(ctx, gameID)
+	return err == nil && l.scriptFor(game.Identifiers) != nil
+}
+
 // NameRevision derives a display name, returning "" when labeling is unavailable or fails.
 func (l *Labeler) NameRevision(ctx context.Context, gameID string, files []omnisave.RevisionFile) string {
 	if l == nil {
