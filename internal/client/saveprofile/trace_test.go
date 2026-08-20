@@ -3,6 +3,7 @@ package saveprofile_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
@@ -109,6 +110,34 @@ func TestTraceReportsAmbiguousCasingRatherThanAbsence(t *testing.T) {
 	})
 	if outcomes["ambiguous"].Outcome != saveprofile.OutcomeAmbiguous {
 		t.Fatalf("expected ambiguous casing to be named, got %q", outcomes["ambiguous"].Outcome)
+	}
+}
+
+func TestTraceReportsUnreadableLocationsRatherThanAbsence(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("permission modes do not make directories unreadable here")
+	}
+	home := t.TempDir()
+	locked := filepath.Join(home, "Locked")
+	if err := os.Mkdir(locked, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0700) })
+	if _, err := os.ReadDir(locked); err == nil {
+		t.Skip("filesystem does not enforce the directory permission mode")
+	}
+
+	outcomes := traced(t, home, []saveprofile.Rule{
+		{ID: "literal", Path: "<home>/Locked/progress.sav", Kind: "save"},
+		{ID: "glob", Path: "<home>/Locked/*.sav", Kind: "save"},
+	})
+	for _, id := range []string{"literal", "glob"} {
+		if got := outcomes[id].Outcome; got != saveprofile.OutcomeUnreadable {
+			t.Errorf("rule %q: expected unreadable, got %q", id, got)
+		}
 	}
 }
 

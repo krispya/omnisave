@@ -264,21 +264,28 @@ func expand(template string, game target.InstalledGame) string {
 // ones: the manifest's casing is community-authored, and the same rule must
 // find the same save on a case-sensitive filesystem.
 func collect(pattern, locationID string, globby bool) ([]target.File, Outcome) {
-	matches := expandLiteral(pattern)
+	matches, matchErr := expandLiteral(pattern)
 	if globby {
-		matches = expandGlob(pattern)
-	} else if len(matches) > 1 {
+		matches, matchErr = expandGlob(pattern)
+	}
+	outcome := OutcomeMissing
+	if matchErr != nil {
+		outcome = OutcomeUnreadable
+	}
+	if !globby && len(matches) > 1 {
 		// Case-sensitive filesystems can carry several spellings that fold to
 		// the same literal rule. None is authoritative when no exact spelling
 		// exists, so discovery must not merge them into one save location.
-		return nil, OutcomeAmbiguous
+		if outranks(OutcomeAmbiguous, outcome) {
+			outcome = OutcomeAmbiguous
+		}
+		return nil, outcome
 	}
 	if len(matches) == 0 {
-		return nil, OutcomeMissing
+		return nil, outcome
 	}
 
 	var files []target.File
-	outcome := OutcomeMissing
 	for _, match := range matches {
 		info, err := os.Lstat(match)
 		if err != nil {
@@ -367,7 +374,10 @@ func lstatLiteral(path string) (string, fs.FileInfo, error) {
 	if err == nil || !os.IsNotExist(err) {
 		return path, info, err
 	}
-	matches := expandLiteral(path)
+	matches, matchErr := expandLiteral(path)
+	if matchErr != nil {
+		return path, nil, matchErr
+	}
 	if len(matches) == 0 {
 		return path, nil, err
 	}
