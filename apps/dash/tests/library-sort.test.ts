@@ -8,6 +8,7 @@ function game(id: string, overrides: Partial<GameSummary> = {}): GameSummary {
     id,
     label: id,
     sortKey: id,
+    labelerAvailable: false,
     identifiers: [],
     fingerprints: [],
     media: [],

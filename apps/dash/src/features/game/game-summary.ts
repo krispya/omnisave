@@ -14,6 +14,7 @@ export type GameSummary = {
   platformCompany?: string;
   publisher?: string;
   description?: string;
+  labelerAvailable: boolean;
   metadataSource?: string;
   identifiers: GameIdentifier[];
   fingerprints: GameFingerprint[];

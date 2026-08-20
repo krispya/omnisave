@@ -82,6 +82,7 @@ func (api *API) guardedRoutes() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/{revisionID}", api.getRevision)
 	mux.HandleFunc("PATCH /api/v1/omnisaves/{id}/revisions/{revisionID}", api.updateRevision)
 	mux.HandleFunc("DELETE /api/v1/omnisaves/{id}/revisions/{revisionID}", api.deleteRevision)
+	mux.HandleFunc("POST /api/v1/omnisaves/{id}/revisions/{revisionID}/label", api.labelRevision)
 	mux.HandleFunc("POST /api/v1/omnisaves/{id}/achievements", api.recordAchievements)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/achievements", api.listAchievements)
 	mux.HandleFunc("POST /api/v1/omnisaves/{id}/forks", api.fork)
@@ -285,6 +286,18 @@ func (a *API) updateRevision(w http.ResponseWriter, r *http.Request) {
 	}
 	revision, err := a.saves.UpdateRevision(
 		r.Context(), r.PathValue("id"), r.PathValue("revisionID"), input,
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	a.publishLibraryChanged()
+	writeJSON(w, http.StatusOK, revision)
+}
+
+func (a *API) labelRevision(w http.ResponseWriter, r *http.Request) {
+	revision, err := a.saves.LabelRevision(
+		r.Context(), r.PathValue("id"), r.PathValue("revisionID"),
 	)
 	if err != nil {
 		writeError(w, err)
@@ -510,7 +523,7 @@ func (a *API) resolveGame(w http.ResponseWriter, r *http.Request) {
 	}
 	a.publishLibraryChanged()
 	writeJSON(w, http.StatusOK, catalogResolutionResponse{
-		Game:   a.gameResponse(&resolution.Game),
+		Game:   a.gameResponse(r.Context(), &resolution.Game),
 		Status: resolution.Status,
 	})
 }
@@ -523,7 +536,7 @@ func (a *API) listGames(w http.ResponseWriter, r *http.Request) {
 	}
 	response := make([]catalogGameResponse, len(games))
 	for index := range games {
-		response[index] = a.gameResponse(&games[index])
+		response[index] = a.gameResponse(r.Context(), &games[index])
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -562,7 +575,7 @@ func (a *API) matchGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.publishLibraryChanged()
-	writeJSON(w, http.StatusOK, a.gameResponse(game))
+	writeJSON(w, http.StatusOK, a.gameResponse(r.Context(), game))
 }
 
 func (a *API) getGame(w http.ResponseWriter, r *http.Request) {
@@ -571,7 +584,7 @@ func (a *API) getGame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, a.gameResponse(game))
+	writeJSON(w, http.StatusOK, a.gameResponse(r.Context(), game))
 }
 
 func (a *API) deleteGame(w http.ResponseWriter, r *http.Request) {
@@ -682,20 +695,21 @@ func (a *API) getGameMedia(w http.ResponseWriter, r *http.Request) {
 }
 
 type catalogGameResponse struct {
-	ID              string                    `json:"id"`
-	Title           string                    `json:"title"`
-	SortTitle       string                    `json:"sort_title,omitempty"`
-	Platform        string                    `json:"platform,omitempty"`
-	PlatformCompany string                    `json:"platform_company,omitempty"`
-	Publisher       string                    `json:"publisher,omitempty"`
-	Description     string                    `json:"description,omitempty"`
-	MetadataSource  string                    `json:"metadata_source"`
-	Identifiers     []catalog.GameIdentifier  `json:"identifiers"`
-	Fingerprints    []catalog.GameFingerprint `json:"fingerprints"`
-	Metadata        map[string]any            `json:"metadata,omitempty"`
-	Media           []catalogMediaResponse    `json:"media"`
-	Provenance      []catalog.GameTracking    `json:"provenance"`
-	RefreshedAt     string                    `json:"refreshed_at"`
+	ID               string                    `json:"id"`
+	Title            string                    `json:"title"`
+	SortTitle        string                    `json:"sort_title,omitempty"`
+	Platform         string                    `json:"platform,omitempty"`
+	PlatformCompany  string                    `json:"platform_company,omitempty"`
+	Publisher        string                    `json:"publisher,omitempty"`
+	Description      string                    `json:"description,omitempty"`
+	LabelerAvailable bool                      `json:"labeler_available"`
+	MetadataSource   string                    `json:"metadata_source"`
+	Identifiers      []catalog.GameIdentifier  `json:"identifiers"`
+	Fingerprints     []catalog.GameFingerprint `json:"fingerprints"`
+	Metadata         map[string]any            `json:"metadata,omitempty"`
+	Media            []catalogMediaResponse    `json:"media"`
+	Provenance       []catalog.GameTracking    `json:"provenance"`
+	RefreshedAt      string                    `json:"refreshed_at"`
 }
 
 type catalogResolutionResponse struct {
@@ -713,7 +727,7 @@ type catalogMediaResponse struct {
 	Attribution string `json:"attribution,omitempty"`
 }
 
-func (a *API) gameResponse(game *catalog.Game) catalogGameResponse {
+func (a *API) gameResponse(ctx context.Context, game *catalog.Game) catalogGameResponse {
 	media := make([]catalogMediaResponse, len(game.Media))
 	for index, item := range game.Media {
 		media[index] = catalogMediaResponse{
@@ -738,20 +752,21 @@ func (a *API) gameResponse(game *catalog.Game) catalogGameResponse {
 		}
 	}
 	return catalogGameResponse{
-		ID:              game.ID,
-		Title:           game.Title,
-		SortTitle:       game.SortTitle,
-		Platform:        game.Platform,
-		PlatformCompany: game.PlatformCompany,
-		Publisher:       game.Publisher,
-		Description:     game.Description,
-		MetadataSource:  game.MetadataSource,
-		Identifiers:     game.Identifiers,
-		Fingerprints:    game.Fingerprints,
-		Metadata:        game.Metadata,
-		Media:           media,
-		Provenance:      provenance,
-		RefreshedAt:     game.RefreshedAt.Format(time.RFC3339Nano),
+		ID:               game.ID,
+		Title:            game.Title,
+		SortTitle:        game.SortTitle,
+		Platform:         game.Platform,
+		PlatformCompany:  game.PlatformCompany,
+		Publisher:        game.Publisher,
+		Description:      game.Description,
+		LabelerAvailable: a.saves.HasLabeler(ctx, game.ID),
+		MetadataSource:   game.MetadataSource,
+		Identifiers:      game.Identifiers,
+		Fingerprints:     game.Fingerprints,
+		Metadata:         game.Metadata,
+		Media:            media,
+		Provenance:       provenance,
+		RefreshedAt:      game.RefreshedAt.Format(time.RFC3339Nano),
 	}
 }
 

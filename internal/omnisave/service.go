@@ -70,6 +70,11 @@ type Service interface {
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*Revision, error)
 	ListRevisions(ctx context.Context, omnisaveID string) ([]Revision, error)
 	UpdateRevision(ctx context.Context, omnisaveID, revisionID string, input UpdateRevision) (*Revision, error)
+	// HasLabeler reports whether the server can label revisions for a game.
+	HasLabeler(ctx context.Context, gameID string) bool
+	// LabelRevision reruns the game's labeler against an existing revision,
+	// replacing its current name when the labeler produces one.
+	LabelRevision(ctx context.Context, omnisaveID, revisionID string) (*Revision, error)
 	DeleteRevision(ctx context.Context, omnisaveID, revisionID string) error
 
 	StoreArtifact(ctx context.Context, artifact Artifact, payload io.Reader) error

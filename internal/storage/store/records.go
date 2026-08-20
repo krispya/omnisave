@@ -79,7 +79,7 @@ type Omnisave struct {
 	RevisionNames map[string]string `json:"revision_names,omitempty"`
 	// RevisionNameSources mirrors RevisionNames with each name's origin —
 	// omnisave.NameSourceLabeler or NameSourceManual — so a rebuilt database
-	// still knows which names automation may replace.
+	// retains the provenance of each current name.
 	RevisionNameSources map[string]string `json:"revision_name_sources,omitempty"`
 	// Achievements records what a game unlocked while Omnisave watched it, and
 	// the revision each unlock landed on. They belong to the lineage rather

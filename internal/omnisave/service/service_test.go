@@ -612,6 +612,8 @@ type notingNamer struct {
 	gameIDs []string
 }
 
+func (n *notingNamer) HasLabeler(context.Context, string) bool { return true }
+
 func (n *notingNamer) NameRevision(_ context.Context, gameID string, _ []omnisave.RevisionFile) string {
 	n.gameIDs = append(n.gameIDs, gameID)
 	return n.name
@@ -621,6 +623,9 @@ func TestCommittedRevisionsAreNamedByTheGamesLabeler(t *testing.T) {
 	ctx := context.Background()
 	namer := &notingNamer{name: "Necro A5, Underdocks flr 12"}
 	saves := omnisaveservice.NewWithNamer(storagetest.NewMemoryRepository(), namer)
+	if !saves.HasLabeler(ctx, "game-spire2") {
+		t.Fatal("configured labeler was not reported")
+	}
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-spire2"})
 	if err != nil {
 		t.Fatal(err)
@@ -640,8 +645,7 @@ func TestCommittedRevisionsAreNamedByTheGamesLabeler(t *testing.T) {
 		t.Fatalf("the namer was asked about %v, want the save's game", namer.gameIDs)
 	}
 
-	// A person's rename outranks the labeler's: the name changes hands and the
-	// source records that it is now manual.
+	// A person's rename takes the name over and records that it is now manual.
 	displayName := "The run that beat the Spire"
 	renamed, err := saves.UpdateRevision(ctx, save.ID, revision.ID, omnisave.UpdateRevision{
 		DisplayName: &displayName,
@@ -664,6 +668,62 @@ func TestCommittedRevisionsAreNamedByTheGamesLabeler(t *testing.T) {
 	}
 	if second.DisplayName != "" || second.NameSource != "" {
 		t.Fatalf("a declined name still landed on the revision: %+v", second)
+	}
+}
+
+func TestAnExistingRevisionCanRunItsGamesLabeler(t *testing.T) {
+	ctx := context.Background()
+	repository := storagetest.NewMemoryRepository()
+	beforeLabeler := omnisaveservice.New(repository)
+	if beforeLabeler.HasLabeler(ctx, "game-spire2") {
+		t.Fatal("service without a labeler reported one")
+	}
+	save, err := beforeLabeler.Create(ctx, omnisave.CreateOmnisave{GameID: "game-spire2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := beforeLabeler.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{
+			Path: "remote/current_run.save", Artifact: storeBlob(t, ctx, beforeLabeler, "run in progress"),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revision.DisplayName != "" || revision.NameSource != "" {
+		t.Fatalf("revision committed before the labeler should be unnamed: %+v", revision)
+	}
+
+	namer := &notingNamer{name: "Necro A5, Underdocks flr 12"}
+	withLabeler := omnisaveservice.NewWithNamer(repository, namer)
+	labeled, err := withLabeler.LabelRevision(ctx, save.ID, revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if labeled.DisplayName != namer.name || labeled.NameSource != omnisave.NameSourceLabeler {
+		t.Fatalf("historical revision was not labeled: %+v", labeled)
+	}
+
+	manualName := "The run that beat the Spire"
+	manual, err := withLabeler.UpdateRevision(ctx, save.ID, revision.ID, omnisave.UpdateRevision{
+		DisplayName: &manualName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manual.DisplayName != manualName || manual.NameSource != omnisave.NameSourceManual {
+		t.Fatalf("manual rename did not take ownership: %+v", manual)
+	}
+	namer.name = "A newer automatic answer"
+	overridden, err := withLabeler.LabelRevision(ctx, save.ID, revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overridden.DisplayName != namer.name || overridden.NameSource != omnisave.NameSourceLabeler {
+		t.Fatalf("explicit relabel did not replace the manual name: %+v", overridden)
+	}
+	if len(namer.gameIDs) != 2 {
+		t.Fatalf("explicit relabel did not run the labeler: %v", namer.gameIDs)
 	}
 }
 
@@ -705,8 +765,8 @@ func TestAKeepCurrentCommitAttachesABranchWithoutMovingCurrent(t *testing.T) {
 	if kept.ParentID == nil || *kept.ParentID != baseline.ID {
 		t.Fatalf("expected the branch to attach to the baseline, got %+v", kept.ParentID)
 	}
-	// The supplied name records the user's answer, so it outranks the labeler
-	// and is never automation's to replace.
+	// The supplied name records the user's answer, so the commit-time labeler
+	// does not replace it.
 	if kept.DisplayName != "Steam Deck" || kept.NameSource != omnisave.NameSourceManual {
 		t.Fatalf("expected the device's name to take the revision over, got %+v", kept)
 	}

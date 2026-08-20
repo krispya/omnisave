@@ -35,11 +35,12 @@ const (
 	maxAchievementDescLength = 2000
 )
 
-// RevisionNamer derives a display name for a freshly committed revision from
-// the game it belongs to and its complete file set. It is best-effort by
-// contract: "" means the revision stays unnamed, and implementations must not
-// fail a commit for want of a name.
+// RevisionNamer derives a display name for a revision from the game it belongs
+// to and its complete file set. It is best-effort by contract: "" means the
+// revision stays as it was, and implementations must not fail a commit for want
+// of a name.
 type RevisionNamer interface {
+	HasLabeler(ctx context.Context, gameID string) bool
 	NameRevision(ctx context.Context, gameID string, files []omnisave.RevisionFile) string
 }
 
@@ -300,7 +301,7 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 	if suppliedName != "" {
 		// A committing client that names the revision is recording the user's
 		// answer — divergence provenance, not derived presentation — so the
-		// name outranks the labeler and is never replaced by automation.
+		// initial commit labeler does not replace it.
 		revision.DisplayName = suppliedName
 		revision.NameSource = omnisave.NameSourceManual
 	} else if s.namer != nil {
@@ -428,6 +429,36 @@ func (s *service) UpdateRevision(ctx context.Context, saveID, revisionID string,
 		return nil, omnisave.ErrInvalid
 	}
 	if err := s.repository.UpdateRevisionDisplayName(ctx, saveID, revisionID, displayName); err != nil {
+		return nil, translateError(err)
+	}
+	return s.GetRevision(ctx, saveID, revisionID)
+}
+
+// HasLabeler reports the current server capability rather than inferring it
+// from names that may have been set manually or by an older labeler.
+func (s *service) HasLabeler(ctx context.Context, gameID string) bool {
+	return s.namer != nil && s.namer.HasLabeler(ctx, gameID)
+}
+
+// LabelRevision reruns the game's best-effort labeler. The explicit request is
+// permission to replace any current name, including one chosen by a person.
+func (s *service) LabelRevision(ctx context.Context, saveID, revisionID string) (*omnisave.Revision, error) {
+	revision, err := s.GetRevision(ctx, saveID, revisionID)
+	if err != nil {
+		return nil, err
+	}
+	if s.namer == nil {
+		return revision, nil
+	}
+	save, err := s.Get(ctx, saveID)
+	if err != nil {
+		return nil, err
+	}
+	name, valid := normalizeDisplayName(s.namer.NameRevision(ctx, save.GameID, revision.Files))
+	if !valid || name == "" {
+		return revision, nil
+	}
+	if err := s.repository.UpdateRevisionLabel(ctx, saveID, revisionID, name); err != nil {
 		return nil, translateError(err)
 	}
 	return s.GetRevision(ctx, saveID, revisionID)

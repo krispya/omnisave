@@ -32,7 +32,7 @@ User-facing concepts. If a user might say the word, it goes here.
 
 **Current Revision**. The one revision an omnisave presently represents and every bound Device synchronizes toward. Restoring another node moves this global pointer without changing either revision. The next commit becomes a child of the selected node. A **tip** is any revision without children and need not be current.
 
-**Labeler**. A per-game script that names a revision from its save content at commit running on the server so every device sees the same name. A labeler with nothing to say leaves the revision unnamed, and a name a person chooses by hand always outranks the labeler's. See [FDR-007](fdr/FDR-007-revision-labeling.md).
+**Labeler**. A per-game server script that names a revision from its save content at commit or when explicitly rerun on existing history, so every device sees the same name. See [FDR-007](fdr/FDR-007-revision-labeling.md).
 
 **Achievement Mark**. A game achievement placed on the first revision committed at or after it was unlocked, so a history shows where in a playthrough it happened: at that revision it was earned, and before it, not yet. Marks belong to an omnisave rather than to the snapshot, and cover only unlocks a Device watched happen. See [FDR-008](fdr/FDR-008-achievement-marks.md).
 
