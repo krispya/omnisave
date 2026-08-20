@@ -58,6 +58,53 @@ func expandGlob(pattern string) []string {
 	return matches
 }
 
+// expandLiteral finds the on-disk spellings of an absolute literal path,
+// comparing segments case-insensitively the way expandGlob does, because
+// community-authored casing is unreliable for literal rules too. The exact
+// spelling wins without any directory scan; only a miss falls back to
+// walking segments, and only unfound segments scan their parent. Unlike
+// glob segments, literal segments never treat metacharacters as pattern
+// syntax: values expanded into a rule stay literal.
+func expandLiteral(path string) []string {
+	if _, err := os.Lstat(path); err == nil {
+		return []string{path}
+	}
+	segments := strings.Split(filepath.ToSlash(path), "/")
+	root := segments[0]
+	if root == "" || strings.HasSuffix(root, ":") {
+		root += "/"
+	}
+	directories := []string{filepath.FromSlash(root)}
+	for _, segment := range segments[1:] {
+		if segment == "" {
+			continue
+		}
+		var next []string
+		for _, directory := range directories {
+			exact := filepath.Join(directory, segment)
+			if _, err := os.Lstat(exact); err == nil {
+				next = append(next, exact)
+				continue
+			}
+			entries, err := os.ReadDir(directory)
+			if err != nil {
+				continue
+			}
+			for _, entry := range entries {
+				if strings.EqualFold(entry.Name(), segment) {
+					next = append(next, filepath.Join(directory, entry.Name()))
+				}
+			}
+		}
+		if len(next) == 0 {
+			return nil
+		}
+		directories = next
+	}
+	sort.Strings(directories)
+	return directories
+}
+
 // matchEntries matches one directory's entries against the head segment,
 // collecting final matches and descending for the rest.
 func matchEntries(directory string, entries []os.DirEntry, remaining []string, matches *[]string, walk func(string, []string)) {
