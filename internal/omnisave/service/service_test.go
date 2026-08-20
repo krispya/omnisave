@@ -612,6 +612,8 @@ type notingNamer struct {
 	gameIDs []string
 }
 
+func (n *notingNamer) HasLabeler(context.Context, string) bool { return true }
+
 func (n *notingNamer) NameRevision(_ context.Context, gameID string, _ []omnisave.RevisionFile) string {
 	n.gameIDs = append(n.gameIDs, gameID)
 	return n.name
@@ -621,6 +623,9 @@ func TestCommittedRevisionsAreNamedByTheGamesLabeler(t *testing.T) {
 	ctx := context.Background()
 	namer := &notingNamer{name: "Necro A5, Underdocks flr 12"}
 	saves := omnisaveservice.NewWithNamer(storagetest.NewMemoryRepository(), namer)
+	if !saves.HasLabeler(ctx, "game-spire2") {
+		t.Fatal("configured labeler was not reported")
+	}
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-spire2"})
 	if err != nil {
 		t.Fatal(err)
@@ -664,6 +669,59 @@ func TestCommittedRevisionsAreNamedByTheGamesLabeler(t *testing.T) {
 	}
 	if second.DisplayName != "" || second.NameSource != "" {
 		t.Fatalf("a declined name still landed on the revision: %+v", second)
+	}
+}
+
+func TestAnExistingRevisionCanRunItsGamesLabeler(t *testing.T) {
+	ctx := context.Background()
+	repository := storagetest.NewMemoryRepository()
+	beforeLabeler := omnisaveservice.New(repository)
+	if beforeLabeler.HasLabeler(ctx, "game-spire2") {
+		t.Fatal("service without a labeler reported one")
+	}
+	save, err := beforeLabeler.Create(ctx, omnisave.CreateOmnisave{GameID: "game-spire2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := beforeLabeler.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{
+			Path: "remote/current_run.save", Artifact: storeBlob(t, ctx, beforeLabeler, "run in progress"),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revision.DisplayName != "" || revision.NameSource != "" {
+		t.Fatalf("revision committed before the labeler should be unnamed: %+v", revision)
+	}
+
+	namer := &notingNamer{name: "Necro A5, Underdocks flr 12"}
+	withLabeler := omnisaveservice.NewWithNamer(repository, namer)
+	labeled, err := withLabeler.LabelRevision(ctx, save.ID, revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if labeled.DisplayName != namer.name || labeled.NameSource != omnisave.NameSourceLabeler {
+		t.Fatalf("historical revision was not labeled: %+v", labeled)
+	}
+
+	manualName := "The run that beat the Spire"
+	manual, err := withLabeler.UpdateRevision(ctx, save.ID, revision.ID, omnisave.UpdateRevision{
+		DisplayName: &manualName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	namer.name = "A newer automatic answer"
+	protected, err := withLabeler.LabelRevision(ctx, save.ID, revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if protected.DisplayName != manual.DisplayName || protected.NameSource != omnisave.NameSourceManual {
+		t.Fatalf("the labeler replaced a person's name: %+v", protected)
+	}
+	if len(namer.gameIDs) != 1 {
+		t.Fatalf("manual revision unexpectedly ran the labeler: %v", namer.gameIDs)
 	}
 }
 

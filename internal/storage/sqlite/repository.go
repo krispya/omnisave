@@ -606,6 +606,20 @@ func (r *Repository) ListRevisions(ctx context.Context, saveID string) ([]omnisa
 // the only path that renames after commit, so it also stamps the name manual:
 // automation may replace its own names but never one somebody chose.
 func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revisionID, displayName string) error {
+	return r.updateRevisionDisplayName(ctx, saveID, revisionID, displayName, omnisave.NameSourceManual, false)
+}
+
+// UpdateRevisionLabel stores a newly derived label unless a person has taken
+// ownership of the revision's name.
+func (r *Repository) UpdateRevisionLabel(ctx context.Context, saveID, revisionID, displayName string) error {
+	return r.updateRevisionDisplayName(ctx, saveID, revisionID, displayName, omnisave.NameSourceLabeler, true)
+}
+
+func (r *Repository) updateRevisionDisplayName(
+	ctx context.Context,
+	saveID, revisionID, displayName, nameSource string,
+	preserveManual bool,
+) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
 	if err := r.requireStoreReady(); err != nil {
@@ -619,8 +633,15 @@ func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revi
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE revisions SET display_name = ?, name_source = ? WHERE id = ?`,
-		displayName, omnisave.NameSourceManual, revisionID)
+	query := `UPDATE revisions SET display_name = ?, name_source = ? WHERE id = ?`
+	if preserveManual {
+		query += ` AND name_source <> ?`
+	}
+	arguments := []any{displayName, nameSource, revisionID}
+	if preserveManual {
+		arguments = append(arguments, omnisave.NameSourceManual)
+	}
+	result, err := tx.ExecContext(ctx, query, arguments...)
 	if err != nil {
 		return err
 	}
@@ -628,8 +649,11 @@ func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revi
 	if err != nil {
 		return err
 	}
-	if count == 0 {
+	if count == 0 && !preserveManual {
 		return storage.ErrNotFound
+	}
+	if count == 0 {
+		return nil
 	}
 	// Revision labels are denormalized into lineage records. Snapshot every
 	// live lineage in this transaction: it is deliberately broader than a

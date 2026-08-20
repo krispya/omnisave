@@ -24,9 +24,11 @@ type RevisionLogProps = {
   achievements: Achievement[];
   loading: boolean;
   error: string;
+  labelerAvailable: boolean;
   focus?: RevisionFocus;
   onDownloadRevision: (revision: Revision) => void;
   onRenameRevision: (revision: Revision, displayName: string) => Promise<void>;
+  onRunLabeler: (revision: Revision) => Promise<void>;
   onOpenSave: (save: Omnisave, revisionID?: string) => void;
   onRequestRestore: (revision: Revision) => void;
   onRequestFork: (revision: Revision) => void;
@@ -43,17 +45,27 @@ function shortID(id: string) {
   return id.slice(0, 8);
 }
 
+/** A manual name remains protected even when the game has a labeler. */
+export function canRunRevisionLabeler(
+  labelerAvailable: boolean,
+  revision: Pick<Revision, 'name_source'>
+) {
+  return labelerAvailable && revision.name_source !== 'manual';
+}
+
 /** The row's actions behind one dismissible menu, matching the save card's. */
 function RevisionRowMenu({
   name,
   onFork,
   onDownload,
+  onRunLabeler,
   onDetails,
   onDelete,
 }: {
   name: string;
   onFork: () => void;
   onDownload: () => void;
+  onRunLabeler?: () => void;
   onDetails: () => void;
   onDelete?: () => void;
 }) {
@@ -96,6 +108,17 @@ function RevisionRowMenu({
         >
           Download
         </button>
+        {onRunLabeler ? (
+          <button
+            type="button"
+            popoverTarget={menuID}
+            popoverTargetAction="hide"
+            onClick={onRunLabeler}
+            className="w-full cursor-pointer rounded-sm px-3 py-2 text-left text-sm text-text hover:bg-text/8"
+          >
+            Run labeler
+          </button>
+        ) : null}
         <button
           type="button"
           popoverTarget={menuID}
@@ -186,9 +209,11 @@ export function RevisionLog({
   achievements,
   loading,
   error,
+  labelerAvailable,
   focus,
   onDownloadRevision,
   onRenameRevision,
+  onRunLabeler,
   onOpenSave,
   onRequestRestore,
   onRequestFork,
@@ -378,6 +403,11 @@ export function RevisionLog({
                       name={name}
                       onFork={() => onRequestFork(revision)}
                       onDownload={() => onDownloadRevision(revision)}
+                      onRunLabeler={
+                        canRunRevisionLabeler(labelerAvailable, revision)
+                          ? () => void onRunLabeler(revision)
+                          : undefined
+                      }
                       onDetails={() => setDetailsRevisionID(revision.id)}
                       onDelete={deletable ? () => onRequestDelete(revision) : undefined}
                     />

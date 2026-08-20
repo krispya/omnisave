@@ -237,6 +237,59 @@ func TestUpdateOmnisaveDisplayName(t *testing.T) {
 	}
 }
 
+type apiRevisionNamer struct {
+	name      string
+	available bool
+}
+
+func (n *apiRevisionNamer) HasLabeler(context.Context, string) bool { return n.available }
+
+func (n *apiRevisionNamer) NameRevision(context.Context, string, []omnisave.RevisionFile) string {
+	return n.name
+}
+
+func TestRunLabelerOnExistingRevision(t *testing.T) {
+	repository := storagetest.NewMemoryRepository()
+	handler := newHandler(t, repository)
+
+	response := request(t, handler, http.MethodPost, "/api/v1/omnisaves", "application/json",
+		bytes.NewBufferString(`{"game_id":"game-spire2"}`))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create returned %d: %s", response.Code, response.Body.String())
+	}
+	var save omnisave.Omnisave
+	decodeResponse(t, response, &save)
+	artifact := uploadArtifact(t, handler, "historical run")
+	body, err := json.Marshal(omnisave.CreateRevision{
+		Upserts: []omnisave.RevisionFile{{Path: "remote/current_run.save", Artifact: artifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = request(t, handler, http.MethodPost,
+		"/api/v1/omnisaves/"+save.ID+"/revisions", "application/json", bytes.NewReader(body))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("commit returned %d: %s", response.Code, response.Body.String())
+	}
+	var historical omnisave.Revision
+	decodeResponse(t, response, &historical)
+
+	namer := &apiRevisionNamer{name: "Necro A5, Underdocks flr 12", available: true}
+	handler = httpapi.New(accessservice.New(repository, owner), httpapi.Config{
+		Saves: omnisaveservice.NewWithNamer(repository, namer),
+	})
+	response = request(t, handler, http.MethodPost,
+		"/api/v1/omnisaves/"+save.ID+"/revisions/"+historical.ID+"/label", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("label returned %d: %s", response.Code, response.Body.String())
+	}
+	var labeled omnisave.Revision
+	decodeResponse(t, response, &labeled)
+	if labeled.DisplayName != namer.name || labeled.NameSource != omnisave.NameSourceLabeler {
+		t.Fatalf("unexpected labeled revision: %+v", labeled)
+	}
+}
+
 func TestDownloadSaveArchive(t *testing.T) {
 	handler := newHandler(t, storagetest.NewMemoryRepository())
 
@@ -561,7 +614,10 @@ func TestAuthenticationTakesTheOwnerTokenAndIssuedCredentialsOnly(t *testing.T) 
 func TestCatalogStory(t *testing.T) {
 	repository := storagetest.NewMemoryRepository()
 	games := catalogservice.New(repository, repository, catalogProviderStub{})
-	handler := newHandler(t, repository, games)
+	handler := httpapi.New(accessservice.New(repository, owner), httpapi.Config{
+		Saves:   omnisaveservice.NewWithNamer(repository, &apiRevisionNamer{available: true}),
+		Catalog: games,
+	})
 
 	response := request(t, handler, http.MethodPost, "/api/v1/games/resolve", "application/json",
 		bytes.NewBufferString(`{
@@ -613,10 +669,12 @@ func TestCatalogStory(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("list games returned %d: %s", response.Code, response.Body.String())
 	}
-	var listed []json.RawMessage
+	var listed []struct {
+		LabelerAvailable bool `json:"labeler_available"`
+	}
 	decodeResponse(t, response, &listed)
-	if len(listed) != 1 {
-		t.Fatalf("expected one catalog game, got %d", len(listed))
+	if len(listed) != 1 || !listed[0].LabelerAvailable {
+		t.Fatalf("expected one game with a labeler, got %+v", listed)
 	}
 }
 

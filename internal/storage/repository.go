@@ -76,6 +76,9 @@ type OmnisaveRepository interface {
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*omnisave.Revision, error)
 	ListRevisions(ctx context.Context, omnisaveID string) ([]omnisave.Revision, error)
 	UpdateRevisionDisplayName(ctx context.Context, omnisaveID, revisionID, displayName string) error
+	// UpdateRevisionLabel replaces an empty or automated name while preserving
+	// a name chosen by a person.
+	UpdateRevisionLabel(ctx context.Context, omnisaveID, revisionID, displayName string) error
 	// DeleteRevision removes one revision reachable through the named save.
 	// Only a node the graph no longer needs may go — no children, not any
 	// save's current revision, not any fork's origin — and RevisionInUse

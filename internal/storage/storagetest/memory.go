@@ -327,6 +327,19 @@ func (r *MemoryRepository) ListRevisions(_ context.Context, saveID string) ([]om
 }
 
 func (r *MemoryRepository) UpdateRevisionDisplayName(_ context.Context, saveID, revisionID, displayName string) error {
+	return r.updateRevisionDisplayName(saveID, revisionID, displayName, omnisave.NameSourceManual, false)
+}
+
+// UpdateRevisionLabel mirrors the durable repository's automated-name rule:
+// labeler names can change, while a person's name cannot.
+func (r *MemoryRepository) UpdateRevisionLabel(_ context.Context, saveID, revisionID, displayName string) error {
+	return r.updateRevisionDisplayName(saveID, revisionID, displayName, omnisave.NameSourceLabeler, true)
+}
+
+func (r *MemoryRepository) updateRevisionDisplayName(
+	saveID, revisionID, displayName, nameSource string,
+	preserveManual bool,
+) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.saves[saveID]; !exists {
@@ -338,10 +351,11 @@ func (r *MemoryRepository) UpdateRevisionDisplayName(_ context.Context, saveID, 
 	for creator, revisions := range r.revisions {
 		for index := range revisions {
 			if revisions[index].ID == revisionID {
+				if preserveManual && revisions[index].NameSource == omnisave.NameSourceManual {
+					return nil
+				}
 				revisions[index].DisplayName = displayName
-				// Renaming is the human path, so it stamps the name manual,
-				// matching the SQL repository.
-				revisions[index].NameSource = omnisave.NameSourceManual
+				revisions[index].NameSource = nameSource
 				r.revisions[creator] = revisions
 				return nil
 			}

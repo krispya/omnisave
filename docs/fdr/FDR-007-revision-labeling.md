@@ -1,7 +1,7 @@
 # FDR-007: Revision Labeling
 
 **Status:** Experimental
-**Last reviewed:** 2026-08-18
+**Last reviewed:** 2026-08-19
 
 ## Overview
 
@@ -20,8 +20,12 @@ contract intended for future owner-provided labelers.
   replace only names it previously produced or empty names.
 - Labels depend only on revision content, so the same snapshot produces the same
   result regardless of which Device committed it.
-- Existing revisions may be labeled later without changing their content or
-  identity.
+- A person may rerun the current game labeler on an existing unnamed or
+  automatically named revision without changing its content or identity.
+- Relabeling is offered only while the server has a labeler matching the game.
+- Rerunning a labeler with no usable answer leaves the revision's existing name
+  unchanged.
+
 ## Design Decisions
 
 ### 1. Labelers are deterministic sandboxed scripts
@@ -37,11 +41,12 @@ smaller language than general application code.
 
 ### 2. The server executes labelers
 
-**Decision:** Labeling runs on the server as part of accepting a revision.
+**Decision:** Labeling runs on the server as part of accepting a revision and
+when a person explicitly requests it for existing history.
 **Why:** The server holds the authoritative revision content and can apply one
 contract consistently to every Device and to historical revisions.
-**Tradeoff:** Labeling consumes server resources on commit and therefore needs
-bounded execution.
+**Tradeoff:** Labeling consumes server resources on commit and on explicit
+reruns, and therefore needs bounded execution.
 
 ### 3. Built-in and future owner labelers share one contract
 
