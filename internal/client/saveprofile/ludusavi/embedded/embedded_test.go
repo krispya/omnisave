@@ -34,85 +34,103 @@ func TestEmbeddedManifestKeepsBothLisaBuildsSaveRules(t *testing.T) {
 	}
 }
 
-// Lisa: The Painful ships a native Linux build that writes its saves beside
-// the game, but the community data spells those paths for Windows alone. A
-// Steam Deck running that build has no Proton prefix to borrow the Windows
-// rules through, so the checked-in patch carries the Linux spellings.
-func TestEmbeddedManifestFindsLisaThePainfulSavesOnLinux(t *testing.T) {
-	installRoot := t.TempDir()
-	joyfulDirectory := filepath.Join(installRoot, "Joyful")
-	if err := os.MkdirAll(joyfulDirectory, 0755); err != nil {
-		t.Fatal(err)
-	}
-	painfulSave := filepath.Join(installRoot, "Save01.rvdata2")
-	joyfulSave := filepath.Join(joyfulDirectory, "Save01.rvdata2")
-	for _, path := range []string{painfulSave, joyfulSave} {
-		if err := os.WriteFile(path, []byte("pain"), 0600); err != nil {
-			t.Fatal(err)
-		}
+func TestEmbeddedManifestResolvesEveryPatchedSave(t *testing.T) {
+	tests := []struct {
+		name      string
+		patch     string
+		steamID   string
+		hostOS    string
+		saveFiles []string
+	}{
+		{
+			name:    "Lisa The Painful native Linux build",
+			patch:   "335670-lisa-the-painful.yaml",
+			steamID: "335670",
+			hostOS:  saveprofile.OSLinux,
+			// The native build writes the base game and Joyful saves beside their games.
+			saveFiles: []string{"Save01.rvdata2", "Joyful/Save01.rvdata2"},
+		},
+		{
+			name:    "Lisa The First nested Steam package",
+			patch:   "2743030-lisa-the-first.yaml",
+			steamID: "2743030",
+			hostOS:  saveprofile.OSWindows,
+			// Steam nests the original game two levels beneath its install root.
+			saveFiles: []string{"Lisa_1/Lisa_1/Save01.lsd"},
+		},
 	}
 
-	game := target.InstalledGame{
-		ID:          "steam:335670",
-		TargetID:    "steam",
-		InstallRoot: installRoot,
-		Identity: target.GameIdentity{
-			Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "335670"}},
-		},
-		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeNative},
+	coveredPatches := make(map[string]bool, len(tests))
+	for _, test := range tests {
+		coveredPatches[test.patch] = true
+		t.Run(test.name, func(t *testing.T) {
+			installRoot := t.TempDir()
+			expected := make(map[string]bool, len(test.saveFiles))
+			for _, relativePath := range test.saveFiles {
+				path := filepath.Join(installRoot, filepath.FromSlash(relativePath))
+				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("save"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				expected[path] = true
+			}
+
+			game := target.InstalledGame{
+				ID:          "steam:" + test.steamID,
+				TargetID:    "steam",
+				InstallRoot: installRoot,
+				Identity: target.GameIdentity{
+					Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: test.steamID}},
+				},
+				Environment: target.Environment{HostOS: test.hostOS, Runtime: target.RuntimeNative},
+			}
+			profile, err := embedded.Provider().Find(context.Background(), game.Identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			saves, err := saveprofile.Resolve(game, *profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := map[string]bool{}
+			for _, save := range saves {
+				for _, file := range save.Files {
+					found[file.Path] = true
+				}
+			}
+			for path := range expected {
+				if !found[path] {
+					t.Fatalf("expected patched save %q, got %+v", path, saves)
+				}
+			}
+		})
 	}
-	profile, err := embedded.Provider().Find(context.Background(), game.Identity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	saves, err := saveprofile.Resolve(game, *profile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := map[string]bool{}
-	for _, save := range saves {
-		for _, file := range save.Files {
-			found[file.Path] = true
-		}
-	}
-	if !found[painfulSave] || !found[joyfulSave] {
-		t.Fatalf("expected both install-directory saves on Linux, got %+v", saves)
-	}
+	requireEveryPatchHasAResolutionStory(t, coveredPatches)
 }
 
-// The Steam package for Lisa: The First nests the original game two levels
-// beneath Steam's install root. The checked-in patch keeps that packaging
-// difference visible until the equivalent path reaches the community data.
-func TestEmbeddedManifestFindsLisaTheFirstSteamSave(t *testing.T) {
-	installRoot := t.TempDir()
-	saveDirectory := filepath.Join(installRoot, "Lisa_1", "Lisa_1")
-	if err := os.MkdirAll(saveDirectory, 0755); err != nil {
-		t.Fatal(err)
-	}
-	savePath := filepath.Join(saveDirectory, "Save01.lsd")
-	if err := os.WriteFile(savePath, []byte("joy"), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	game := target.InstalledGame{
-		ID:          "steam:2743030",
-		TargetID:    "steam",
-		InstallRoot: installRoot,
-		Identity: target.GameIdentity{
-			Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "2743030"}},
-		},
-		Environment: target.Environment{HostOS: saveprofile.OSWindows, Runtime: target.RuntimeNative},
-	}
-	profile, err := embedded.Provider().Find(context.Background(), game.Identity)
+func requireEveryPatchHasAResolutionStory(t *testing.T, covered map[string]bool) {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join("..", "patches"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	saves, err := saveprofile.Resolve(game, *profile)
-	if err != nil {
-		t.Fatal(err)
+	patches := make(map[string]bool)
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".yaml" {
+			patches[entry.Name()] = true
+		}
 	}
-	if len(saves) != 1 || len(saves[0].Files) != 1 || saves[0].Files[0].Path != savePath {
-		t.Fatalf("expected the nested Steam save, got %+v", saves)
+	for patch := range patches {
+		if !covered[patch] {
+			t.Errorf("patch %s needs an embedded resolution story", patch)
+		}
+	}
+	for patch := range covered {
+		if !patches[patch] {
+			t.Errorf("resolution story references missing patch %s", patch)
+		}
 	}
 }
 
