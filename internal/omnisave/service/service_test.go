@@ -645,8 +645,7 @@ func TestCommittedRevisionsAreNamedByTheGamesLabeler(t *testing.T) {
 		t.Fatalf("the namer was asked about %v, want the save's game", namer.gameIDs)
 	}
 
-	// A person's rename outranks the labeler's: the name changes hands and the
-	// source records that it is now manual.
+	// A person's rename takes the name over and records that it is now manual.
 	displayName := "The run that beat the Spire"
 	renamed, err := saves.UpdateRevision(ctx, save.ID, revision.ID, omnisave.UpdateRevision{
 		DisplayName: &displayName,
@@ -712,16 +711,19 @@ func TestAnExistingRevisionCanRunItsGamesLabeler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if manual.DisplayName != manualName || manual.NameSource != omnisave.NameSourceManual {
+		t.Fatalf("manual rename did not take ownership: %+v", manual)
+	}
 	namer.name = "A newer automatic answer"
-	protected, err := withLabeler.LabelRevision(ctx, save.ID, revision.ID)
+	overridden, err := withLabeler.LabelRevision(ctx, save.ID, revision.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if protected.DisplayName != manual.DisplayName || protected.NameSource != omnisave.NameSourceManual {
-		t.Fatalf("the labeler replaced a person's name: %+v", protected)
+	if overridden.DisplayName != namer.name || overridden.NameSource != omnisave.NameSourceLabeler {
+		t.Fatalf("explicit relabel did not replace the manual name: %+v", overridden)
 	}
-	if len(namer.gameIDs) != 1 {
-		t.Fatalf("manual revision unexpectedly ran the labeler: %v", namer.gameIDs)
+	if len(namer.gameIDs) != 2 {
+		t.Fatalf("explicit relabel did not run the labeler: %v", namer.gameIDs)
 	}
 }
 
@@ -763,8 +765,8 @@ func TestAKeepCurrentCommitAttachesABranchWithoutMovingCurrent(t *testing.T) {
 	if kept.ParentID == nil || *kept.ParentID != baseline.ID {
 		t.Fatalf("expected the branch to attach to the baseline, got %+v", kept.ParentID)
 	}
-	// The supplied name records the user's answer, so it outranks the labeler
-	// and is never automation's to replace.
+	// The supplied name records the user's answer, so the commit-time labeler
+	// does not replace it.
 	if kept.DisplayName != "Steam Deck" || kept.NameSource != omnisave.NameSourceManual {
 		t.Fatalf("expected the device's name to take the revision over, got %+v", kept)
 	}

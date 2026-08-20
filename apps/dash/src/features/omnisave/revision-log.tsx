@@ -45,12 +45,9 @@ function shortID(id: string) {
   return id.slice(0, 8);
 }
 
-/** A manual name remains protected even when the game has a labeler. */
-export function canRunRevisionLabeler(
-  labelerAvailable: boolean,
-  revision: Pick<Revision, 'name_source'>
-) {
-  return labelerAvailable && revision.name_source !== 'manual';
+/** The explicit action exists whenever this server can label the game. */
+export function canRunRevisionLabeler(labelerAvailable: boolean) {
+  return labelerAvailable;
 }
 
 /** The row's actions behind one dismissible menu, matching the save card's. */
@@ -404,7 +401,7 @@ export function RevisionLog({
                       onFork={() => onRequestFork(revision)}
                       onDownload={() => onDownloadRevision(revision)}
                       onRunLabeler={
-                        canRunRevisionLabeler(labelerAvailable, revision)
+                        canRunRevisionLabeler(labelerAvailable)
                           ? () => void onRunLabeler(revision)
                           : undefined
                       }

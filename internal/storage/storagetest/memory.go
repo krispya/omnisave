@@ -327,18 +327,17 @@ func (r *MemoryRepository) ListRevisions(_ context.Context, saveID string) ([]om
 }
 
 func (r *MemoryRepository) UpdateRevisionDisplayName(_ context.Context, saveID, revisionID, displayName string) error {
-	return r.updateRevisionDisplayName(saveID, revisionID, displayName, omnisave.NameSourceManual, false)
+	return r.updateRevisionDisplayName(saveID, revisionID, displayName, omnisave.NameSourceManual)
 }
 
-// UpdateRevisionLabel mirrors the durable repository's automated-name rule:
-// labeler names can change, while a person's name cannot.
+// UpdateRevisionLabel mirrors the durable repository: an explicitly requested
+// label replaces the current name and its provenance.
 func (r *MemoryRepository) UpdateRevisionLabel(_ context.Context, saveID, revisionID, displayName string) error {
-	return r.updateRevisionDisplayName(saveID, revisionID, displayName, omnisave.NameSourceLabeler, true)
+	return r.updateRevisionDisplayName(saveID, revisionID, displayName, omnisave.NameSourceLabeler)
 }
 
 func (r *MemoryRepository) updateRevisionDisplayName(
 	saveID, revisionID, displayName, nameSource string,
-	preserveManual bool,
 ) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -351,9 +350,6 @@ func (r *MemoryRepository) updateRevisionDisplayName(
 	for creator, revisions := range r.revisions {
 		for index := range revisions {
 			if revisions[index].ID == revisionID {
-				if preserveManual && revisions[index].NameSource == omnisave.NameSourceManual {
-					return nil
-				}
 				revisions[index].DisplayName = displayName
 				revisions[index].NameSource = nameSource
 				r.revisions[creator] = revisions

@@ -602,23 +602,21 @@ func (r *Repository) ListRevisions(ctx context.Context, saveID string) ([]omnisa
 	return revisions, nil
 }
 
-// UpdateRevisionDisplayName renames a revision on behalf of a person, which is
-// the only path that renames after commit, so it also stamps the name manual:
-// automation may replace its own names but never one somebody chose.
+// UpdateRevisionDisplayName renames a revision on behalf of a person and stamps
+// the name manual so its provenance remains clear until an explicit relabel.
 func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revisionID, displayName string) error {
-	return r.updateRevisionDisplayName(ctx, saveID, revisionID, displayName, omnisave.NameSourceManual, false)
+	return r.updateRevisionDisplayName(ctx, saveID, revisionID, displayName, omnisave.NameSourceManual)
 }
 
-// UpdateRevisionLabel stores a newly derived label unless a person has taken
-// ownership of the revision's name.
+// UpdateRevisionLabel stores an explicitly requested label and replaces the
+// name's provenance with the labeler's.
 func (r *Repository) UpdateRevisionLabel(ctx context.Context, saveID, revisionID, displayName string) error {
-	return r.updateRevisionDisplayName(ctx, saveID, revisionID, displayName, omnisave.NameSourceLabeler, true)
+	return r.updateRevisionDisplayName(ctx, saveID, revisionID, displayName, omnisave.NameSourceLabeler)
 }
 
 func (r *Repository) updateRevisionDisplayName(
 	ctx context.Context,
 	saveID, revisionID, displayName, nameSource string,
-	preserveManual bool,
 ) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
@@ -633,15 +631,10 @@ func (r *Repository) updateRevisionDisplayName(
 		return err
 	}
 	defer tx.Rollback()
-	query := `UPDATE revisions SET display_name = ?, name_source = ? WHERE id = ?`
-	if preserveManual {
-		query += ` AND name_source <> ?`
-	}
-	arguments := []any{displayName, nameSource, revisionID}
-	if preserveManual {
-		arguments = append(arguments, omnisave.NameSourceManual)
-	}
-	result, err := tx.ExecContext(ctx, query, arguments...)
+	result, err := tx.ExecContext(ctx,
+		`UPDATE revisions SET display_name = ?, name_source = ? WHERE id = ?`,
+		displayName, nameSource, revisionID,
+	)
 	if err != nil {
 		return err
 	}
@@ -649,11 +642,8 @@ func (r *Repository) updateRevisionDisplayName(
 	if err != nil {
 		return err
 	}
-	if count == 0 && !preserveManual {
-		return storage.ErrNotFound
-	}
 	if count == 0 {
-		return nil
+		return storage.ErrNotFound
 	}
 	// Revision labels are denormalized into lineage records. Snapshot every
 	// live lineage in this transaction: it is deliberately broader than a

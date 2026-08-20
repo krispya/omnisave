@@ -301,7 +301,7 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 	if suppliedName != "" {
 		// A committing client that names the revision is recording the user's
 		// answer — divergence provenance, not derived presentation — so the
-		// name outranks the labeler and is never replaced by automation.
+		// initial commit labeler does not replace it.
 		revision.DisplayName = suppliedName
 		revision.NameSource = omnisave.NameSourceManual
 	} else if s.namer != nil {
@@ -440,14 +440,14 @@ func (s *service) HasLabeler(ctx context.Context, gameID string) bool {
 	return s.namer != nil && s.namer.HasLabeler(ctx, gameID)
 }
 
-// LabelRevision reruns the game's best-effort labeler without allowing
-// automation to replace a person's name.
+// LabelRevision reruns the game's best-effort labeler. The explicit request is
+// permission to replace any current name, including one chosen by a person.
 func (s *service) LabelRevision(ctx context.Context, saveID, revisionID string) (*omnisave.Revision, error) {
 	revision, err := s.GetRevision(ctx, saveID, revisionID)
 	if err != nil {
 		return nil, err
 	}
-	if s.namer == nil || revision.NameSource == omnisave.NameSourceManual {
+	if s.namer == nil {
 		return revision, nil
 	}
 	save, err := s.Get(ctx, saveID)

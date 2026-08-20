@@ -72,8 +72,8 @@ type Service interface {
 	UpdateRevision(ctx context.Context, omnisaveID, revisionID string, input UpdateRevision) (*Revision, error)
 	// HasLabeler reports whether the server can label revisions for a game.
 	HasLabeler(ctx context.Context, gameID string) bool
-	// LabelRevision reruns the game's labeler against an existing revision.
-	// A manual name remains unchanged.
+	// LabelRevision reruns the game's labeler against an existing revision,
+	// replacing its current name when the labeler produces one.
 	LabelRevision(ctx context.Context, omnisaveID, revisionID string) (*Revision, error)
 	DeleteRevision(ctx context.Context, omnisaveID, revisionID string) error
 

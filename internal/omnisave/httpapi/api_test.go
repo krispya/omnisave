@@ -288,6 +288,24 @@ func TestRunLabelerOnExistingRevision(t *testing.T) {
 	if labeled.DisplayName != namer.name || labeled.NameSource != omnisave.NameSourceLabeler {
 		t.Fatalf("unexpected labeled revision: %+v", labeled)
 	}
+
+	response = request(t, handler, http.MethodPatch,
+		"/api/v1/omnisaves/"+save.ID+"/revisions/"+historical.ID,
+		"application/json", bytes.NewBufferString(`{"display_name":"My manual name"}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("manual rename returned %d: %s", response.Code, response.Body.String())
+	}
+	namer.name = "Labeler wins when explicitly requested"
+	response = request(t, handler, http.MethodPost,
+		"/api/v1/omnisaves/"+save.ID+"/revisions/"+historical.ID+"/label", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("relabel returned %d: %s", response.Code, response.Body.String())
+	}
+	var relabeled omnisave.Revision
+	decodeResponse(t, response, &relabeled)
+	if relabeled.DisplayName != namer.name || relabeled.NameSource != omnisave.NameSourceLabeler {
+		t.Fatalf("explicit relabel did not replace the manual name: %+v", relabeled)
+	}
 }
 
 func TestDownloadSaveArchive(t *testing.T) {
