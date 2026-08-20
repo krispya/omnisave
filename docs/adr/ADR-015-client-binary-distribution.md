@@ -43,7 +43,7 @@ player might set is an environment variable instead. Both resolve the newest
 release, verify the download against the release's checksum file, refuse to
 install on a mismatch, and are safe to re-run.
 
-An installed client upgrades itself with `omnisave upgrade`, reading that same
+An installed client updates itself with `omnisave update`, reading that same
 release layout and applying the same verification, so the archives are the
 contract rather than the installers. It replaces the running binary in place and
 only ever moves forward unless asked for a version by name. Re-running an
@@ -72,7 +72,7 @@ devices pairing with it, without changing how installation works.
 
 Easier:
 
-- Players install and upgrade the client on SteamOS, Windows, and macOS with one
+- Players install and update the client on SteamOS, Windows, and macOS with one
   command and no toolchain, no administrator, and no package manager.
 - Installation survives a SteamOS update, because nothing is written outside the
   player's home directory.
