@@ -37,6 +37,47 @@ func TestGamesWithoutALabelerStayUnnamed(t *testing.T) {
 	}
 }
 
+func TestUndertaleIsLabeledLikeItsSaveScreen(t *testing.T) {
+	// The fields the in-game menu reads, as the game spells them: quoted
+	// zero-fraction numbers under [General], CRLF line ends.
+	ini := []byte("[General]\r\nRoom=\"18.000000\"\r\nTime=\"47190.000000\"\r\nLove=\"3.000000\"\r\nName=\"ALMA\"\r\n[Flowey]\r\nMet1=\"1.000000\"\r\n")
+
+	// file0 holds the same fields positionally: name, LOVE, then room and
+	// play time on lines 548 and 549.
+	lines := make([]string, 549)
+	for index := range lines {
+		lines[index] = "0 "
+	}
+	lines[0], lines[1], lines[547], lines[548] = "ALMA ", "3 ", "18 ", "47190 "
+	file0 := []byte(strings.Join(lines, "\r\n"))
+
+	blobs := map[string][]byte{hashOf(ini): ini, hashOf(file0): file0}
+	named, err := New(&gameDirectory{games: map[string]*catalog.Game{
+		"game-undertale": {ID: "game-undertale", Identifiers: []catalog.GameIdentifier{
+			{Namespace: "steam.app", Value: "391540"},
+		}},
+	}}, &artifactOpener{blobs: blobs})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fileOf := func(path string, content []byte) omnisave.RevisionFile {
+		return omnisave.RevisionFile{Path: path, Artifact: omnisave.Artifact{SHA256: hashOf(content), Size: int64(len(content))}}
+	}
+	want := "ALMA LV 3, Ruins - Mouse Hole, 26:13"
+	full := []omnisave.RevisionFile{fileOf("battery/file0", file0), fileOf("battery/undertale.ini", ini)}
+	if label := named.NameRevision(context.Background(), "game-undertale", full); label != want {
+		t.Fatalf("full save labeled %q, want %q", label, want)
+	}
+	fromFile0 := []omnisave.RevisionFile{fileOf("battery/file0", file0)}
+	if label := named.NameRevision(context.Background(), "game-undertale", fromFile0); label != want {
+		t.Fatalf("save without its ini labeled %q, want %q", label, want)
+	}
+	if label := named.NameRevision(context.Background(), "game-undertale", nil); label != "" {
+		t.Fatalf("empty save labeled %q, want unnamed", label)
+	}
+}
+
 func TestAMisbehavingScriptCostsOnlyTheName(t *testing.T) {
 	spinning := "GAME_KEYS = [\"test.app:1\"]\n" +
 		"def label(snapshot):\n" +

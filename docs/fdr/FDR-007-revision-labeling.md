@@ -22,9 +22,6 @@ contract intended for future owner-provided labelers.
   result regardless of which Device committed it.
 - Existing revisions may be labeled later without changing their content or
   identity.
-- Slay the Spire II is the first supported game. Its labeler summarizes active
-  and completed runs while leaving a fresh profile unnamed.
-
 ## Design Decisions
 
 ### 1. Labelers are deterministic sandboxed scripts
