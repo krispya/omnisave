@@ -44,6 +44,11 @@ import type { GameSummary } from '../features/game/game-summary.js';
 import { applyPresence } from '../features/game/playing-devices.js';
 import { buildLibrary } from '../features/library/build-library.js';
 import { FixMatchDialog } from '../features/library/fix-match-dialog.js';
+import {
+  LibrarySortControl,
+  sortLibrary,
+  storedLibrarySort,
+} from '../features/library/library-sort.js';
 import { DeleteSaveDialog } from '../features/omnisave/delete-save-dialog.js';
 import { GameLibrary, GameLibraryLoading } from '../features/library/game-library.js';
 import { NowPlaying } from '../features/library/now-playing.js';
@@ -206,8 +211,11 @@ function LibraryDashboard({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [fixMatchTarget, setFixMatchTarget] = useState<GameSummary>();
+  const [librarySort, setLibrarySort] = useState(storedLibrarySort);
 
   const games = useMemo(() => buildLibrary(catalog, saves), [catalog, saves]);
+  // The sort rearranges only the grid; Playing now keeps its own order.
+  const sortedGames = useMemo(() => sortLibrary(games, librarySort), [games, librarySort]);
   const selectedGame = useMemo(
     () => games.find((game) => game.id === selectedGameID),
     [games, selectedGameID]
@@ -384,8 +392,19 @@ function LibraryDashboard({
           <NowPlaying games={games} token={token} />
 
           <section aria-label="Game library">
+            {games.length > 0 ? (
+              <div className="mb-5 flex items-center gap-4">
+                <LibrarySortControl sort={librarySort} onSortChange={setLibrarySort} />
+                <span
+                  className="rounded-md bg-text/8 px-2.5 py-1 text-sm font-medium text-muted"
+                  aria-label={`${games.length} ${games.length === 1 ? 'game' : 'games'}`}
+                >
+                  {games.length}
+                </span>
+              </div>
+            ) : null}
             <GameLibrary
-              games={games}
+              games={sortedGames}
               token={token}
               onRequestFixMatch={setFixMatchTarget}
               onRequestDeleteSaves={requestDeleteGameSaves}
@@ -653,7 +672,7 @@ export function App() {
             />
           ) : null}
 
-          <main className="flex-1 px-5 py-8 sm:px-8 lg:px-10">
+          <main className="flex-1 px-5 pt-4 pb-8 sm:px-8 lg:px-10">
             {!token ? (
               <ConnectForm
                 claimable={access.claimable}

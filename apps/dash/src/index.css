@@ -48,6 +48,12 @@ body {
   justify-self: end;
 }
 
+/** For menus owned by a control at the left edge, which align start instead. */
+.anchored-popover-start {
+  position-area: block-end span-inline-end;
+  justify-self: start;
+}
+
 .popover-owner:has(> :popover-open) {
   opacity: 1;
 }
