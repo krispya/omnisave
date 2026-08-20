@@ -1,6 +1,7 @@
 package saveprofile
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -90,7 +91,7 @@ func ResolveDestinations(game target.InstalledGame, profile Profile) ([]target.S
 		if templateGlobs(rule.Path) && hasMeta(expanded) {
 			location.Path = globBase(expanded)
 			location.Kind = target.SaveLocationDirectory
-		} else if info, err := os.Lstat(expanded); err == nil {
+		} else if resolved, info, err := lstatLiteral(expanded); err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
 				continue
 			}
@@ -101,6 +102,7 @@ func ResolveDestinations(game target.InstalledGame, profile Profile) ([]target.S
 			} else {
 				continue
 			}
+			location.Path = resolved
 		} else if !os.IsNotExist(err) {
 			continue
 		}
@@ -236,13 +238,18 @@ func expand(template string, game target.InstalledGame) string {
 
 // collect gathers the regular files a resolved pattern names. Unreadable
 // entries are skipped rather than reported: a rule can only speak for what
-// discovery can see.
+// discovery can see. Literal patterns match case-insensitively like globbed
+// ones: the manifest's casing is community-authored, and the same rule must
+// find the same save on a case-sensitive filesystem.
 func collect(pattern, locationID string, globby bool) []target.File {
-	matches := []string{pattern}
-	base := pattern
+	matches := expandLiteral(pattern)
 	if globby {
 		matches = expandGlob(pattern)
-		base = globBase(pattern)
+	} else if len(matches) > 1 {
+		// Case-sensitive filesystems can carry several spellings that fold to
+		// the same literal rule. None is authoritative when no exact spelling
+		// exists, so discovery must not merge them into one save location.
+		return nil
 	}
 
 	var files []target.File
@@ -255,6 +262,10 @@ func collect(pattern, locationID string, globby bool) []target.File {
 			continue
 		}
 		if info.IsDir() {
+			base := match
+			if globby {
+				base = globBase(pattern)
+			}
 			filepath.WalkDir(match, func(path string, entry fs.DirEntry, walkErr error) error {
 				if walkErr != nil {
 					if entry != nil && entry.IsDir() {
@@ -286,13 +297,41 @@ func collect(pattern, locationID string, globby bool) []target.File {
 		if !info.Mode().IsRegular() {
 			continue
 		}
-		relativeBase := base
-		if !globby {
-			relativeBase = filepath.Dir(match)
+		relativeBase := filepath.Dir(match)
+		if globby {
+			relativeBase = globBase(pattern)
 		}
 		files = append(files, nativeFile(match, relativeBase, locationID, info))
 	}
 	return files
+}
+
+var errAmbiguousLiteral = errors.New("literal path has ambiguous case-insensitive spellings")
+
+// lstatLiteral stats a literal rule path, falling back to its on-disk
+// case-insensitive spelling when the exact one is absent, so destinations
+// point at the directory a game actually writes rather than minting a
+// second casing of it. A path absent under every spelling reports the
+// original not-exist error: it is still a legitimate prospective destination.
+// Multiple spellings are ambiguous and must not become a restore target.
+func lstatLiteral(path string) (string, fs.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err == nil || !os.IsNotExist(err) {
+		return path, info, err
+	}
+	matches := expandLiteral(path)
+	if len(matches) == 0 {
+		return path, nil, err
+	}
+	if len(matches) > 1 {
+		return path, nil, errAmbiguousLiteral
+	}
+	resolved := matches[0]
+	info, resolvedErr := os.Lstat(resolved)
+	if resolvedErr != nil {
+		return path, nil, err
+	}
+	return resolved, info, nil
 }
 
 func nativeFile(path, base, locationID string, info fs.FileInfo) target.File {
