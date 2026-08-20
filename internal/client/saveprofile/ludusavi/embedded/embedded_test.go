@@ -12,6 +12,50 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 )
 
+// The community manifest splits Lisa across wiki pages that share one Steam
+// id: the Definitive Edition saves under LocalLow, the classic build as
+// .rvdata2 files in the install directory. The embedded manifest must keep
+// both titles' rules, or one build's saves go undiscovered.
+func TestEmbeddedManifestKeepsBothLisaBuildsSaveRules(t *testing.T) {
+	identity := target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "335670"}}}
+	profile, err := embedded.Provider().Find(context.Background(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, rule := range profile.Rules {
+		found[rule.Path] = true
+	}
+	if !found["<base>/*.rvdata2"] {
+		t.Fatalf("expected the classic build's install-directory rule, got %+v", profile.Rules)
+	}
+	if !found["<home>/AppData/LocalLow/Serenity Forge/LISA The Painful Definitive Edition/Savegame*.dat"] {
+		t.Fatalf("expected the Definitive Edition's LocalLow rule, got %+v", profile.Rules)
+	}
+}
+
+// Strife and its Veteran Edition share a Steam id and save template but give
+// that template different platform constraints. The merged profile must keep
+// every supported platform, or the shared path never applies there.
+func TestEmbeddedManifestKeepsSharedTemplateConstraints(t *testing.T) {
+	identity := target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "317040"}}}
+	profile, err := embedded.Provider().Find(context.Background(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, rule := range profile.Rules {
+		if rule.Path == "<base>/strfsav*.ssg" {
+			found[rule.OS] = true
+		}
+	}
+	for _, platform := range []string{saveprofile.OSWindows, saveprofile.OSMacOS, saveprofile.OSLinux} {
+		if !found[platform] {
+			t.Fatalf("expected the shared template on %s, got %+v", platform, profile.Rules)
+		}
+	}
+}
+
 // Undertale opts out of Steam Cloud, so its saves are only reachable through
 // profile knowledge. The embedded manifest must keep answering for it.
 func TestEmbeddedManifestFindsUndertaleSavesOnLinux(t *testing.T) {
