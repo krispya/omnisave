@@ -379,7 +379,7 @@ func (r *Repository) importRevisions(
 		displayName := revisionNames[manifest.Omnisave.ID][manifest.ID]
 		nameSource := revisionNameSources[manifest.Omnisave.ID][manifest.ID]
 		// A named revision whose record predates name sources was named by a
-		// person; only names automation stamped as its own are ever replaceable.
+		// person; an explicit relabel may replace it later.
 		if displayName != "" && nameSource == "" {
 			nameSource = omnisave.NameSourceManual
 		}

@@ -18,6 +18,7 @@ describe('applyPresence', () => {
     return {
       id,
       title: 'Chrono Trigger',
+      labeler_available: false,
       metadata_source: 'hasheous',
       identifiers: [],
       fingerprints: [],

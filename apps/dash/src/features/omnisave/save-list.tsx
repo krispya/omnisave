@@ -17,6 +17,7 @@ type SaveListProps = {
   achievements: Achievement[];
   loadingRevisions: boolean;
   revisionError: string;
+  labelerAvailable: boolean;
   focus?: RevisionFocus;
   onToggleSave: (save: Omnisave) => void;
   /** Pointing at a save is enough intent to start loading it. */
@@ -26,6 +27,7 @@ type SaveListProps = {
   onRequestDelete: (save: Omnisave, name: string) => void;
   onRenameSave: (save: Omnisave, displayName: string) => Promise<void>;
   onRenameRevision: (revision: Revision, displayName: string) => Promise<void>;
+  onRunLabeler: (revision: Revision) => Promise<void>;
   onOpenSave: (save: Omnisave, revisionID?: string) => void;
   onRequestRestore: (save: Omnisave, revision: Revision) => void;
   onRequestFork: (save: Omnisave, revision: Revision) => void;
@@ -76,6 +78,7 @@ export function SaveList({
   achievements,
   loadingRevisions,
   revisionError,
+  labelerAvailable,
   focus,
   onToggleSave,
   onPrefetchSave,
@@ -84,6 +87,7 @@ export function SaveList({
   onRequestDelete,
   onRenameSave,
   onRenameRevision,
+  onRunLabeler,
   onOpenSave,
   onRequestRestore,
   onRequestFork,
@@ -185,9 +189,11 @@ export function SaveList({
                   achievements={achievements}
                   loading={loadingRevisions}
                   error={revisionError}
+                  labelerAvailable={labelerAvailable}
                   focus={focus}
                   onDownloadRevision={(revision) => onDownloadRevision(save, name, revision)}
                   onRenameRevision={onRenameRevision}
+                  onRunLabeler={onRunLabeler}
                   onOpenSave={onOpenSave}
                   onRequestRestore={(revision) => onRequestRestore(save, revision)}
                   onRequestFork={(revision) => onRequestFork(save, revision)}

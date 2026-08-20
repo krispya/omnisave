@@ -602,10 +602,22 @@ func (r *Repository) ListRevisions(ctx context.Context, saveID string) ([]omnisa
 	return revisions, nil
 }
 
-// UpdateRevisionDisplayName renames a revision on behalf of a person, which is
-// the only path that renames after commit, so it also stamps the name manual:
-// automation may replace its own names but never one somebody chose.
+// UpdateRevisionDisplayName renames a revision on behalf of a person and stamps
+// the name manual so its provenance remains clear until an explicit relabel.
 func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revisionID, displayName string) error {
+	return r.updateRevisionDisplayName(ctx, saveID, revisionID, displayName, omnisave.NameSourceManual)
+}
+
+// UpdateRevisionLabel stores an explicitly requested label and replaces the
+// name's provenance with the labeler's.
+func (r *Repository) UpdateRevisionLabel(ctx context.Context, saveID, revisionID, displayName string) error {
+	return r.updateRevisionDisplayName(ctx, saveID, revisionID, displayName, omnisave.NameSourceLabeler)
+}
+
+func (r *Repository) updateRevisionDisplayName(
+	ctx context.Context,
+	saveID, revisionID, displayName, nameSource string,
+) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
 	if err := r.requireStoreReady(); err != nil {
@@ -619,8 +631,10 @@ func (r *Repository) UpdateRevisionDisplayName(ctx context.Context, saveID, revi
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE revisions SET display_name = ?, name_source = ? WHERE id = ?`,
-		displayName, omnisave.NameSourceManual, revisionID)
+	result, err := tx.ExecContext(ctx,
+		`UPDATE revisions SET display_name = ?, name_source = ? WHERE id = ?`,
+		displayName, nameSource, revisionID,
+	)
 	if err != nil {
 		return err
 	}

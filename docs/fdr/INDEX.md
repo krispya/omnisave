@@ -11,5 +11,5 @@ feature-specific decisions behind it.
 | [FDR-004](FDR-004-sync-to-device.md)           | Syncing Saves to a Device | Experimental | 2026-08-18    |
 | [FDR-005](FDR-005-save-sync.md)                | Save Sync                 | Experimental | 2026-08-18    |
 | [FDR-006](FDR-006-connecting-a-device.md)      | Connecting a Device       | Experimental | 2026-08-18    |
-| [FDR-007](FDR-007-revision-labeling.md)        | Revision Labeling         | Experimental | 2026-08-18    |
+| [FDR-007](FDR-007-revision-labeling.md)        | Revision Labeling         | Experimental | 2026-08-19    |
 | [FDR-008](FDR-008-achievement-marks.md)        | Achievement Marks         | Experimental | 2026-08-18    |

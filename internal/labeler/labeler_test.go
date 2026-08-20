@@ -29,6 +29,12 @@ func TestGamesWithoutALabelerStayUnnamed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if named.HasLabeler(context.Background(), "game-unknown") {
+		t.Fatal("unregistered game reported a labeler")
+	}
+	if named.HasLabeler(context.Background(), "game-missing") {
+		t.Fatal("unknown game reported a labeler")
+	}
 	if label := named.NameRevision(context.Background(), "game-unknown", files); label != "" {
 		t.Fatalf("unregistered game labeled %q, want unnamed", label)
 	}
@@ -59,6 +65,9 @@ func TestUndertaleIsLabeledLikeItsSaveScreen(t *testing.T) {
 	}}, &artifactOpener{blobs: blobs})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !named.HasLabeler(context.Background(), "game-undertale") {
+		t.Fatal("Undertale's registered labeler was not reported")
 	}
 
 	fileOf := func(path string, content []byte) omnisave.RevisionFile {

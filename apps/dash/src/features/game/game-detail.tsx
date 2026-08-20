@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from '../../components/button.js';
 import {
   deleteRevision,
+  labelRevision,
   updateRevisionDisplayName,
   type Omnisave,
   type Revision,
@@ -73,6 +74,7 @@ export function GameDetail({
   }>();
   const [deletingRevision, setDeletingRevision] = useState(false);
   const [deleteRevisionError, setDeleteRevisionError] = useState('');
+  const [labelRevisionError, setLabelRevisionError] = useState('');
   const history = useSaveRevisions(token, selectedSave);
   // Re-derive the action after reloads so retries use the latest current pointer.
   const activeRevisionAction = revisionAction
@@ -103,6 +105,22 @@ export function GameDetail({
       displayName
     );
     history.replaceRevision(updated);
+  }
+
+  async function runRevisionLabeler(revision: Revision) {
+    setLabelRevisionError('');
+    try {
+      const updated = await labelRevision(
+        token,
+        selectedSave?.id ?? revision.omnisave_id,
+        revision.id
+      );
+      history.replaceRevision(updated);
+    } catch (error) {
+      setLabelRevisionError(
+        error instanceof Error ? error.message : 'Could not run the labeler on this revision.'
+      );
+    }
   }
 
   // Selection controls both the open history and its revision fetch.
@@ -255,7 +273,8 @@ export function GameDetail({
             revisions={history.revisions}
             achievements={history.achievements}
             loadingRevisions={history.loading}
-            revisionError={revisionError || history.error}
+            revisionError={revisionError || labelRevisionError || history.error}
+            labelerAvailable={game.labelerAvailable}
             focus={focus}
             onToggleSave={toggleSave}
             onPrefetchSave={(save) => prefetchSaveRevisions(token, save)}
@@ -264,6 +283,7 @@ export function GameDetail({
             onRequestDelete={onRequestDelete}
             onRenameSave={onRenameSave}
             onRenameRevision={renameRevision}
+            onRunLabeler={runRevisionLabeler}
             onOpenSave={openSaveAtRevision}
             onRequestRestore={requestRestore}
             onRequestFork={requestFork}
