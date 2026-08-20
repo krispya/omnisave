@@ -87,7 +87,7 @@ export function NavigationRail({ route }: { route: Route }) {
       </button>
 
       <div
-        className={`mt-2 flex flex-col overflow-hidden rounded-lg py-2 transition-colors duration-200 ${
+        className={`flex flex-col overflow-hidden rounded-lg py-1 transition-colors duration-200 ${
           expanded ? 'bg-rail' : ''
         }`}
       >
