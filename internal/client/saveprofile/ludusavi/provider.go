@@ -40,23 +40,36 @@ func New(data []byte) (*Provider, error) {
 		if !ok {
 			continue
 		}
-		// The community manifest reuses a Steam id when wiki pages split or
-		// a game is renamed. The first rule-bearing title in sorted order
-		// wins deterministically; entries with nothing to contribute never
-		// shadow one that locates saves.
-		if _, exists := provider.bySteamID[steamID]; exists {
-			continue
-		}
 		kept := rules(entry.Files)
 		if len(kept) == 0 {
 			continue
 		}
-		provider.bySteamID[steamID] = saveprofile.Profile{
-			Provider:   "ludusavi",
-			ProviderID: steamID,
-			Title:      title,
-			Rules:      kept,
+		// The community manifest reuses a Steam id when wiki pages split or
+		// a game is renamed, and either page may hold the rules a given
+		// build looks for. Every rule-bearing title contributes its rules;
+		// the first in sorted order names the profile deterministically, and
+		// rule ids hash the template, so a template two pages both spell
+		// lands in the profile once.
+		existing, exists := provider.bySteamID[steamID]
+		if !exists {
+			provider.bySteamID[steamID] = saveprofile.Profile{
+				Provider:   "ludusavi",
+				ProviderID: steamID,
+				Title:      title,
+				Rules:      kept,
+			}
+			continue
 		}
+		contributed := make(map[string]bool, len(existing.Rules))
+		for _, rule := range existing.Rules {
+			contributed[rule.ID] = true
+		}
+		for _, rule := range kept {
+			if !contributed[rule.ID] {
+				existing.Rules = append(existing.Rules, rule)
+			}
+		}
+		provider.bySteamID[steamID] = existing
 	}
 	return provider, nil
 }

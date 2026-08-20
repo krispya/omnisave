@@ -294,6 +294,59 @@ DotAGE:
 	}
 }
 
+func TestDuplicateSteamIdsMergeEveryTitlesRules(t *testing.T) {
+	profiles, err := ludusavi.New([]byte(`
+'Lisa: Definitive Edition':
+  files:
+    <home>/AppData/LocalLow/Serenity Forge/LISA The Painful Definitive Edition/Savegame*.dat:
+      tags: [save]
+      when:
+        - os: windows
+    <base>/Shared.cfg:
+      tags: [save]
+  steam:
+    id: 335670
+'Lisa: Retired Page':
+  steam:
+    id: 335670
+'Lisa: The Painful':
+  files:
+    <base>/*.rvdata2:
+      tags: [save]
+      when:
+        - os: windows
+    <base>/Shared.cfg:
+      tags: [save]
+  steam:
+    id: 335670
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "335670"}}}
+	profile, err := profiles.Find(context.Background(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Title != "Lisa: Definitive Edition" {
+		t.Fatalf("expected the first rule-bearing title to name the profile, got %+v", profile)
+	}
+	counts := map[string]int{}
+	for _, rule := range profile.Rules {
+		counts[rule.Path]++
+	}
+	if counts["<home>/AppData/LocalLow/Serenity Forge/LISA The Painful Definitive Edition/Savegame*.dat"] != 1 ||
+		counts["<base>/*.rvdata2"] != 1 {
+		t.Fatalf("expected both titles' rules in one profile, got %+v", profile.Rules)
+	}
+	if counts["<base>/Shared.cfg"] != 1 {
+		t.Fatalf("expected the template both titles spell to land once, got %+v", profile.Rules)
+	}
+	if len(profile.Rules) != 3 {
+		t.Fatalf("expected the rule-less duplicate to contribute nothing, got %+v", profile.Rules)
+	}
+}
+
 func TestRuleIdentitySurvivesManifestGrowth(t *testing.T) {
 	before, err := ludusavi.New([]byte(`
 Example:
@@ -489,34 +542,6 @@ func TestUnreadableEntriesNarrowDiscoveryInsteadOfFailingIt(t *testing.T) {
 	}
 	if len(saves) != 1 || len(saves[0].Files) != 1 || saves[0].Files[0].Path != savePath {
 		t.Fatalf("expected the readable save beside the locked directory, got %+v", saves)
-	}
-}
-
-func TestDuplicateSteamIdsKeepTheFirstTitle(t *testing.T) {
-	profiles, err := ludusavi.New([]byte(`
-Alpha:
-  files:
-    <home>/.config/Alpha:
-      tags: [save]
-  steam:
-    id: 123
-Alpha Deluxe:
-  files:
-    <home>/.config/AlphaDeluxe:
-      tags: [save]
-  steam:
-    id: 123
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	identity := target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "123"}}}
-	profile, err := profiles.Find(context.Background(), identity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if profile.Title != "Alpha" || len(profile.Rules) != 1 || profile.Rules[0].Path != "<home>/.config/Alpha" {
-		t.Fatalf("expected the first sorted title to win, got %+v", profile)
 	}
 }
 
