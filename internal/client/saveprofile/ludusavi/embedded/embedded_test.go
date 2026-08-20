@@ -34,6 +34,52 @@ func TestEmbeddedManifestKeepsBothLisaBuildsSaveRules(t *testing.T) {
 	}
 }
 
+// Lisa: The Painful ships a native Linux build that writes its saves beside
+// the game, but the community data spells those paths for Windows alone. A
+// Steam Deck running that build has no Proton prefix to borrow the Windows
+// rules through, so the checked-in patch carries the Linux spellings.
+func TestEmbeddedManifestFindsLisaThePainfulSavesOnLinux(t *testing.T) {
+	installRoot := t.TempDir()
+	joyfulDirectory := filepath.Join(installRoot, "Joyful")
+	if err := os.MkdirAll(joyfulDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	painfulSave := filepath.Join(installRoot, "Save01.rvdata2")
+	joyfulSave := filepath.Join(joyfulDirectory, "Save01.rvdata2")
+	for _, path := range []string{painfulSave, joyfulSave} {
+		if err := os.WriteFile(path, []byte("pain"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	game := target.InstalledGame{
+		ID:          "steam:335670",
+		TargetID:    "steam",
+		InstallRoot: installRoot,
+		Identity: target.GameIdentity{
+			Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "335670"}},
+		},
+		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeNative},
+	}
+	profile, err := embedded.Provider().Find(context.Background(), game.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves, err := saveprofile.Resolve(game, *profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, save := range saves {
+		for _, file := range save.Files {
+			found[file.Path] = true
+		}
+	}
+	if !found[painfulSave] || !found[joyfulSave] {
+		t.Fatalf("expected both install-directory saves on Linux, got %+v", saves)
+	}
+}
+
 // The Steam package for Lisa: The First nests the original game two levels
 // beneath Steam's install root. The checked-in patch keeps that packaging
 // difference visible until the equivalent path reaches the community data.
