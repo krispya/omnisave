@@ -517,6 +517,50 @@ func TestLiteralDirectoryRulesIgnoreManifestCasing(t *testing.T) {
 	}
 }
 
+func TestAmbiguousLiteralCasingIsNotGuessed(t *testing.T) {
+	installRoot := t.TempDir()
+	first := filepath.Join(installRoot, "SaveData")
+	second := filepath.Join(installRoot, "savedata")
+	if err := os.Mkdir(first, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(second, 0755); err != nil {
+		if os.IsExist(err) {
+			t.Skip("filesystem does not support case-distinct sibling directories")
+		}
+		t.Fatal(err)
+	}
+	for _, directory := range []string{first, second} {
+		if err := os.WriteFile(filepath.Join(directory, "slot1.sav"), []byte("progress"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	game := target.InstalledGame{
+		ID: "steam:123", TargetID: "steam", InstallRoot: installRoot,
+		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeNative},
+	}
+	profile := saveprofile.Profile{
+		Provider: "ludusavi", ProviderID: "123",
+		Rules: []saveprofile.Rule{{ID: "1", Path: "<base>/SAVEDATA", Kind: "save"}},
+	}
+	saves, err := saveprofile.Resolve(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saves != nil {
+		t.Fatalf("expected ambiguous literal spellings to resolve no save, got %+v", saves)
+	}
+
+	destinations, err := saveprofile.ResolveDestinations(game, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if destinations != nil {
+		t.Fatalf("expected ambiguous literal spellings to offer no destination, got %+v", destinations)
+	}
+}
+
 func TestGlobsFollowSymlinkedDirectories(t *testing.T) {
 	relocated := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(relocated, "Saves"), 0755); err != nil {

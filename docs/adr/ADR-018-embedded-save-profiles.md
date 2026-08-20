@@ -50,9 +50,11 @@ mirror holding only auxiliary content suppresses nothing
 paths are searched or offered as destinations, which discards the manifest's
 occasional prose and relative entries. Path matching — literal rules
 included — is case-insensitive, as Ludusavi's is, because community casing
-is unreliable; and metacharacters
-that arrive through real filesystem values (a library named with brackets)
-stay literal rather than becoming pattern syntax.
+is unreliable. When several on-disk spellings fold to one literal rule and
+none is exact, the path is ambiguous and resolves nothing rather than choosing
+a save or restore destination arbitrarily. Metacharacters that arrive through
+real filesystem values (a library named with brackets) stay literal rather
+than becoming pattern syntax.
 
 A rule's identity — the location id recorded in revision file paths on the
 server — derives from its template text, not its position in the entry, so

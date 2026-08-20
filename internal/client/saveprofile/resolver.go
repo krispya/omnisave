@@ -1,6 +1,7 @@
 package saveprofile
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -244,6 +245,11 @@ func collect(pattern, locationID string, globby bool) []target.File {
 	matches := expandLiteral(pattern)
 	if globby {
 		matches = expandGlob(pattern)
+	} else if len(matches) > 1 {
+		// Case-sensitive filesystems can carry several spellings that fold to
+		// the same literal rule. None is authoritative when no exact spelling
+		// exists, so discovery must not merge them into one save location.
+		return nil
 	}
 
 	var files []target.File
@@ -300,12 +306,14 @@ func collect(pattern, locationID string, globby bool) []target.File {
 	return files
 }
 
+var errAmbiguousLiteral = errors.New("literal path has ambiguous case-insensitive spellings")
+
 // lstatLiteral stats a literal rule path, falling back to its on-disk
 // case-insensitive spelling when the exact one is absent, so destinations
 // point at the directory a game actually writes rather than minting a
 // second casing of it. A path absent under every spelling reports the
-// original not-exist error: it is still a legitimate prospective
-// destination.
+// original not-exist error: it is still a legitimate prospective destination.
+// Multiple spellings are ambiguous and must not become a restore target.
 func lstatLiteral(path string) (string, fs.FileInfo, error) {
 	info, err := os.Lstat(path)
 	if err == nil || !os.IsNotExist(err) {
@@ -314,6 +322,9 @@ func lstatLiteral(path string) (string, fs.FileInfo, error) {
 	matches := expandLiteral(path)
 	if len(matches) == 0 {
 		return path, nil, err
+	}
+	if len(matches) > 1 {
+		return path, nil, errAmbiguousLiteral
 	}
 	resolved := matches[0]
 	info, resolvedErr := os.Lstat(resolved)
