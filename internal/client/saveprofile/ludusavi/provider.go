@@ -48,8 +48,8 @@ func New(data []byte) (*Provider, error) {
 		// a game is renamed, and either page may hold the rules a given
 		// build looks for. Every rule-bearing title contributes its rules;
 		// the first in sorted order names the profile deterministically, and
-		// rule ids hash the template, so a template two pages both spell
-		// lands in the profile once.
+		// an exact rule two pages both spell lands in the profile once while
+		// distinct OS and store constraints on the same template survive.
 		existing, exists := provider.bySteamID[steamID]
 		if !exists {
 			provider.bySteamID[steamID] = saveprofile.Profile{
@@ -60,13 +60,14 @@ func New(data []byte) (*Provider, error) {
 			}
 			continue
 		}
-		contributed := make(map[string]bool, len(existing.Rules))
+		contributed := make(map[saveprofile.Rule]bool, len(existing.Rules))
 		for _, rule := range existing.Rules {
-			contributed[rule.ID] = true
+			contributed[rule] = true
 		}
 		for _, rule := range kept {
-			if !contributed[rule.ID] {
+			if !contributed[rule] {
 				existing.Rules = append(existing.Rules, rule)
+				contributed[rule] = true
 			}
 		}
 		provider.bySteamID[steamID] = existing

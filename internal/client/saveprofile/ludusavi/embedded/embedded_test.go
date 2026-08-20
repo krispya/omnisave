@@ -34,6 +34,28 @@ func TestEmbeddedManifestKeepsBothLisaBuildsSaveRules(t *testing.T) {
 	}
 }
 
+// Strife and its Veteran Edition share a Steam id and save template but give
+// that template different platform constraints. The merged profile must keep
+// every supported platform, or the shared path never applies there.
+func TestEmbeddedManifestKeepsSharedTemplateConstraints(t *testing.T) {
+	identity := target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "317040"}}}
+	profile, err := embedded.Provider().Find(context.Background(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, rule := range profile.Rules {
+		if rule.Path == "<base>/strfsav*.ssg" {
+			found[rule.OS] = true
+		}
+	}
+	for _, platform := range []string{saveprofile.OSWindows, saveprofile.OSMacOS, saveprofile.OSLinux} {
+		if !found[platform] {
+			t.Fatalf("expected the shared template on %s, got %+v", platform, profile.Rules)
+		}
+	}
+}
+
 // Undertale opts out of Steam Cloud, so its saves are only reachable through
 // profile knowledge. The embedded manifest must keep answering for it.
 func TestEmbeddedManifestFindsUndertaleSavesOnLinux(t *testing.T) {

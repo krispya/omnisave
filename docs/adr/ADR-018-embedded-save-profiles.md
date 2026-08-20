@@ -35,15 +35,16 @@ the Ludusavi Manifest's MIT copyright and permission notice alongside the
 derived data embedded in the binary.
 
 A handful of interpretation rules make community data safe to consume.
-Duplicate Steam ids from renamed pages and split editions resolve
-deterministically to the first title in
-sorted order that actually carries save rules, so a stub page never shadows
-the entry that locates saves. Rules over Steam's `userdata` directories are
-dropped however the manifest spells them: those are Steam Cloud's, already
-discovered and attributed to an account by the steam adapter, and a profile
-rule over them would report every Cloud save twice. For the same reason a
-game's profile saves stand aside when the adapter's own save already holds
-the same save family — files by the names the rules locate — so a Cloud
+Duplicate Steam ids from renamed pages and split editions merge every
+rule-bearing title into one profile; the first such title in sorted order names
+it deterministically, so a stub page never shadows an entry that locates saves.
+Exact rules repeated across pages land once, while distinct platform and store
+constraints on the same path survive. Rules over Steam's `userdata`
+directories are dropped however the manifest spells them: those are Steam
+Cloud's, already discovered and attributed to an account by the steam adapter,
+and a profile rule over them would report every Cloud save twice. For the same
+reason a game's profile saves stand aside when the adapter's own save already
+holds the same save family — files by the names the rules locate — so a Cloud
 game's native folder is not rediscovered as a competing layout, while a
 mirror holding only auxiliary content suppresses nothing
 ([FDR-003](../fdr/FDR-003-automatic-save-binding.md), decision 10). Only absolute expanded

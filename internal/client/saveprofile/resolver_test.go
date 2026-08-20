@@ -294,7 +294,7 @@ DotAGE:
 	}
 }
 
-func TestDuplicateSteamIdsMergeEveryTitlesRules(t *testing.T) {
+func TestDuplicateSteamIDsMergeRulesAndConstraints(t *testing.T) {
 	profiles, err := ludusavi.New([]byte(`
 'Lisa: Definitive Edition':
   files:
@@ -304,6 +304,9 @@ func TestDuplicateSteamIdsMergeEveryTitlesRules(t *testing.T) {
         - os: windows
     <base>/Shared.cfg:
       tags: [save]
+      when:
+        - os: dos
+        - os: windows
   steam:
     id: 335670
 'Lisa: Retired Page':
@@ -317,6 +320,10 @@ func TestDuplicateSteamIdsMergeEveryTitlesRules(t *testing.T) {
         - os: windows
     <base>/Shared.cfg:
       tags: [save]
+      when:
+        - os: windows
+        - os: mac
+        - os: linux
   steam:
     id: 335670
 `))
@@ -332,17 +339,25 @@ func TestDuplicateSteamIdsMergeEveryTitlesRules(t *testing.T) {
 		t.Fatalf("expected the first rule-bearing title to name the profile, got %+v", profile)
 	}
 	counts := map[string]int{}
+	sharedConstraints := map[string]int{}
 	for _, rule := range profile.Rules {
 		counts[rule.Path]++
+		if rule.Path == "<base>/Shared.cfg" {
+			sharedConstraints[rule.OS]++
+		}
 	}
 	if counts["<home>/AppData/LocalLow/Serenity Forge/LISA The Painful Definitive Edition/Savegame*.dat"] != 1 ||
 		counts["<base>/*.rvdata2"] != 1 {
 		t.Fatalf("expected both titles' rules in one profile, got %+v", profile.Rules)
 	}
-	if counts["<base>/Shared.cfg"] != 1 {
-		t.Fatalf("expected the template both titles spell to land once, got %+v", profile.Rules)
+	if counts["<base>/Shared.cfg"] != 4 ||
+		sharedConstraints["dos"] != 1 ||
+		sharedConstraints[saveprofile.OSWindows] != 1 ||
+		sharedConstraints[saveprofile.OSMacOS] != 1 ||
+		sharedConstraints[saveprofile.OSLinux] != 1 {
+		t.Fatalf("expected every distinct shared-template constraint once, got %+v", profile.Rules)
 	}
-	if len(profile.Rules) != 3 {
+	if len(profile.Rules) != 6 {
 		t.Fatalf("expected the rule-less duplicate to contribute nothing, got %+v", profile.Rules)
 	}
 }
