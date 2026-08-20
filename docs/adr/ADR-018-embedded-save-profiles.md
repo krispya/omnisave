@@ -30,14 +30,16 @@ client, so builds and scans are offline and reproducible. Deterministic output
 keeps upstream refreshes reviewable, and the data is loaded only when a profile
 is first needed.
 
-Reviewed patches in `internal/client/saveprofile/ludusavi/patches` add narrowly
-scoped paths when an upstream entry is known to be wrong and cannot be corrected
-promptly. Each file identifies one existing upstream title and Steam id,
-documents the reason and upstream source, and only adds knowledge: it cannot
-silently replace the community rule. The build applies patches before pruning
-and fails when their title or Steam identity drifts, so the directory remains a
-visible inventory rather than an untracked fork. A patch is removed once the
-equivalent correction arrives upstream.
+Reviewed patches in `internal/client/saveprofile/ludusavi/patches` cover
+narrowly scoped paths when an upstream entry is known to be wrong and cannot be
+corrected promptly. Patches are additive for now: each file identifies one
+existing upstream title and Steam id, documents the reason and upstream source,
+and adds save rules without removing or replacing community rules. The build
+applies patches before pruning and fails when their title or Steam identity
+drifts or when a patch adds no effective rule. Tests also verify that every
+checked-in patch reached the generated manifest, so the directory remains a
+visible current inventory rather than an untracked fork. A patch is removed
+once the equivalent correction arrives upstream.
 
 The distributed client archives include `THIRD_PARTY_NOTICES`, which preserves
 the Ludusavi Manifest's MIT copyright and permission notice alongside the

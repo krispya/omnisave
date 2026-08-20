@@ -2,6 +2,7 @@ package ludusavi_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
@@ -78,7 +79,7 @@ addFiles:
 	}
 }
 
-func TestPatchIsIdempotentAfterItsPathArrivesUpstream(t *testing.T) {
+func TestPatchMustBeRemovedAfterItsPathArrivesUpstream(t *testing.T) {
 	manifest := []byte(`
 Example:
   files:
@@ -98,21 +99,41 @@ addFiles:
     when:
       - os: windows
 `)
-	patched, err := ludusavi.ApplyPatches(manifest, map[string][]byte{"123-example.yaml": patch})
-	if err != nil {
-		t.Fatal(err)
+	if _, err := ludusavi.ApplyPatches(manifest, map[string][]byte{"123-example.yaml": patch}); err == nil ||
+		!strings.Contains(err.Error(), "adds no effective save rule") {
+		t.Fatalf("expected a redundant patch error, got %v", err)
 	}
-	provider, err := ludusavi.New(patched)
-	if err != nil {
-		t.Fatal(err)
-	}
-	profile, err := provider.Find(context.Background(), target.GameIdentity{
-		Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "123"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(profile.Rules) != 1 {
-		t.Fatalf("expected the upstream and patched path to collapse, got %+v", profile.Rules)
+}
+
+func TestPatchRejectsRulesThatCannotDescribeASteamSave(t *testing.T) {
+	manifest := []byte(`
+Example:
+  files:
+    <base>/*.sav: {}
+  steam:
+    id: 123
+`)
+	for name, example := range map[string]struct {
+		addition string
+		want     string
+	}{
+		"configuration": {addition: "tags: [config]", want: "at least one save rule"},
+		"unknown OS":    {addition: "when: [{os: plan9}]", want: "unsupported OS"},
+		"other store":   {addition: "when: [{store: gog}]", want: "unsupported store"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			patch := []byte(`
+steamId: "123"
+title: "Example"
+reason: "Example correction."
+upstream: "https://example.com/game"
+addFiles:
+  <base>/nested/*.sav:
+    ` + example.addition)
+			if _, err := ludusavi.ApplyPatches(manifest, map[string][]byte{"123-example.yaml": patch}); err == nil ||
+				!strings.Contains(err.Error(), example.want) {
+				t.Fatalf("expected %q error, got %v", example.want, err)
+			}
+		})
 	}
 }
