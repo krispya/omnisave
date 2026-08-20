@@ -29,8 +29,7 @@ Tests should document the intended feature boundary and show how the public API 
 ## Documentation Updates
 
 - Use FDRs for feature behavior/rationale and ADRs for cross-cutting decisions.
-- Update `docs/GLOSSARY.md` when introducing, renaming, or clarifying canonical
-  vocabulary.
+- Update `docs/GLOSSARY.md` when introducing, renaming, or clarifying canonical vocabulary.
 
 ## TypeScript
 
