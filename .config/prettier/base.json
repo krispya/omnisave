@@ -12,7 +12,8 @@
     {
       "files": ["*.md", "**/*.md"],
       "options": {
-        "semi": false
+        "semi": false,
+        "proseWrap": "never"
       }
     },
     {
