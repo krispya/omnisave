@@ -42,6 +42,7 @@ type GameDetailProps = {
   /** Selecting a save opens its history; selecting none closes it. */
   onSelectSave: (save?: Omnisave) => void;
   onDownloadSave: (save: Omnisave, name: string) => void;
+  onDownloadAllRevisions: (save: Omnisave, name: string) => void;
   onDownloadRevision: (save: Omnisave, name: string, revision: Revision) => void;
   onRequestDelete: (save: Omnisave, name: string) => void;
   onRenameSave: (save: Omnisave, displayName: string) => Promise<void>;
@@ -56,6 +57,7 @@ export function GameDetail({
   revisionError,
   onSelectSave,
   onDownloadSave,
+  onDownloadAllRevisions,
   onDownloadRevision,
   onRequestDelete,
   onRenameSave,
@@ -279,6 +281,7 @@ export function GameDetail({
             onToggleSave={toggleSave}
             onPrefetchSave={(save) => prefetchSaveRevisions(token, save)}
             onDownloadSave={onDownloadSave}
+            onDownloadAllRevisions={onDownloadAllRevisions}
             onDownloadRevision={onDownloadRevision}
             onRequestDelete={onRequestDelete}
             onRenameSave={onRenameSave}
