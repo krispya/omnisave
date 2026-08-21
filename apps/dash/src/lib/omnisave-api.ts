@@ -392,6 +392,11 @@ export function downloadOmnisaveArchive(token: string, omnisaveID: string) {
   return requestBlob(`/api/v1/omnisaves/${omnisaveID}/archive`, token);
 }
 
+/** Downloads every snapshot in a save's history as one archive. */
+export function downloadAllRevisionsArchive(token: string, omnisaveID: string) {
+  return requestBlob(`/api/v1/omnisaves/${omnisaveID}/revisions/archive`, token);
+}
+
 export function downloadRevisionArchive(token: string, omnisaveID: string, revisionID: string) {
   return requestBlob(`/api/v1/omnisaves/${omnisaveID}/revisions/${revisionID}/archive`, token);
 }

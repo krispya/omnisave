@@ -1,6 +1,6 @@
 # FDR-005: Save Sync
 
-**Status:** Experimental **Last reviewed:** 2026-08-18
+**Status:** Experimental **Last reviewed:** 2026-08-20
 
 ## Overview
 
@@ -24,6 +24,7 @@ Save Sync keeps a bound Local Save and its Omnisave aligned over time. Each pass
 - Revisions may have mutable display names without changing their identity, content, topology, or current status.
 - Each Omnisave has one server-owned Current Revision. Restoring selects any revision in its history without creating or deleting revisions; clean Devices adopt that selection on their next sync.
 - Revision history may branch within one Omnisave. A fork is different: it creates another named Omnisave with its own Current Revision while sharing ancestry at the fork point.
+- The Dash can download the Current Revision, any individual historical revision, or the save's complete revision history. A complete-history archive includes every branch and shared ancestor visible through that Omnisave, with each revision materialized as a separate full snapshot.
 - A revision may be deleted only when no child, Current Revision, or fork origin depends on it. Deletion never reparents history or moves Current Revision.
 - Revisions record when save content was written when that evidence is available, separately from when it reached the server. Older revisions fall back to their server creation time.
 
@@ -72,6 +73,10 @@ Save Sync keeps a bound Local Save and its Omnisave aligned over time. Each pass
 ### 11. Save time and sync time are distinct
 
 **Decision:** A revision may record when the game wrote the content separately from when the server accepted it. **Why:** An old save synchronized today should not appear to have been played today. Only the Device that reads the native files can provide that evidence. **Tradeoff:** File times depend on Device clocks and file-copy behavior, so they are informative rather than authoritative ordering.
+
+### 12. Complete-history downloads contain full snapshots
+
+**Decision:** A complete-history download materializes every revision independently rather than exporting deltas or only the path leading to Current Revision. **Why:** The archive is useful without Omnisave-specific reconstruction tooling, and alternate branches are part of the recoverable history. **Tradeoff:** Unchanged files may appear many times in the ZIP, so the download can be much larger than the content-addressed server representation.
 
 ## Open Questions
 

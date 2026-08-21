@@ -11,6 +11,7 @@ import {
 import {
   deleteGame,
   deleteOmnisave,
+  downloadAllRevisionsArchive,
   downloadOmnisaveArchive,
   downloadRevisionArchive,
   claimServer,
@@ -265,6 +266,23 @@ function LibraryDashboard({
     }
   }
 
+  async function downloadAllRevisions(save: Omnisave, name: string) {
+    if (!token) return;
+    setError('');
+    try {
+      saveArchiveToDisk(
+        await downloadAllRevisionsArchive(token, save.id),
+        `${name} All Revisions.zip`
+      );
+    } catch (downloadError) {
+      setError(
+        downloadError instanceof Error
+          ? downloadError.message
+          : 'Could not download this save history.'
+      );
+    }
+  }
+
   async function renameSave(save: Omnisave, displayName: string) {
     if (!token) return;
     const updated = await updateOmnisaveDisplayName(token, save.id, displayName);
@@ -381,6 +399,7 @@ function LibraryDashboard({
           revisionError={revisionError}
           onSelectSave={(save) => setSelectedSaveID(save?.id ?? '')}
           onDownloadSave={(save, name) => void downloadSave(save, name)}
+          onDownloadAllRevisions={(save, name) => void downloadAllRevisions(save, name)}
           onDownloadRevision={(save, name, revision) => void downloadRevision(save, name, revision)}
           onRequestDelete={requestDeleteSave}
           onRenameSave={renameSave}

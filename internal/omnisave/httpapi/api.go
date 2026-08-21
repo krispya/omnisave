@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -87,6 +89,7 @@ func (api *API) guardedRoutes() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/achievements", api.listAchievements)
 	mux.HandleFunc("POST /api/v1/omnisaves/{id}/forks", api.fork)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/archive", api.archive)
+	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/archive", api.archiveRevisions)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/{revisionID}/archive", api.archiveRevision)
 	mux.HandleFunc("PUT /api/v1/artifacts/{sha256}", api.putArtifact)
 	mux.HandleFunc("HEAD /api/v1/artifacts/{sha256}", api.headArtifact)
@@ -347,7 +350,40 @@ func (a *API) archive(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	a.serveArchive(w, r, revision, archiveFilename(save.DisplayName))
+	a.serveArchive(w, r, []archivedRevision{{revision: *revision}}, archiveFilename(save.DisplayName))
+}
+
+func (a *API) archiveRevisions(w http.ResponseWriter, r *http.Request) {
+	save, err := a.saves.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	revisions, err := a.saves.ListRevisions(r.Context(), save.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if len(revisions) == 0 {
+		writeError(w, omnisave.ErrNotFound)
+		return
+	}
+	// The service's public contract does not promise an order. Oldest first
+	// gives every snapshot a stable, readable directory even across branches.
+	sort.Slice(revisions, func(i, j int) bool {
+		if revisions[i].CreatedAt.Equal(revisions[j].CreatedAt) {
+			return revisions[i].ID < revisions[j].ID
+		}
+		return revisions[i].CreatedAt.Before(revisions[j].CreatedAt)
+	})
+	archived := make([]archivedRevision, len(revisions))
+	for index, revision := range revisions {
+		archived[index] = archivedRevision{
+			revision:  revision,
+			directory: fmt.Sprintf("%04d %s", index+1, revision.CreatedAt.UTC().Format(archiveStampLayout)),
+		}
+	}
+	a.serveArchive(w, r, archived, archiveFilename(save.DisplayName+" All Revisions"))
 }
 
 func (a *API) archiveRevision(w http.ResponseWriter, r *http.Request) {
@@ -364,16 +400,28 @@ func (a *API) archiveRevision(w http.ResponseWriter, r *http.Request) {
 	// Downloads of several revisions of one save should not collide on
 	// disk, so the snapshot's commit time joins the name.
 	name := save.DisplayName + " " + revision.CreatedAt.UTC().Format(archiveStampLayout)
-	a.serveArchive(w, r, revision, archiveFilename(name))
+	a.serveArchive(w, r, []archivedRevision{{revision: *revision}}, archiveFilename(name))
 }
 
-func (a *API) serveArchive(w http.ResponseWriter, r *http.Request, revision *omnisave.Revision, filename string) {
+type archivedRevision struct {
+	revision  omnisave.Revision
+	directory string
+}
+
+func (a *API) serveArchive(w http.ResponseWriter, r *http.Request, revisions []archivedRevision, filename string) {
 	// Confirm every artifact before the first body byte; after that an
 	// error can only truncate the stream.
-	for _, file := range revision.Files {
-		if _, err := a.saves.StatArtifact(r.Context(), file.Artifact.SHA256); err != nil {
-			writeError(w, err)
-			return
+	checkedArtifacts := make(map[string]struct{})
+	for _, archived := range revisions {
+		for _, file := range archived.revision.Files {
+			if _, checked := checkedArtifacts[file.Artifact.SHA256]; checked {
+				continue
+			}
+			if _, err := a.saves.StatArtifact(r.Context(), file.Artifact.SHA256); err != nil {
+				writeError(w, err)
+				return
+			}
+			checkedArtifacts[file.Artifact.SHA256] = struct{}{}
 		}
 	}
 
@@ -382,23 +430,38 @@ func (a *API) serveArchive(w http.ResponseWriter, r *http.Request, revision *omn
 		map[string]string{"filename": filename}))
 	archive := zip.NewWriter(w)
 	defer archive.Close()
-	for _, file := range revision.Files {
-		if err := a.archiveFile(r.Context(), archive, revision.CreatedAt, file); err != nil {
-			return
+	for _, archived := range revisions {
+		if archived.directory != "" {
+			if _, err := archive.CreateHeader(&zip.FileHeader{
+				Name:     archived.directory + "/",
+				Method:   zip.Store,
+				Modified: archived.revision.CreatedAt,
+			}); err != nil {
+				return
+			}
+		}
+		for _, file := range archived.revision.Files {
+			path := file.Path
+			if archived.directory != "" {
+				path = archived.directory + "/" + path
+			}
+			if err := a.archiveFile(r.Context(), archive, archived.revision.CreatedAt, path, file); err != nil {
+				return
+			}
 		}
 	}
 }
 
 const archiveStampLayout = "2006-01-02 150405"
 
-func (a *API) archiveFile(ctx context.Context, archive *zip.Writer, modified time.Time, file omnisave.RevisionFile) error {
+func (a *API) archiveFile(ctx context.Context, archive *zip.Writer, modified time.Time, path string, file omnisave.RevisionFile) error {
 	payload, err := a.saves.OpenArtifact(ctx, file.Artifact.SHA256)
 	if err != nil {
 		return err
 	}
 	defer payload.Close()
 	writer, err := archive.CreateHeader(&zip.FileHeader{
-		Name:     file.Path,
+		Name:     path,
 		Method:   zip.Deflate,
 		Modified: modified,
 	})

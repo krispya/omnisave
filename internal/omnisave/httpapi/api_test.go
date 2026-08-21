@@ -324,6 +324,11 @@ func TestDownloadSaveArchive(t *testing.T) {
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("archive of a save without revisions returned %d: %s", response.Code, response.Body.String())
 	}
+	response = request(t, handler, http.MethodGet,
+		"/api/v1/omnisaves/"+save.ID+"/revisions/archive", "", nil)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("all-revisions archive of an empty save returned %d: %s", response.Code, response.Body.String())
+	}
 
 	progress := uploadArtifact(t, handler, "game-save contents")
 	settings := uploadArtifact(t, handler, "shared settings")
@@ -360,6 +365,75 @@ func TestDownloadSaveArchive(t *testing.T) {
 	if len(contents) != 2 || contents["pokemon.sav"] != "game-save contents" ||
 		contents["config/settings.json"] != "shared settings" {
 		t.Fatalf("unexpected archive contents: %v", contents)
+	}
+}
+
+func TestDownloadAllRevisionsArchive(t *testing.T) {
+	handler := newHandler(t, storagetest.NewMemoryRepository())
+
+	response := request(t, handler, http.MethodPost, "/api/v1/omnisaves", "application/json",
+		bytes.NewBufferString(`{"game_id":"pokemon-emerald-usa","display_name":"Before the final boss"}`))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create returned %d: %s", response.Code, response.Body.String())
+	}
+	var save omnisave.Omnisave
+	decodeResponse(t, response, &save)
+
+	early := commitTestRevision(t, handler, save.ID, nil, "early progress")
+	head := commitTestRevision(t, handler, save.ID, &early.ID, "late progress")
+	branchArtifact := uploadArtifact(t, handler, "alternate progress")
+	branchBody, err := json.Marshal(omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &head.ID,
+		ParentRevisionID:          &early.ID,
+		KeepCurrent:               true,
+		Upserts: []omnisave.RevisionFile{
+			{Path: "pokemon.sav", Artifact: branchArtifact},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = request(t, handler, http.MethodPost,
+		"/api/v1/omnisaves/"+save.ID+"/revisions", "application/json", bytes.NewReader(branchBody))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("add branch revision returned %d: %s", response.Code, response.Body.String())
+	}
+
+	response = request(t, handler, http.MethodGet,
+		"/api/v1/omnisaves/"+save.ID+"/revisions/archive", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("all-revisions archive returned %d: %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Disposition"); got != `attachment; filename="Before the final boss All Revisions.zip"` {
+		t.Fatalf("unexpected content disposition: %q", got)
+	}
+	archive, err := zip.NewReader(bytes.NewReader(response.Body.Bytes()), int64(response.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := archiveContents(t, archive)
+	if len(contents) != 3 {
+		t.Fatalf("expected every revision in the archive, got %v", contents)
+	}
+	directories := make(map[string]bool)
+	wantContents := map[string]bool{
+		"early progress":     true,
+		"late progress":      true,
+		"alternate progress": true,
+	}
+	for name, content := range contents {
+		directory, path, ok := strings.Cut(name, "/")
+		if !ok || path != "pokemon.sav" {
+			t.Fatalf("revision file did not have its own snapshot directory: %q", name)
+		}
+		directories[directory] = true
+		if !wantContents[content] {
+			t.Fatalf("unexpected archived revision content %q", content)
+		}
+		delete(wantContents, content)
+	}
+	if len(directories) != 3 || len(wantContents) != 0 {
+		t.Fatalf("archive did not keep all snapshots separate: directories=%v missing=%v", directories, wantContents)
 	}
 }
 
@@ -442,6 +516,9 @@ func archiveContents(t *testing.T, archive *zip.Reader) map[string]string {
 	t.Helper()
 	contents := make(map[string]string)
 	for _, file := range archive.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
 		reader, err := file.Open()
 		if err != nil {
 			t.Fatal(err)
