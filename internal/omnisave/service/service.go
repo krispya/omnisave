@@ -84,6 +84,7 @@ func (s *service) Create(ctx context.Context, input omnisave.CreateOmnisave) (*o
 		DisplayName:              displayName,
 		CreatedAt:                now,
 		CurrentRevisionCreatedAt: now,
+		LatestRevisionCreatedAt:  now,
 		Metadata:                 cloneMap(input.Metadata),
 	}
 	if err := s.repository.InsertOmnisave(ctx, save); err != nil {
@@ -155,6 +156,7 @@ func (s *service) Fork(ctx context.Context, saveID string, input omnisave.ForkOm
 		},
 		CreatedAt:                now,
 		CurrentRevisionCreatedAt: sourceRevision.CreatedAt,
+		LatestRevisionCreatedAt:  now,
 		Metadata:                 mergeMaps(source.Metadata, input.Metadata),
 	}
 	if err := s.repository.ForkOmnisave(ctx, fork); err != nil {

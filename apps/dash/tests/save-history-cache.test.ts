@@ -10,6 +10,7 @@ function save(): Omnisave {
     current_revision_id: 'revision-1',
     created_at: '2026-08-13T12:00:00Z',
     current_revision_created_at: '2026-08-13T12:00:00Z',
+    latest_revision_created_at: '2026-08-13T12:00:00Z',
   };
 }
 

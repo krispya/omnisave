@@ -24,12 +24,12 @@ export function storedLibrarySort(): LibrarySort {
   }
 }
 
-/** When a save last moved: its newest upload, or its creation for a fresh fork
-    whose current revision predates it. */
+/** When a save last moved: its newest upload, even when an older revision is
+    currently selected, or its creation for a fresh fork. */
 function lastUpdated(game: GameSummary) {
   let latest = 0;
   for (const save of game.saves) {
-    for (const stamp of [save.current_revision_created_at, save.created_at]) {
+    for (const stamp of [save.latest_revision_created_at, save.created_at]) {
       const time = Date.parse(stamp);
       if (!Number.isNaN(time) && time > latest) latest = time;
     }
