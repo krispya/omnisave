@@ -14,6 +14,9 @@ type Omnisave struct {
 	// CurrentRevisionCreatedAt is the original creation time of the selected
 	// snapshot; restoring an older revision deliberately moves it backward.
 	CurrentRevisionCreatedAt time.Time `json:"current_revision_created_at"`
+	// LatestRevisionCreatedAt is the creation time of the newest snapshot this
+	// Omnisave has received, regardless of which snapshot is currently selected.
+	LatestRevisionCreatedAt time.Time `json:"latest_revision_created_at"`
 	// CurrentRevisionSavedAt is the selected snapshot's SavedAt: when the save
 	// itself was written, not when it reached the server. Nil when the snapshot
 	// predates devices reporting it.

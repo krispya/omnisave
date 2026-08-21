@@ -194,6 +194,12 @@ func (r *Repository) ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, er
 				(SELECT created_at FROM revisions WHERE id = omnisaves.current_revision_id),
 				created_at
 			),
+			COALESCE(
+				(SELECT created_at FROM revisions
+					WHERE omnisave_id = omnisaves.id
+					ORDER BY created_at DESC, id DESC LIMIT 1),
+				created_at
+			),
 			(SELECT saved_at FROM revisions WHERE id = omnisaves.current_revision_id),
 			metadata
 		FROM omnisaves ORDER BY created_at, id`,
@@ -220,6 +226,12 @@ func (r *Repository) GetOmnisave(ctx context.Context, id string) (*omnisave.Omni
 			forked_from_omnisave_id, forked_from_revision_id, created_at,
 			COALESCE(
 				(SELECT created_at FROM revisions WHERE id = omnisaves.current_revision_id),
+				created_at
+			),
+			COALESCE(
+				(SELECT created_at FROM revisions
+					WHERE omnisave_id = omnisaves.id
+					ORDER BY created_at DESC, id DESC LIMIT 1),
 				created_at
 			),
 			(SELECT saved_at FROM revisions WHERE id = omnisaves.current_revision_id),
@@ -1031,12 +1043,12 @@ type scanner interface {
 
 func scanOmnisave(row scanner) (*omnisave.Omnisave, error) {
 	var save omnisave.Omnisave
-	var createdAt, currentRevisionCreatedAt, metadata string
+	var createdAt, currentRevisionCreatedAt, latestRevisionCreatedAt, metadata string
 	var current, forkSave, forkRevision, currentRevisionSavedAt sql.NullString
 	if err := row.Scan(
 		&save.ID, &save.GameID, &save.DisplayName, &current,
 		&forkSave, &forkRevision, &createdAt, &currentRevisionCreatedAt,
-		&currentRevisionSavedAt, &metadata,
+		&latestRevisionCreatedAt, &currentRevisionSavedAt, &metadata,
 	); err != nil {
 		return nil, err
 	}
@@ -1053,6 +1065,10 @@ func scanOmnisave(row scanner) (*omnisave.Omnisave, error) {
 		return nil, err
 	}
 	save.CurrentRevisionCreatedAt, err = time.Parse(time.RFC3339Nano, currentRevisionCreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	save.LatestRevisionCreatedAt, err = time.Parse(time.RFC3339Nano, latestRevisionCreatedAt)
 	if err != nil {
 		return nil, err
 	}

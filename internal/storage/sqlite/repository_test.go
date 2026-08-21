@@ -111,7 +111,7 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 	}
 }
 
-func TestCurrentRevisionDateFollowsTheSelectedSnapshot(t *testing.T) {
+func TestRevisionDatesDistinguishTheLatestSnapshotFromTheSelectedSnapshot(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
 	repository, err := sqlite.Open(
@@ -132,8 +132,9 @@ func TestCurrentRevisionDateFollowsTheSelectedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !stored.CurrentRevisionCreatedAt.Equal(stored.CreatedAt) {
-		t.Fatalf("expected a fresh save current at its creation, got %v", stored.CurrentRevisionCreatedAt)
+	if !stored.CurrentRevisionCreatedAt.Equal(stored.CreatedAt) ||
+		!stored.LatestRevisionCreatedAt.Equal(stored.CreatedAt) {
+		t.Fatalf("expected a fresh save current and latest at its creation, got %+v", stored)
 	}
 
 	artifact := storeOmnisaveArtifact(t, ctx, saves, "game-save contents")
@@ -147,8 +148,9 @@ func TestCurrentRevisionDateFollowsTheSelectedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !stored.CurrentRevisionCreatedAt.Equal(revision.CreatedAt) {
-		t.Fatalf("expected the commit to select the new revision date %v, got %v", revision.CreatedAt, stored.CurrentRevisionCreatedAt)
+	if !stored.CurrentRevisionCreatedAt.Equal(revision.CreatedAt) ||
+		!stored.LatestRevisionCreatedAt.Equal(revision.CreatedAt) {
+		t.Fatalf("expected the commit to be both current and latest at %v, got %+v", revision.CreatedAt, stored)
 	}
 
 	displayName := "After the commit"
@@ -156,8 +158,29 @@ func TestCurrentRevisionDateFollowsTheSelectedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !renamed.CurrentRevisionCreatedAt.Equal(revision.CreatedAt) {
-		t.Fatalf("expected a rename to leave the current revision date at %v, got %v", revision.CreatedAt, renamed.CurrentRevisionCreatedAt)
+	if !renamed.CurrentRevisionCreatedAt.Equal(revision.CreatedAt) ||
+		!renamed.LatestRevisionCreatedAt.Equal(revision.CreatedAt) {
+		t.Fatalf("expected a rename to leave both revision dates at %v, got %+v", revision.CreatedAt, renamed)
+	}
+
+	laterArtifact := storeOmnisaveArtifact(t, ctx, saves, "later game-save contents")
+	later, err := saves.CommitRevision(ctx, save.ID, omnisave.CreateRevision{
+		ExpectedCurrentRevisionID: &revision.ID,
+		Upserts:                   []omnisave.RevisionFile{{Path: "pokemon.sav", Artifact: laterArtifact}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := saves.Restore(ctx, save.ID, omnisave.RestoreRevision{
+		ExpectedCurrentRevisionID: &later.ID,
+		RevisionID:                revision.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !restored.CurrentRevisionCreatedAt.Equal(revision.CreatedAt) ||
+		!restored.LatestRevisionCreatedAt.Equal(later.CreatedAt) {
+		t.Fatalf("expected restore to move only the current revision date, got %+v", restored)
 	}
 }
 

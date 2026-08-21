@@ -10,6 +10,7 @@ function save(id: string, current: string | null): Omnisave {
     current_revision_id: current,
     created_at: '2026-08-01T00:00:00Z',
     current_revision_created_at: '2026-08-01T00:00:00Z',
+    latest_revision_created_at: '2026-08-01T00:00:00Z',
   } as Omnisave;
 }
 
