@@ -143,6 +143,26 @@ type RestoreRevision struct {
 	RevisionID                string  `json:"revision_id"`
 }
 
+// MigrateLocations renames one lineage's location vocabulary: every file
+// path `From/rest` across the save's own revisions becomes `To/Prefix/rest`
+// (or `To/rest` with an empty Prefix). It is a rename and nothing more —
+// artifacts, revision identities, ancestry, and achievements are untouched
+// — used to move a lineage minted under a store's transport spelling into
+// the vocabulary of the folder the game itself reads (FDR-003, decision
+// 10). The caller owns the evidence that the mapping is real; the server
+// only refuses rewrites that could not be a whole lineage's rename.
+type MigrateLocations struct {
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Prefix string `json:"prefix,omitempty"`
+}
+
+// MigrationResult reports what a location migration renamed.
+type MigrationResult struct {
+	Revisions int `json:"revisions"`
+	Files     int `json:"files"`
+}
+
 // ForkOmnisave creates a new selectable lineage from an existing snapshot.
 type ForkOmnisave struct {
 	RevisionID  string            `json:"revision_id"`

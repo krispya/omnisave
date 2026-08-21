@@ -73,6 +73,13 @@ type OmnisaveRepository interface {
 	// unless keepCurrent leaves the pointer where the check proved it — a
 	// branch committed only to preserve content (FDR-005, decision 4).
 	CommitRevision(ctx context.Context, expectedCurrentRevisionID *string, revision omnisave.Revision, keepCurrent bool) error
+	// MigrateRevisionPaths renames every file path of the save's own
+	// revisions from the `from` location to the `to` spelling — `from/rest`
+	// becomes `to/rest` — refusing saves that share revisions with a fork
+	// and lineages any of whose files speak another location
+	// (omnisave.MigrationRefused). It reports how many revisions and files
+	// were renamed.
+	MigrateRevisionPaths(ctx context.Context, omnisaveID, from, to string) (revisions, files int, err error)
 	GetRevision(ctx context.Context, omnisaveID, revisionID string) (*omnisave.Revision, error)
 	ListRevisions(ctx context.Context, omnisaveID string) ([]omnisave.Revision, error)
 	UpdateRevisionDisplayName(ctx context.Context, omnisaveID, revisionID, displayName string) error

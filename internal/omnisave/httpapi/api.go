@@ -79,6 +79,7 @@ func (api *API) guardedRoutes() *http.ServeMux {
 	mux.HandleFunc("PATCH /api/v1/omnisaves/{id}", api.update)
 	mux.HandleFunc("DELETE /api/v1/omnisaves/{id}", api.delete)
 	mux.HandleFunc("PUT /api/v1/omnisaves/{id}/current-revision", api.restore)
+	mux.HandleFunc("POST /api/v1/omnisaves/{id}/migrate-locations", api.migrateLocations)
 	mux.HandleFunc("POST /api/v1/omnisaves/{id}/revisions", api.addRevision)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions", api.listRevisions)
 	mux.HandleFunc("GET /api/v1/omnisaves/{id}/revisions/{revisionID}", api.getRevision)
@@ -203,6 +204,22 @@ func (a *API) restore(w http.ResponseWriter, r *http.Request) {
 	}
 	a.publishLibraryChanged()
 	writeJSON(w, http.StatusOK, save)
+}
+
+// migrateLocations renames one lineage's location vocabulary in place.
+func (a *API) migrateLocations(w http.ResponseWriter, r *http.Request) {
+	var input omnisave.MigrateLocations
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, err)
+		return
+	}
+	result, err := a.saves.MigrateLocations(r.Context(), r.PathValue("id"), input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	a.publishLibraryChanged()
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (a *API) addRevision(w http.ResponseWriter, r *http.Request) {
@@ -878,6 +895,15 @@ func writeError(w http.ResponseWriter, err error) {
 			"error":  "revision_in_use",
 			"status": http.StatusConflict,
 			"reason": inUse.Reason,
+		})
+		return
+	}
+	var refused *omnisave.MigrationRefused
+	if errors.As(err, &refused) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":  "migration_refused",
+			"status": http.StatusConflict,
+			"reason": refused.Reason,
 		})
 		return
 	}

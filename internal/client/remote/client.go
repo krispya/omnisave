@@ -261,6 +261,17 @@ func (c *Client) DeleteOmnisave(ctx context.Context, id string) error {
 }
 
 // ForkOmnisave creates a new lineage from one revision of an existing save.
+// MigrateLocations renames one lineage's location vocabulary on the server;
+// see omnisave.MigrateLocations for the contract.
+func (c *Client) MigrateLocations(ctx context.Context, id string, input omnisave.MigrateLocations) (*omnisave.MigrationResult, error) {
+	var result omnisave.MigrationResult
+	path := "/api/v1/omnisaves/" + url.PathEscape(id) + "/migrate-locations"
+	if err := c.postJSON(ctx, path, input, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (c *Client) ForkOmnisave(ctx context.Context, id string, input omnisave.ForkOmnisave) (*omnisave.ForkResult, error) {
 	var fork omnisave.ForkResult
 	path := "/api/v1/omnisaves/" + url.PathEscape(id) + "/forks"

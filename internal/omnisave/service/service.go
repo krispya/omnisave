@@ -188,6 +188,47 @@ func (s *service) Restore(ctx context.Context, saveID string, input omnisave.Res
 	return s.Get(ctx, saveID)
 }
 
+// MigrateLocations renames a lineage's location vocabulary. The service
+// validates only that the spellings are well-formed names; whether the
+// mapping is true is the caller's evidence to own, and whether the rename
+// is total is the repository's guard.
+func (s *service) MigrateLocations(ctx context.Context, saveID string, input omnisave.MigrateLocations) (*omnisave.MigrationResult, error) {
+	if !validLocationName(input.From) || !validLocationName(input.To) || input.From == input.To {
+		return nil, omnisave.ErrInvalid
+	}
+	to := input.To
+	if input.Prefix != "" {
+		if !validLocationPath(input.Prefix) {
+			return nil, omnisave.ErrInvalid
+		}
+		to += "/" + input.Prefix
+	}
+	revisions, files, err := s.repository.MigrateRevisionPaths(ctx, saveID, input.From, to)
+	if err != nil {
+		return nil, translateError(err)
+	}
+	return &omnisave.MigrationResult{Revisions: revisions, Files: files}, nil
+}
+
+// validLocationName admits one path segment: what a location identity is.
+func validLocationName(name string) bool {
+	return name != "" && name != "." && name != ".." &&
+		!strings.ContainsAny(name, "/\\") && len(name) <= maxRevisionPathLength
+}
+
+// validLocationPath admits slash-joined well-formed segments.
+func validLocationPath(path string) bool {
+	if len(path) > maxRevisionPathLength {
+		return false
+	}
+	for _, segment := range strings.Split(path, "/") {
+		if !validLocationName(segment) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *service) CommitRevision(ctx context.Context, saveID string, input omnisave.CreateRevision) (*omnisave.Revision, error) {
 	save, err := s.repository.GetOmnisave(ctx, saveID)
 	if err != nil {
