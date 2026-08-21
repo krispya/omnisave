@@ -362,6 +362,67 @@ func (r *MemoryRepository) updateRevisionDisplayName(
 	return storage.ErrNotFound
 }
 
+// MigrateRevisionPaths mirrors the SQL repository: a total in-place rename
+// of the save's own revisions' location vocabulary, refused for fork
+// families and lineages not speaking `from` alone.
+func (r *MemoryRepository) MigrateRevisionPaths(_ context.Context, saveID, from, to string) (int, int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	save, exists := r.saves[saveID]
+	if !exists {
+		return 0, 0, storage.ErrNotFound
+	}
+	if save.ForkedFrom != nil {
+		return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedForkFamily}
+	}
+	owned := map[string]bool{}
+	for _, revision := range r.revisions[saveID] {
+		owned[revision.ID] = true
+	}
+	for creator, revisions := range r.revisions {
+		if creator == saveID {
+			continue
+		}
+		for _, revision := range revisions {
+			if revision.ParentID != nil && owned[*revision.ParentID] {
+				return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedForkFamily}
+			}
+		}
+	}
+	for _, other := range r.saves {
+		if other.ID != saveID && other.ForkedFrom != nil && owned[other.ForkedFrom.RevisionID] {
+			return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedForkFamily}
+		}
+	}
+	prefix := from + "/"
+	speaking, total := 0, 0
+	for _, revision := range r.revisions[saveID] {
+		for _, file := range revision.Files {
+			total++
+			if strings.HasPrefix(file.Path, prefix) {
+				speaking++
+			}
+		}
+	}
+	if speaking == 0 {
+		return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedEmpty}
+	}
+	if speaking != total {
+		return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedMixed}
+	}
+	revisions := r.revisions[saveID]
+	for index := range revisions {
+		files := make([]omnisave.RevisionFile, len(revisions[index].Files))
+		copy(files, revisions[index].Files)
+		for at := range files {
+			files[at].Path = to + "/" + strings.TrimPrefix(files[at].Path, prefix)
+		}
+		revisions[index].Files = files
+	}
+	r.revisions[saveID] = revisions
+	return len(revisions), total, nil
+}
+
 // DeleteRevision mirrors the SQL repository: only a node the graph no longer
 // needs may go, and the refusal names the first reason that still holds.
 func (r *MemoryRepository) DeleteRevision(_ context.Context, saveID, revisionID string) error {

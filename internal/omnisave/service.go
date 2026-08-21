@@ -49,6 +49,26 @@ type RevisionInUse struct {
 func (e *RevisionInUse) Error() string { return ErrRevisionInUse.Error() + ": " + e.Reason }
 func (e *RevisionInUse) Unwrap() error { return ErrRevisionInUse }
 
+var ErrMigrationRefused = errors.New("omnisave: migration refused")
+
+// Reasons a location migration is refused: the lineage shares revisions
+// with a fork (a rename must cover the whole family or none of it), some
+// revision speaks a location other than the one being renamed, or nothing
+// speaks it at all.
+const (
+	MigrationRefusedForkFamily = "fork_family"
+	MigrationRefusedMixed      = "mixed_vocabulary"
+	MigrationRefusedEmpty      = "empty"
+)
+
+// MigrationRefused reports a location migration the server declined, and why.
+type MigrationRefused struct {
+	Reason string
+}
+
+func (e *MigrationRefused) Error() string { return ErrMigrationRefused.Error() + ": " + e.Reason }
+func (e *MigrationRefused) Unwrap() error { return ErrMigrationRefused }
+
 // Service is the application boundary for working with Omnisave records.
 type Service interface {
 	Create(ctx context.Context, input CreateOmnisave) (*Omnisave, error)
@@ -58,6 +78,9 @@ type Service interface {
 	Delete(ctx context.Context, id string) error
 	Fork(ctx context.Context, omnisaveID string, input ForkOmnisave) (*ForkResult, error)
 	Restore(ctx context.Context, omnisaveID string, input RestoreRevision) (*Omnisave, error)
+	// MigrateLocations renames a lineage's location vocabulary in place; see
+	// the input type for the contract.
+	MigrateLocations(ctx context.Context, omnisaveID string, input MigrateLocations) (*MigrationResult, error)
 
 	// RecordAchievements files unlocks a Device observed against the revision
 	// each one lands on. Recording is idempotent: an ID already recorded for

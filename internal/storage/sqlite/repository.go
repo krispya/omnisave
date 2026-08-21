@@ -676,6 +676,95 @@ func (r *Repository) updateRevisionDisplayName(
 	return r.projectStore(ctx)
 }
 
+// MigrateRevisionPaths renames a lineage's location vocabulary in place:
+// `from/rest` becomes `to/rest` on every file of every revision the save
+// itself owns. Identities, artifacts, ancestry, and achievements are
+// untouched — only path labels change — which is what keeps the operation
+// reversible and every reference into the lineage valid.
+//
+// Refused whenever the rewrite could not be a whole lineage's rename: a
+// save that shares revisions with a fork in either direction would leave a
+// mixed-vocabulary history on one side, and a lineage with files outside
+// `from` is either already migrated (empty) or was never single-voiced
+// (mixed). The caller owns the evidence that `to` is the right spelling;
+// these guards only ensure the rename is total or absent.
+func (r *Repository) MigrateRevisionPaths(ctx context.Context, saveID, from, to string) (int, int, error) {
+	r.mutate.Lock()
+	defer r.mutate.Unlock()
+	if err := r.requireStoreReady(); err != nil {
+		return 0, 0, err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback()
+
+	var exists bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM omnisaves WHERE id = ?)`, saveID,
+	).Scan(&exists); err != nil {
+		return 0, 0, err
+	}
+	if !exists {
+		return 0, 0, storage.ErrNotFound
+	}
+	var forkFamily bool
+	if err := tx.QueryRowContext(ctx, `SELECT
+		EXISTS(SELECT 1 FROM omnisaves WHERE id = ? AND forked_from_revision_id IS NOT NULL)
+		OR EXISTS(SELECT 1 FROM omnisaves WHERE id != ? AND forked_from_revision_id IN
+			(SELECT id FROM revisions WHERE omnisave_id = ?))
+		OR EXISTS(SELECT 1 FROM revisions child JOIN revisions parent ON child.parent_id = parent.id
+			WHERE parent.omnisave_id = ? AND child.omnisave_id != ?)`,
+		saveID, saveID, saveID, saveID, saveID,
+	).Scan(&forkFamily); err != nil {
+		return 0, 0, err
+	}
+	if forkFamily {
+		return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedForkFamily}
+	}
+	prefix := from + "/"
+	var speaking, total int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FILTER (WHERE substr(path, 1, ?) = ?), COUNT(*)
+		FROM revision_files WHERE revision_id IN (SELECT id FROM revisions WHERE omnisave_id = ?)`,
+		len(prefix), prefix, saveID,
+	).Scan(&speaking, &total); err != nil {
+		return 0, 0, err
+	}
+	if speaking == 0 {
+		return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedEmpty}
+	}
+	if speaking != total {
+		return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedMixed}
+	}
+	result, err := tx.ExecContext(ctx,
+		`UPDATE revision_files SET path = ? || substr(path, ?)
+		WHERE revision_id IN (SELECT id FROM revisions WHERE omnisave_id = ?)`,
+		to+"/", len(prefix)+1, saveID,
+	)
+	if err != nil {
+		return 0, 0, err
+	}
+	files, err := result.RowsAffected()
+	if err != nil {
+		return 0, 0, err
+	}
+	var revisions int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM revisions WHERE omnisave_id = ?`, saveID,
+	).Scan(&revisions); err != nil {
+		return 0, 0, err
+	}
+	if err := r.enqueueOmnisaveProjection(ctx, tx, saveID); err != nil {
+		return 0, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	return revisions, int(files), r.projectStore(ctx)
+}
+
 // RecordAchievements files unlocks against a save. An achievement already
 // recorded keeps the placement it was first given, so a Device repeating a
 // report — after a crash, or from a second machine — never moves a mark.

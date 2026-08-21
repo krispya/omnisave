@@ -197,6 +197,20 @@ func (r *TrackReport) Unlocked(title string, names []string) {
 	}
 }
 
+// Migrated records a lineage renamed out of the retired Steam Cloud mirror
+// vocabulary into the game's own save location, which is what makes its
+// history restorable again (FDR-005).
+func (r *TrackReport) Migrated(title, omnisaveName string) {
+	r.event(title, omnisaveName+" migrated to the game's own save location")
+}
+
+// MigrationHeld records a mirror-vocabulary lineage this pass could not
+// migrate, and why — its history cannot be restored until a device proves
+// the mapping, which must not look like a lineage in good standing.
+func (r *TrackReport) MigrationHeld(title, omnisaveName, cause string) {
+	r.event(title, omnisaveName+" not migrated — "+cause)
+}
+
 // StoreRegistered records placed files registered with Steam Cloud, which
 // is what lets a game that trusts the store's file registry keep a restore
 // (FDR-005). Only creations and refreshes are worth a sentence; a placement

@@ -1008,12 +1008,61 @@ func reconcileSaves(
 		return histories[omnisaveID], nil
 	}
 
+	// Lineages minted under the retired mirror vocabulary migrate to the
+	// game's own the moment a device can prove the mapping (FDR-005). The
+	// attempt rides on histories the pass was loading anyway — a settled
+	// save keeps costing no history request — so migration happens exactly
+	// when a lineage is being worked: matched, adopted, verified, or
+	// restored. A lineage that stays unproven is reported, not skipped
+	// silently, since its history cannot be restored until it migrates and
+	// only a device holding the native save can supply the evidence.
+	migratingLoader := func(save target.Save, title string) func(string) ([]omnisave.Revision, error) {
+		var manifest []omnisave.RevisionFile
+		var manifestErr error
+		manifestReady := false
+		attempted := make(map[string]bool)
+		return func(omnisaveID string) ([]omnisave.Revision, error) {
+			history, err := loadHistory(omnisaveID)
+			if err != nil || !binding.SpeaksMirror(history) || attempted[omnisaveID] {
+				return history, err
+			}
+			attempted[omnisaveID] = true
+			name := omnisaveDisplayName(savesByID[omnisaveID])
+			if !manifestReady {
+				manifestReady = true
+				manifest, manifestErr = binding.ManifestContext(ctx, save)
+			}
+			if manifestErr != nil {
+				report.MigrationHeld(title, name, tui.Cause(manifestErr))
+				return history, nil
+			}
+			proof, proven := binding.ProveLocationMigration(manifest, history)
+			if !proven {
+				report.MigrationHeld(title, name,
+					"this device's save gives no evidence for the mapping")
+				return history, nil
+			}
+			if _, err := server.MigrateLocations(ctx, omnisaveID, omnisave.MigrateLocations{
+				From: proof.From, To: proof.To, Prefix: proof.Prefix,
+			}); err != nil {
+				report.MigrationHeld(title, name, tui.Cause(err))
+				return history, nil
+			}
+			// The rewritten history is what the rest of this pass must see.
+			delete(histories, omnisaveID)
+			delete(historyLoaded, omnisaveID)
+			report.Migrated(title, name)
+			return loadHistory(omnisaveID)
+		}
+	}
+
 	for _, candidate := range candidates {
 		if _, tracked := state.Games[candidate.local.GameID]; !tracked {
 			// An earlier candidate's server-side deletion untracked this
 			// game mid-pass; its remaining saves have nothing to bind to.
 			continue
 		}
+		loadHistory := migratingLoader(candidate.save, candidate.local.GameTitle)
 		if bound, isBound := state.BindingFor(candidate.local); isBound {
 			if remoteSave, exists := savesByID[bound.OmnisaveID]; exists {
 				finish := finishPlacement(scanner, candidate.discovered, candidate.game,
