@@ -1,4 +1,8 @@
-VERSION ?= 0.1.0
+# Local artifacts keep the nearest release tag's semantic version while the
+# build number advances on each subsequent commit. Release builds still pass
+# VERSION explicitly from the tag that triggered the workflow.
+VERSION_TAG := $(shell git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null)
+VERSION ?= $(if $(VERSION_TAG),$(patsubst v%,%,$(VERSION_TAG)),0.1.0)
 # DSM requires a numeric, increasing build number. Tying it to repository
 # history also gives client and SPK builds the same identity for a commit.
 BUILD ?= $(shell git rev-list --count HEAD)
