@@ -146,8 +146,8 @@ func verboseLines(game client.GameScan) []string {
 	switch {
 	case !game.Profile.Consulted:
 		sentence("Save-location rules were not consulted")
-	case errors.Is(game.Profile.Err, saveprofile.ErrNoSaveFolder):
-		sentence("Steam keeps this game's cloud saves through its API, so it has no save folder here")
+	case errors.Is(game.Profile.Err, saveprofile.ErrUnplaceable):
+		sentence("Steam stores this game's cloud saves through its API, which leaves its save folder unknown")
 	case !game.Profile.Found:
 		sentence("No save-location rules for " + storeIdentity(game.Game))
 	default:

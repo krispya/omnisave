@@ -52,12 +52,14 @@ func NewDefault() *Provider {
 }
 
 // ErrCloudAPI reports a game that reaches Steam Cloud through the API rather
-// than by having folders replicated. Steam holds no folder for such a game,
-// so its save location is not knowable from here — which is a different
-// answer from "this game has no cloud saves at all", and the difference is
-// what a Device needs to explain why it protects nothing.
+// than by having folders replicated. Steam's configuration then names no
+// folder for this source to find — which is a different answer from never
+// having heard of the game, and worth saying. It claims nothing beyond
+// this source: an API game may still write an ordinary local folder that
+// better rules can name, so the game's save location stays unknown rather
+// than declared absent.
 var ErrCloudAPI = fmt.Errorf(
-	"%w: the game stores its Steam Cloud saves through the API", saveprofile.ErrNoSaveFolder)
+	"%w: the game stores its Steam Cloud saves through the API", saveprofile.ErrUnplaceable)
 
 // Find reports the folders Steam replicates for one Steam game.
 func (p *Provider) Find(_ context.Context, identity target.GameIdentity) (*saveprofile.Profile, error) {

@@ -40,9 +40,11 @@ path themselves and file a report that says which of those actually happened.
 - The report names the source whose rules answered, so community knowledge is
   distinguishable from a store's own configuration
   ([ADR-018](../adr/ADR-018-embedded-save-profiles.md)).
-- A game a source knows to keep no save folder here — one whose cloud saves
-  live only behind a store's API — is reported as that, not as a game no rule
-  covers: only one of the two might be fixed by better rules
+- A game a source can explain but not place — Steam seeing its cloud saves
+  stored through the API, which its folder configuration cannot describe — is
+  reported with that explanation, not as a game no rule covers. The save
+  folder stays unknown rather than declared absent: such a game may keep an
+  ordinary local folder that better rules can still place
   ([FDR-003](FDR-003-automatic-save-binding.md), decision 10).
 - A scan configured with no save profile provider says the rules were not
   consulted rather than implying they were and found nothing.

@@ -524,15 +524,22 @@ Stardew Valley:
 }
 
 // mirrorSource is a deliberately faulty source: it names a location inside
-// Steam Cloud's mirror, which no source is allowed to do.
-type mirrorSource struct{}
+// Steam Cloud's mirror, which no source is allowed to do. With native set,
+// it also names an honest location beside the faulty one.
+type mirrorSource struct{ native string }
 
-func (mirrorSource) Find(context.Context, target.GameIdentity) (*saveprofile.Profile, error) {
+func (s mirrorSource) Find(context.Context, target.GameIdentity) (*saveprofile.Profile, error) {
+	rules := []saveprofile.Rule{{
+		ID: "mirror", Path: "<root>/userdata/<storeUserId>/413150/remote/*", Kind: "save",
+	}}
+	if s.native != "" {
+		rules = append(rules, saveprofile.Rule{
+			ID: "native", Path: s.native + "/*", Kind: "save",
+		})
+	}
 	return &saveprofile.Profile{
 		Provider: "faulty", ProviderID: "413150", Title: "Stardew Valley",
-		Rules: []saveprofile.Rule{{
-			ID: "mirror", Path: "<root>/userdata/<storeUserId>/413150/remote/*", Kind: "save",
-		}},
+		Rules: rules,
 	}, nil
 }
 
@@ -547,8 +554,10 @@ func TestScanRefusesAMirrorLocationHoweverItArrives(t *testing.T) {
 	if err := os.MkdirAll(remoteDirectory, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(remoteDirectory, "progress.sav"), []byte("mirror"), 0600); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"progress.sav", "backup.sav"} {
+		if err := os.WriteFile(filepath.Join(remoteDirectory, name), []byte("mirror"), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	scanner := client.NewScanner(mirrorSource{}, steamtarget.New(steamlocator.NewInstaller(steamRoot)))
@@ -563,7 +572,59 @@ func TestScanRefusesAMirrorLocationHoweverItArrives(t *testing.T) {
 	if len(game.Destinations) != 0 {
 		t.Fatalf("expected the mirror location to be no destination either, got %+v", game.Destinations)
 	}
-	if game.Profile.RefusedMirror == 0 {
-		t.Fatalf("expected the refusal to be recorded, got %+v", game.Profile)
+	if game.Profile.RefusedMirror != 1 {
+		t.Fatalf("expected one refused location however many files it held, got %+v", game.Profile)
+	}
+}
+
+// A refused location's identity goes with it. Left on the surviving save or
+// destination as an alias, the mirror's identity would keep translating
+// mirror-shaped revisions into the native folder — a layout they do not
+// speak (FDR-003, decision 10).
+func TestARefusedMirrorLocationIsNoAliasEither(t *testing.T) {
+	steamRoot := t.TempDir()
+	writeSteamApp(t, steamRoot, "413150", "Stardew Valley", "Stardew Valley")
+	remoteDirectory := filepath.Join(steamRoot, "userdata", "76561198000000000", "413150", "remote")
+	if err := os.MkdirAll(remoteDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteDirectory, "progress.sav"), []byte("mirror"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	nativeDirectory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(nativeDirectory, "save.dat"), []byte("native"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := client.NewScanner(
+		mirrorSource{native: nativeDirectory},
+		steamtarget.New(steamlocator.NewInstaller(steamRoot)))
+	scans, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	game := scans[0].Games[0]
+	if len(game.Saves) != 1 || len(game.Saves[0].Files) != 1 {
+		t.Fatalf("expected the native location to survive alone, got %+v", game.Saves)
+	}
+	for _, save := range game.Saves {
+		for _, alias := range save.LocationAliases {
+			if alias == "mirror" {
+				t.Fatalf("the refused mirror identity survived as a save alias: %v", save.LocationAliases)
+			}
+		}
+	}
+	if len(game.Destinations) != 1 {
+		t.Fatalf("expected the native destination to survive alone, got %+v", game.Destinations)
+	}
+	for _, destination := range game.Destinations {
+		for _, alias := range destination.LocationAliases {
+			if alias == "mirror" {
+				t.Fatalf("the refused mirror identity survived as a destination alias: %v", destination.LocationAliases)
+			}
+		}
+	}
+	if game.Profile.RefusedMirror != 1 {
+		t.Fatalf("expected one refused location, got %+v", game.Profile)
 	}
 }

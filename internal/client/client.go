@@ -45,12 +45,13 @@ type ProfileTrace struct {
 	Title      string
 	// Rules is what each of the entry's rules did, in entry order.
 	Rules []saveprofile.RuleOutcome
-	// RefusedMirror counts the locations a source offered inside a store's
-	// cloud mirror, which are refused however they were arrived at.
+	// RefusedMirror counts the distinct locations a source offered inside a
+	// store's cloud mirror, which are refused however they were arrived at —
+	// each location once, however many files it held.
 	RefusedMirror int
 	// Err is what a source said other than a plain miss: a failure, or its
-	// own explanation for having no answer — Steam reporting that a game
-	// keeps its cloud saves through the API and so has no folder anywhere.
+	// own explanation for having no answer — Steam seeing a game store its
+	// cloud saves through the API, which its configuration cannot place.
 	Err error
 }
 
@@ -193,8 +194,8 @@ func (s *Scanner) locateSaves(
 		return nil, nil, trace, err
 	}
 	if !fallbackTrace.Found {
-		// A fallback that cannot answer may still know why — that Steam
-		// holds no folder for this game at all, say — which is the only
+		// A fallback that cannot answer may still know why — that Steam's
+		// own configuration cannot place this game, say — which is the only
 		// explanation this Device has for protecting nothing.
 		if fallbackTrace.Err != nil && trace.Err == nil {
 			trace.Err = fallbackTrace.Err
@@ -218,9 +219,11 @@ func (s *Scanner) applyProfile(
 	switch {
 	case errors.Is(err, saveprofile.ErrNotFound):
 		return nil, nil, nil
-	case errors.Is(err, saveprofile.ErrNoSaveFolder):
-		// Not a failure: the source knows the game and knows it keeps no
-		// save folder here, which is an answer a report needs to give.
+	case errors.Is(err, saveprofile.ErrUnplaceable):
+		// Not a failure: the source knows the game and can say why it has
+		// no answer, which a report needs where silence would imply the
+		// game is simply unknown. It closes nothing — the location stays
+		// unknown for another source to place.
 		trace.Err = err
 		return nil, nil, nil
 	case err != nil:
@@ -244,26 +247,56 @@ func (s *Scanner) applyProfile(
 	// restoring there writes where the game may never read (FDR-003,
 	// decision 10). Sources are meant to observe this themselves; enforcing
 	// it here is what makes it a rule rather than a convention, and a
-	// refusal is counted so a report can say it happened.
-	saves, refusedSaves := refuseMirrorPaths(saves, game)
+	// refusal is counted so a report can say it happened. A refused
+	// location's identity goes with it: left as an alias it would keep
+	// answering for the mirror, letting a mirror-shaped revision translate
+	// into a folder whose layout it does not speak.
+	saves, refused := refuseMirrorPaths(saves, game)
 	destinations, refusedDestinations := refuseMirrorDestinations(destinations, game)
-	trace.RefusedMirror += refusedSaves + refusedDestinations
+	for id := range refusedDestinations {
+		refused[id] = true
+	}
+	trace.RefusedMirror += len(refused)
+	for index := range saves {
+		saves[index].LocationAliases = withoutAliases(saves[index].LocationAliases, refused)
+	}
+	for index := range destinations {
+		destinations[index].LocationAliases = withoutAliases(destinations[index].LocationAliases, refused)
+	}
 	return saves, destinations, nil
 }
 
+// withoutAliases drops the refused location identities from an alias list.
+func withoutAliases(aliases []string, refused map[string]bool) []string {
+	if len(refused) == 0 {
+		return aliases
+	}
+	kept := make([]string, 0, len(aliases))
+	for _, alias := range aliases {
+		if !refused[alias] {
+			kept = append(kept, alias)
+		}
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
+}
+
 // refuseMirrorPaths drops every file that lies inside a store's cloud
-// mirror, and any save left holding nothing. Where a save may be placed does
-// not wait for one to exist, so the same refusal covers destinations: a
-// Device that has never played a game is offered the game's own folder and
-// never the mirror (FDR-004).
-func refuseMirrorPaths(saves []target.Save, game target.InstalledGame) ([]target.Save, int) {
-	refused := 0
+// mirror, and any save left holding nothing, reporting the identities of
+// the locations it refused. Where a save may be placed does not wait for
+// one to exist, so the same refusal covers destinations: a Device that has
+// never played a game is offered the game's own folder and never the
+// mirror (FDR-004).
+func refuseMirrorPaths(saves []target.Save, game target.InstalledGame) ([]target.Save, map[string]bool) {
+	refused := make(map[string]bool)
 	kept := make([]target.Save, 0, len(saves))
 	for _, save := range saves {
 		files := make([]target.File, 0, len(save.Files))
 		for _, file := range save.Files {
 			if underCloudMirror(file.Path, game.Environment.StoreRoot) {
-				refused++
+				refused[file.LocationID] = true
 				continue
 			}
 			files = append(files, file)
@@ -280,14 +313,14 @@ func refuseMirrorPaths(saves []target.Save, game target.InstalledGame) ([]target
 func refuseMirrorDestinations(
 	destinations []target.SaveDestination,
 	game target.InstalledGame,
-) ([]target.SaveDestination, int) {
-	refused := 0
+) ([]target.SaveDestination, map[string]bool) {
+	refused := make(map[string]bool)
 	kept := make([]target.SaveDestination, 0, len(destinations))
 	for _, destination := range destinations {
 		locations := make([]target.SaveLocation, 0, len(destination.Locations))
 		for _, location := range destination.Locations {
 			if underCloudMirror(location.Path, game.Environment.StoreRoot) {
-				refused++
+				refused[location.ID] = true
 				continue
 			}
 			locations = append(locations, location)

@@ -10,11 +10,13 @@ import (
 
 var ErrNotFound = errors.New("save profile: not found")
 
-// ErrNoSaveFolder is a source saying it knows the game and knows it keeps no
-// save folder on this Device — a Steam game whose cloud saves live only
-// behind the store's API, say. It is not a miss: a miss leaves open that
-// some other source knows where the saves are, and this closes it.
-var ErrNoSaveFolder = errors.New("save profile: game keeps no save folder on this device")
+// ErrUnplaceable is a source explaining why it has no answer for a game it
+// does know: Steam seeing a game store its cloud saves through the API,
+// which its folder configuration cannot describe. It closes nothing — the
+// game may well keep an ordinary local folder some other source can still
+// name — but the reason is worth reporting where a plain miss would say
+// only silence.
+var ErrUnplaceable = errors.New("save profile: source cannot place the game's saves")
 
 const (
 	OSWindows = "windows"
