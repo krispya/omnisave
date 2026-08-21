@@ -1,6 +1,6 @@
 # FDR-002: Game Lifecycle
 
-**Status:** Active **Last reviewed:** 2026-08-18
+**Status:** Active **Last reviewed:** 2026-08-20
 
 ## Overview
 
@@ -19,6 +19,7 @@ How a game enters the Library, what the server remembers about where it came fro
 - Deleting all of a game's Omnisaves leaves the game and its provenance in the Library.
 - Deleting the game removes everything — its saves, revision history, unshared artifacts, and provenance — and records immutable game, save, and revision deletion markers so restoring an older portable copy cannot undo it. This is the lifecycle's only act of forgetting.
 - Game views include provenance and refresh when games, saves, revisions, or provenance change.
+- Ordering the Library by latest activity uses the newest revision received for each game, regardless of which historical revision is currently selected.
 - Device liveness (last seen) updates on explicit acts — registration, tracking, sync — not on every request.
 
 ## Design Decisions

@@ -37,6 +37,7 @@ function save(overrides: Partial<Omnisave>): Omnisave {
     current_revision_id: 'rev-1',
     created_at: '2026-01-01T00:00:00Z',
     current_revision_created_at: '2026-01-01T00:00:00Z',
+    latest_revision_created_at: '2026-01-01T00:00:00Z',
     ...overrides,
   };
 }
@@ -47,14 +48,18 @@ describe('sorting the library grid', () => {
     expect(sortLibrary(games, 'title')).toBe(games);
   });
 
-  it('puts the game with the newest upload first', () => {
+  it('puts the game with the newest save first, even after restoring an older one', () => {
     const stale = game('Baldur', {
-      saves: [save({ current_revision_created_at: '2026-03-01T00:00:00Z' })],
+      saves: [save({ latest_revision_created_at: '2026-03-01T00:00:00Z' })],
     });
     const fresh = game('Hades', {
       saves: [
-        save({ current_revision_created_at: '2026-02-01T00:00:00Z' }),
-        save({ id: 'save-2', current_revision_created_at: '2026-08-01T00:00:00Z' }),
+        save({ latest_revision_created_at: '2026-02-01T00:00:00Z' }),
+        save({
+          id: 'save-2',
+          current_revision_created_at: '2026-01-01T00:00:00Z',
+          latest_revision_created_at: '2026-08-01T00:00:00Z',
+        }),
       ],
     });
 
@@ -76,7 +81,7 @@ describe('sorting the library grid', () => {
       ],
     });
     const plain = game('Hades', {
-      saves: [save({ current_revision_created_at: '2026-05-01T00:00:00Z' })],
+      saves: [save({ latest_revision_created_at: '2026-05-01T00:00:00Z' })],
     });
 
     expect(sortLibrary([forked, plain], 'updated').map((entry) => entry.id)).toEqual([
@@ -89,7 +94,7 @@ describe('sorting the library grid', () => {
     const games = [
       game('Baldur'),
       game('Celeste', {
-        saves: [save({ current_revision_created_at: '2026-05-01T00:00:00Z' })],
+        saves: [save({ latest_revision_created_at: '2026-05-01T00:00:00Z' })],
       }),
       game('Hades'),
     ];

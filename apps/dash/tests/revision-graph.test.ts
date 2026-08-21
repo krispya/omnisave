@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Omnisave, Revision } from '../src/lib/omnisave-api.js';
-import { buildRevisionGraph, type RevisionGraph } from '../src/features/omnisave/build-revision-graph.js';
+import {
+  buildRevisionGraph,
+  type RevisionGraph,
+} from '../src/features/omnisave/build-revision-graph.js';
 
 function save(id: string, currentRevisionID: string, createdAt: string): Omnisave {
   return {
@@ -9,6 +12,7 @@ function save(id: string, currentRevisionID: string, createdAt: string): Omnisav
     display_name: id,
     current_revision_id: currentRevisionID,
     current_revision_created_at: createdAt,
+    latest_revision_created_at: createdAt,
     created_at: createdAt,
   };
 }
