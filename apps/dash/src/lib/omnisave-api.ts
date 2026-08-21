@@ -10,6 +10,8 @@ export type Omnisave = {
   created_at: string;
   /** Original creation time of the snapshot selected as current. */
   current_revision_created_at: string;
+  /** Original creation time of the newest snapshot, even when an older snapshot is selected as current. */
+  latest_revision_created_at: string;
   /** When the current snapshot's content was written by the game. Absent for snapshots that predate devices reporting it. */
   current_revision_saved_at?: string;
   metadata?: Record<string, string>;
