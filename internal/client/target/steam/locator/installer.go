@@ -41,6 +41,13 @@ func (l installer) Locate(ctx context.Context) ([]Candidate, error) {
 	return candidates, nil
 }
 
+// DefaultRoots are the conventional Steam installation directories for this
+// host. Callers that read Steam's own files without discovering targets —
+// its cloud configuration, say — need the same list this locator walks.
+func DefaultRoots() ([]string, error) {
+	return defaultRoots()
+}
+
 func defaultRoots() ([]string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

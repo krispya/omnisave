@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,7 +52,7 @@ func (a *Adapter) UnlockedAchievements(
 		return nil, err
 	}
 	stats := filepath.Join(discovered.Root, filepath.FromSlash(statsDirectory))
-	account, found, err := statsAccount(stats, appID, save.Metadata["account_id"])
+	account, found, err := statsAccount(stats, appID, save)
 	if err != nil || !found {
 		return nil, err
 	}
@@ -124,13 +125,16 @@ func unlockTimes(cached *keyvalues.Value) []unlockTime {
 	return unlocks
 }
 
-// statsAccount resolves whose cache to read. A Steam Cloud save names its
-// account outright; a save discovered another way (a save profile pointing at
-// a path outside Cloud) does not, and is answered only when one account on
-// this machine leaves no doubt.
-func statsAccount(statsDirectory, appID, saveAccount string) (string, bool, error) {
-	if saveAccount != "" {
-		return saveAccount, true, nil
+// statsAccount decides which Steam account's unlock cache describes this
+// save. One account on the Device answers it; several are told apart by the
+// save's own paths, which name the account whenever the game keeps its saves
+// per account — under either the account id Steam's stats files use or the
+// 64-bit id its save folders usually carry. An account no path names leaves
+// the question open, and an open question reports no achievements rather
+// than another account's.
+func statsAccount(statsDirectory, appID string, save target.Save) (string, bool, error) {
+	if named := save.Metadata["account_id"]; named != "" {
+		return named, true, nil
 	}
 	entries, err := os.ReadDir(statsDirectory)
 	if os.IsNotExist(err) {
@@ -148,10 +152,47 @@ func statsAccount(statsDirectory, appID, saveAccount string) (string, bool, erro
 		}
 		accounts = append(accounts, strings.TrimSuffix(strings.TrimPrefix(name, "UserGameStats_"), suffix))
 	}
-	if len(accounts) != 1 {
-		return "", false, nil
+	if len(accounts) == 1 {
+		return accounts[0], true, nil
 	}
-	return accounts[0], true, nil
+	return accountNamedBySave(accounts, save)
+}
+
+// steamID64Base is what Steam adds to an account id to make the 64-bit id
+// that names a user's folders.
+const steamID64Base = 76561197960265728
+
+// accountNamedBySave picks the one account a save's paths name.
+func accountNamedBySave(accounts []string, save target.Save) (string, bool, error) {
+	var named string
+	for _, account := range accounts {
+		id, err := strconv.ParseUint(account, 10, 64)
+		if err != nil {
+			continue
+		}
+		spellings := []string{account, strconv.FormatUint(id+steamID64Base, 10)}
+		if !anyPathNames(save, spellings) {
+			continue
+		}
+		if named != "" {
+			return "", false, nil
+		}
+		named = account
+	}
+	return named, named != "", nil
+}
+
+func anyPathNames(save target.Save, spellings []string) bool {
+	for _, file := range save.Files {
+		for _, segment := range strings.Split(filepath.ToSlash(file.Path), "/") {
+			for _, spelling := range spellings {
+				if segment == spelling {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // readCache parses one Steam cache. An absent file is not an error: caches

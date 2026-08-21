@@ -19,7 +19,7 @@ path themselves and file a report that says which of those actually happened.
 - Each game reports the identity discovery matched it by, where it is installed,
   and — inside a Proton prefix — the prefix its user-relative rules expanded
   into.
-- A game the save profile provider does not know says so and names the store
+- A game no source of save-location rules knows says so and names the store
   identity it was looked up by. This is distinct from a game whose rules were
   followed and found nothing.
 - Each of a game's save-location rules reports one outcome: files found, a
@@ -37,8 +37,12 @@ path themselves and file a report that says which of those actually happened.
   excluded under several constraints is reported once with all of them.
 - Files the rules found are listed under the rule that found them, capped so one
   large save does not bury the games below it.
-- Rules whose files were set aside because an adapter's own save already holds
-  the same save family report what they found and that they were set aside
+- The report names the source whose rules answered, so community knowledge is
+  distinguishable from a store's own configuration
+  ([ADR-018](../adr/ADR-018-embedded-save-profiles.md)).
+- A game a source knows to keep no save folder here — one whose cloud saves
+  live only behind a store's API — is reported as that, not as a game no rule
+  covers: only one of the two might be fixed by better rules
   ([FDR-003](FDR-003-automatic-save-binding.md), decision 10).
 - A scan configured with no save profile provider says the rules were not
   consulted rather than implying they were and found nothing.
@@ -105,8 +109,8 @@ their question.
 
 - **FDRs:** [FDR-002](FDR-002-game-lifecycle.md) — scanning detects games
   offline and without configuration;
-  [FDR-003](FDR-003-automatic-save-binding.md) — one representation per game,
-  which is what a set-aside profile reports.
+  [FDR-003](FDR-003-automatic-save-binding.md) — a store's cloud mirror is a
+  transport and never a save, which is why a game may report none.
 - **ADRs:** [ADR-018](../adr/ADR-018-embedded-save-profiles.md) — the embedded
   community manifest whose rules the report explains, including the patch
   directory a wrong path eventually becomes an entry in.

@@ -77,9 +77,9 @@ Known Game:
 	}
 }
 
-// Rules that found files and were then set aside for the adapter's own save
-// must not read as rules that found nothing (FDR-003, decision 10).
-func TestScanRecordsRulesSetAsideForAnAdapterSave(t *testing.T) {
+// Rules that located a game's own save report what they found, and the
+// mirror beside it is not part of the answer (FDR-003, decision 10).
+func TestScanRecordsTheRulesThatLocatedTheGamesOwnSave(t *testing.T) {
 	steamRoot := t.TempDir()
 	installRoot := writeSteamApp(t, steamRoot, "413150", "Stardew Valley", "Stardew Valley")
 	remoteDirectory := filepath.Join(steamRoot, "userdata", "76561198000000000", "413150", "remote")
@@ -118,11 +118,14 @@ Stardew Valley:
 	}
 
 	trace := scans[0].Games[0].Profile
-	if !trace.Suppressed {
-		t.Fatalf("expected the trace to record the profile standing aside, got %+v", trace)
+	if !trace.Found || trace.Provider != "ludusavi" {
+		t.Fatalf("expected the trace to name the source that answered, got %+v", trace)
 	}
 	if len(trace.Rules) != 1 || trace.Rules[0].Outcome != saveprofile.OutcomeFound || trace.Rules[0].Files != 1 {
-		t.Fatalf("expected the set-aside rule to report what it found, got %+v", trace.Rules)
+		t.Fatalf("expected the rule to report what it found, got %+v", trace.Rules)
+	}
+	if saves := scans[0].Games[0].Saves; len(saves) != 1 || saves[0].Kind != "local" {
+		t.Fatalf("expected the game's own save alone, got %+v", saves)
 	}
 }
 

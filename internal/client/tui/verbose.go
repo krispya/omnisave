@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -137,13 +138,20 @@ func verboseLines(game client.GameScan) []string {
 		}
 	}
 
+	if refused := game.Profile.RefusedMirror; refused > 0 {
+		sentence(fmt.Sprintf(
+			"%s refused inside Steam's own cloud area, which is a transport and never a save",
+			count(refused, "location")))
+	}
 	switch {
 	case !game.Profile.Consulted:
 		sentence("Save-location rules were not consulted")
+	case errors.Is(game.Profile.Err, saveprofile.ErrNoSaveFolder):
+		sentence("Steam keeps this game's cloud saves through its API, so it has no save folder here")
 	case !game.Profile.Found:
-		sentence("No ludusavi entry for " + storeIdentity(game.Game))
+		sentence("No save-location rules for " + storeIdentity(game.Game))
 	default:
-		sentence("Rules from ludusavi " + quoted(game.Profile.Title))
+		sentence("Rules from " + game.Profile.Provider + " " + quoted(game.Profile.Title))
 		for _, group := range groupOutcomes(game.Profile.Rules) {
 			sentence(group.headline)
 			for _, entry := range group.entries {
@@ -152,9 +160,6 @@ func verboseLines(game client.GameScan) []string {
 					lines = append(lines, fileIndent+mutedStyle.Render(file))
 				}
 			}
-		}
-		if game.Profile.Suppressed {
-			sentence("Rules set aside, the adapter save already holds these files")
 		}
 	}
 

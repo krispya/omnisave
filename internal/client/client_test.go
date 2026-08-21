@@ -10,8 +10,10 @@ import (
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client"
+	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile"
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/ludusavi"
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/ludusavi/embedded"
+	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/retroarch"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/retroarch/locator"
 	steamtarget "github.com/krisbaumgartner/omnisave/internal/client/target/steam"
@@ -157,7 +159,10 @@ func TestSteamAndInstallerLocatorsDeduplicateOneInstallation(t *testing.T) {
 	}
 }
 
-func TestManualScanFindsOneMultiFileSteamCloudSave(t *testing.T) {
+// The Steam adapter identifies installed games; where their saves live is a
+// question for save-location rules, and the mirror it can see is not an
+// answer to it (FDR-003, decision 10).
+func TestManualScanIdentifiesSteamGamesWithoutClaimingTheirMirror(t *testing.T) {
 	steamRoot := t.TempDir()
 	writeSteamApp(t, steamRoot, "413150", "Stardew Valley", "Stardew Valley")
 	remoteDirectory := filepath.Join(steamRoot, "userdata", "76561198000000000", "413150", "remote")
@@ -176,8 +181,8 @@ func TestManualScanFindsOneMultiFileSteamCloudSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(scans) != 1 || len(scans[0].Games) != 1 || len(scans[0].Games[0].Saves) != 1 {
-		t.Fatalf("expected one Steam target with one app save set, got %+v", scans)
+	if len(scans) != 1 || len(scans[0].Games) != 1 {
+		t.Fatalf("expected one Steam target with one game, got %+v", scans)
 	}
 
 	game := scans[0].Games[0].Game
@@ -188,24 +193,11 @@ func TestManualScanFindsOneMultiFileSteamCloudSave(t *testing.T) {
 	if game.Identity.Platform != "PC" {
 		t.Fatalf("expected the store-level PC platform, got %q", game.Identity.Platform)
 	}
-	save := scans[0].Games[0].Saves[0]
-	if save.Kind != "cloud" || save.GameID != game.ID {
-		t.Fatalf("unexpected discovered save: %+v", save)
+	if saves := scans[0].Games[0].Saves; len(saves) != 0 {
+		t.Fatalf("expected the mirror to be claimed as no save, got %+v", saves)
 	}
-	if save.Metadata["account_id"] != "76561198000000000" {
-		t.Fatalf("expected Steam account identity, got %+v", save.Metadata)
-	}
-	if len(save.Files) != 2 || save.Files[0].RelativePath != "SaveGameInfo" || save.Files[1].RelativePath != filepath.Join("profile", "player.dat") {
-		t.Fatalf("expected the complete Cloud file set, got %+v", save.Files)
-	}
-	destinations := scans[0].Games[0].Destinations
-	canonicalRemoteDirectory, err := filepath.EvalSymlinks(remoteDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(destinations) != 1 || destinations[0].ID != save.ID || len(destinations[0].Locations) != 1 ||
-		destinations[0].Locations[0].Path != canonicalRemoteDirectory {
-		t.Fatalf("expected the prospective Steam Cloud location, got %+v", destinations)
+	if destinations := scans[0].Games[0].Destinations; len(destinations) != 0 {
+		t.Fatalf("expected the mirror to be offered as no destination, got %+v", destinations)
 	}
 }
 
@@ -253,28 +245,26 @@ Local Save Game:
 	}
 }
 
-// A game whose adapter-discovered save demonstrably holds the same save
-// family the profile rules locate — files by the same names — keeps that one
-// representation, so one game never tracks two saves whose lineages could
-// never converge (FDR-003, decision 10).
-func TestManualScanElectsTheCloudSaveOverProfileRules(t *testing.T) {
+// The rules name the folder the game itself reads and writes, and that is
+// the only thing this Device tracks. Steam Cloud's mirror of it is a
+// transport: content restored there can be invisible to the game, and
+// content read back from it can be a state the game never held
+// (FDR-003, decision 10).
+func TestManualScanTracksTheGamesOwnSaveAndNeverTheCloudMirror(t *testing.T) {
 	steamRoot := t.TempDir()
 	installRoot := writeSteamApp(t, steamRoot, "413150", "Stardew Valley", "Stardew Valley")
 	remoteDirectory := filepath.Join(steamRoot, "userdata", "76561198000000000", "413150", "remote")
 	if err := os.MkdirAll(remoteDirectory, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(remoteDirectory, "SaveGameInfo"), []byte("summary"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(remoteDirectory, "progress.sav"), []byte("cloud-progress"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(remoteDirectory, "progress.sav"), []byte("mirror"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	saveDirectory := filepath.Join(installRoot, "Saves")
 	if err := os.MkdirAll(saveDirectory, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(saveDirectory, "progress.sav"), []byte("native-progress"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(saveDirectory, "progress.sav"), []byte("native"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -298,34 +288,29 @@ Stardew Valley:
 		t.Fatalf("expected one Steam game, got %+v", scans)
 	}
 	saves := scans[0].Games[0].Saves
-	if len(saves) != 1 || saves[0].Kind != "cloud" {
-		t.Fatalf("expected only the Cloud save representation, got %+v", saves)
+	if len(saves) != 1 || saves[0].Kind != "local" {
+		t.Fatalf("expected only the game's own save, got %+v", saves)
+	}
+	if len(saves[0].Files) != 1 || saves[0].Files[0].Path != filepath.Join(saveDirectory, "progress.sav") {
+		t.Fatalf("expected the save the rules located, got %+v", saves[0].Files)
 	}
 	destinations := scans[0].Games[0].Destinations
-	if len(destinations) != 1 || destinations[0].Kind != "cloud" {
-		t.Fatalf("expected only the Cloud destination, got %+v", destinations)
+	if len(destinations) != 1 || destinations[0].Kind != "local" {
+		t.Fatalf("expected only the game's own folder to be placeable, got %+v", destinations)
 	}
 }
 
-// A mirror holding files that share no names with what the profile rules
-// locate is auxiliary content — settings a game syncs, a leftover — and is
-// no evidence the real progress is covered, so both representations stay
-// tracked exactly as they were before election existed.
-func TestManualScanKeepsBothSavesWhenTheMirrorSharesNoNames(t *testing.T) {
+// A mirror is not a save even when it is the only thing on disk. A game whose
+// rules locate nothing is unprotected and says so, rather than appearing
+// protected by a lineage restoring into it could never reach.
+func TestManualScanReportsNoSaveRatherThanTheMirrorWhenRulesFindNothing(t *testing.T) {
 	steamRoot := t.TempDir()
-	installRoot := writeSteamApp(t, steamRoot, "413150", "Stardew Valley", "Stardew Valley")
+	writeSteamApp(t, steamRoot, "413150", "Stardew Valley", "Stardew Valley")
 	remoteDirectory := filepath.Join(steamRoot, "userdata", "76561198000000000", "413150", "remote")
 	if err := os.MkdirAll(remoteDirectory, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(remoteDirectory, "options.cfg"), []byte("settings"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	saveDirectory := filepath.Join(installRoot, "Saves")
-	if err := os.MkdirAll(saveDirectory, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(saveDirectory, "progress.sav"), []byte("native-progress"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(remoteDirectory, "progress.sav"), []byte("mirror"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -345,12 +330,12 @@ Stardew Valley:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(scans) != 1 || len(scans[0].Games) != 1 {
-		t.Fatalf("expected one Steam game, got %+v", scans)
+	if saves := scans[0].Games[0].Saves; len(saves) != 0 {
+		t.Fatalf("expected the mirror to be no save at all, got %+v", saves)
 	}
-	saves := scans[0].Games[0].Saves
-	if len(saves) != 2 || saves[0].Kind != "cloud" || saves[1].Kind != "local" {
-		t.Fatalf("expected the Cloud save and the uncovered native save, got %+v", saves)
+	destinations := scans[0].Games[0].Destinations
+	if len(destinations) != 1 || destinations[0].Kind != "local" {
+		t.Fatalf("expected only the game's own folder to be placeable, got %+v", destinations)
 	}
 }
 
@@ -439,4 +424,146 @@ func writeSteamApp(t *testing.T, steamRoot, appID, title, installDirectory strin
 		t.Fatal(err)
 	}
 	return resolved
+}
+
+// secondSource is a stand-in for save-location knowledge that is not the
+// community manifest — Steam's own cloud configuration, in practice.
+type secondSource struct {
+	profile *saveprofile.Profile
+	asked   int
+}
+
+func (s *secondSource) Find(context.Context, target.GameIdentity) (*saveprofile.Profile, error) {
+	s.asked++
+	if s.profile == nil {
+		return nil, saveprofile.ErrNotFound
+	}
+	return s.profile, nil
+}
+
+// A game the community manifest cannot place on this Device — its rules are
+// all for another platform — is located by the second source instead, so a
+// gap in community knowledge does not leave a game unprotected.
+func TestScanFallsBackToASecondSourceWhenNoRuleAppliesHere(t *testing.T) {
+	steamRoot := t.TempDir()
+	installRoot := writeSteamApp(t, steamRoot, "413150", "Stardew Valley", "Stardew Valley")
+	saveDirectory := filepath.Join(installRoot, "Saves")
+	if err := os.MkdirAll(saveDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(saveDirectory, "progress.sav"), []byte("native"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The manifest knows the game, but only where it never runs here.
+	primary, err := ludusavi.New([]byte(`
+Stardew Valley:
+  files:
+    <winAppData>/StardewValley:
+      when:
+        - os: windows
+      tags: [save]
+  steam:
+    id: 413150
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := &secondSource{profile: &saveprofile.Profile{
+		Provider: "steam-ufs", ProviderID: "413150", Title: "Stardew Valley",
+		Rules: []saveprofile.Rule{{ID: "ufs-saves", Path: "<base>/Saves/*", Kind: "save"}},
+	}}
+	scanner := client.NewScanner(
+		saveprofile.Fallback{Primary: primary, Secondary: second},
+		steamtarget.New(steamlocator.NewInstaller(steamRoot)))
+	scans, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := scans[0].Games[0].Saves
+	if len(saves) != 1 || len(saves[0].Files) != 1 ||
+		saves[0].Files[0].Path != filepath.Join(saveDirectory, "progress.sav") {
+		t.Fatalf("expected the second source to locate the save, got %+v", saves)
+	}
+	if trace := scans[0].Games[0].Profile; trace.Provider != "steam-ufs" || !trace.Found {
+		t.Fatalf("expected the trace to name the source that answered, got %+v", trace)
+	}
+}
+
+// A rule that applies and finds nothing has still answered: the game has no
+// save here yet. Consulting a second source then would rename the location of
+// a lineage the first source's spelling already minted.
+func TestScanKeepsTheFirstSourceWhenItsRulesApplyAndFindNothing(t *testing.T) {
+	steamRoot := t.TempDir()
+	writeSteamApp(t, steamRoot, "413150", "Stardew Valley", "Stardew Valley")
+	primary, err := ludusavi.New([]byte(`
+Stardew Valley:
+  files:
+    <base>/Saves:
+      tags: [save]
+  steam:
+    id: 413150
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := &secondSource{}
+	scanner := client.NewScanner(
+		saveprofile.Fallback{Primary: primary, Secondary: second},
+		steamtarget.New(steamlocator.NewInstaller(steamRoot)))
+	scans, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.asked != 0 {
+		t.Fatalf("expected the second source not to be consulted, it was asked %d times", second.asked)
+	}
+	if trace := scans[0].Games[0].Profile; trace.Provider != "ludusavi" {
+		t.Fatalf("expected the first source to keep the answer, got %+v", trace)
+	}
+}
+
+// mirrorSource is a deliberately faulty source: it names a location inside
+// Steam Cloud's mirror, which no source is allowed to do.
+type mirrorSource struct{}
+
+func (mirrorSource) Find(context.Context, target.GameIdentity) (*saveprofile.Profile, error) {
+	return &saveprofile.Profile{
+		Provider: "faulty", ProviderID: "413150", Title: "Stardew Valley",
+		Rules: []saveprofile.Rule{{
+			ID: "mirror", Path: "<root>/userdata/<storeUserId>/413150/remote/*", Kind: "save",
+		}},
+	}, nil
+}
+
+// The rule holds wherever it is broken. A source naming a location inside the
+// store's cloud mirror is refused at the boundary, so a faulty or future
+// provider cannot reintroduce a representation restoring into could never
+// reach (FDR-003, decision 10).
+func TestScanRefusesAMirrorLocationHoweverItArrives(t *testing.T) {
+	steamRoot := t.TempDir()
+	writeSteamApp(t, steamRoot, "413150", "Stardew Valley", "Stardew Valley")
+	remoteDirectory := filepath.Join(steamRoot, "userdata", "76561198000000000", "413150", "remote")
+	if err := os.MkdirAll(remoteDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteDirectory, "progress.sav"), []byte("mirror"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := client.NewScanner(mirrorSource{}, steamtarget.New(steamlocator.NewInstaller(steamRoot)))
+	scans, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	game := scans[0].Games[0]
+	if len(game.Saves) != 0 {
+		t.Fatalf("expected the mirror location to be refused, got %+v", game.Saves)
+	}
+	if len(game.Destinations) != 0 {
+		t.Fatalf("expected the mirror location to be no destination either, got %+v", game.Destinations)
+	}
+	if game.Profile.RefusedMirror == 0 {
+		t.Fatalf("expected the refusal to be recorded, got %+v", game.Profile)
+	}
 }
