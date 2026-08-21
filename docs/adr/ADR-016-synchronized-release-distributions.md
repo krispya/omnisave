@@ -14,7 +14,7 @@ A pushed `vMAJOR.MINOR.PATCH` tag is the only release signal and supplies the ve
 
 Before creating the GitHub release, the workflow builds and verifies the client archives, both Synology architectures, and the `linux/amd64` and `linux/arm64` OCI image. Client archives and SPKs are attached to the GitHub release, while the image is published to GHCR with both the version and `latest` tags. The downloadable artifacts receive build-provenance attestations.
 
-The semantic version appears unchanged in client archive names and OCI tags. The SPKs use `MAJOR.MINOR.PATCH-BUILD`, where `BUILD` is the commit count shared with the client binary. Development builds may still use explicit `VERSION` and `BUILD` overrides without publishing anything.
+The semantic version appears unchanged in client archive names and OCI tags. The SPKs use `MAJOR.MINOR.PATCH-BUILD`, where `BUILD` is the commit count shared with the client binary. Outside the release workflow, builds default to the nearest reachable version tag and the current commit count, so post-release artifacts retain that release's semantic version while their build number advances. Explicit `VERSION` and `BUILD` overrides remain available for development builds without publishing anything.
 
 ## Consequences
 
@@ -24,6 +24,7 @@ Easier:
 - A tag on an unmerged branch cannot publish a release.
 - A release cannot be created by the workflow after an earlier build or publish step fails.
 - The SPK build number remains numeric and monotonically increasing while its semantic version stays aligned with the other formats.
+- Local post-release SPKs can upgrade the tagged release they follow instead of falling behind it under a stale development version.
 - Pull requests exercise every release build before a tag points at the commit.
 
 More difficult:
