@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -42,13 +42,28 @@ func New(steamRoots ...string) *Provider {
 
 // NewDefault reads the cloud configuration of the Steam installations this
 // host conventionally has. A host with none answers nothing, as a host whose
-// Steam has never cached the game does.
+// Steam has never cached the game does. Conventional locations can spell
+// one installation twice — a symlink and its target — and canonicalizing
+// keeps a large appcache from being parsed and held once per spelling.
 func NewDefault() *Provider {
 	roots, err := locator.DefaultRoots()
 	if err != nil {
 		return New()
 	}
-	return New(roots...)
+	seen := make(map[string]bool, len(roots))
+	unique := make([]string, 0, len(roots))
+	for _, root := range roots {
+		canonical := root
+		if resolved, err := filepath.EvalSymlinks(root); err == nil {
+			canonical = resolved
+		}
+		if seen[canonical] {
+			continue
+		}
+		seen[canonical] = true
+		unique = append(unique, canonical)
+	}
+	return New(unique...)
 }
 
 // ErrCloudAPI reports a game that reaches Steam Cloud through the API rather
@@ -75,10 +90,11 @@ func (p *Provider) Find(_ context.Context, identity target.GameIdentity) (*savep
 	for _, root := range p.roots {
 		file, err := p.cached.read(path.Join(root, "appcache", "appinfo.vdf"))
 		if err != nil {
-			if os.IsNotExist(err) || errors.Is(err, errMalformed) {
-				continue
-			}
-			return nil, fmt.Errorf("read Steam cloud configuration: %w", err)
+			// Missing, malformed, unreadable for permissions, or mid-rewrite
+			// by Steam itself: a cache this host cannot read answers nothing,
+			// exactly as one Steam never wrote. Discovery reports what it
+			// could actually read and never fails the scan over it.
+			continue
 		}
 		app, err := file.section(uint32(numericAppID))
 		if err != nil || app == nil {
@@ -196,19 +212,32 @@ func syncedPaths(userdata, appID string) []string {
 }
 
 // cachedPaths reads the file names out of a remotecache: the sections one
-// level in, each named by the file's path relative to its root.
+// level in, each named by the file's path relative to its root. Depth is
+// tracked rather than inferred from a name's shape, because a save file's
+// name owes this reader nothing — it may carry spaces, or no dot or slash
+// at all — while a key/value line always carries its value's quotes.
 func cachedPaths(cache string) []string {
 	var paths []string
+	depth := 0
 	for _, line := range strings.Split(cache, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, `"`) || !strings.HasSuffix(trimmed, `"`) ||
-			len(strings.Fields(trimmed)) != 1 || len(trimmed) < 2 {
+		switch trimmed {
+		case "{":
+			depth++
+			continue
+		case "}":
+			depth--
 			continue
 		}
-		name := strings.Trim(trimmed, `"`)
-		if strings.Contains(name, "/") || strings.Contains(name, ".") {
-			paths = append(paths, name)
+		if depth != 1 || len(trimmed) < 2 ||
+			!strings.HasPrefix(trimmed, `"`) || !strings.HasSuffix(trimmed, `"`) {
+			continue
 		}
+		name := trimmed[1 : len(trimmed)-1]
+		if strings.Contains(name, `"`) {
+			continue
+		}
+		paths = append(paths, name)
 	}
 	return paths
 }

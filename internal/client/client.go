@@ -135,7 +135,7 @@ func (s *Scanner) scanAdapter(ctx context.Context, adapter target.Adapter) ([]Ta
 			if err != nil {
 				return nil, fmt.Errorf("discover save locations for %s: %w", game.ID, err)
 			}
-			profileSaves, profileDestinations, trace, err := s.locateSaves(ctx, game)
+			profileSaves, profileDestinations, trace, err := s.locateSaves(ctx, discovered.Root, game)
 			if err != nil {
 				return nil, err
 			}
@@ -168,17 +168,18 @@ func progress(report func(ScanProgress), event ScanProgress) {
 // can, so a lineage already minted under its spelling of a location keeps it.
 func (s *Scanner) locateSaves(
 	ctx context.Context,
+	targetRoot string,
 	game target.InstalledGame,
 ) ([]target.Save, []target.SaveDestination, ProfileTrace, error) {
 	if s.profiles == nil {
 		return nil, nil, ProfileTrace{}, nil
 	}
 	trace := ProfileTrace{Consulted: true}
-	saves, destinations, err := s.applyProfile(ctx, s.profiles.Find, game, &trace)
+	saves, destinations, refused, err := s.applyProfile(ctx, s.profiles.Find, targetRoot, game, &trace)
 	if err != nil {
 		return nil, nil, trace, err
 	}
-	if anyRuleApplied(trace.Rules) {
+	if anyRuleApplied(trace.Rules, refused) {
 		return saves, destinations, trace, nil
 	}
 	fallback, hasFallback := s.profiles.(saveprofile.FallbackProvider)
@@ -187,9 +188,11 @@ func (s *Scanner) locateSaves(
 	}
 	// The primary's trace is what a report explains this game by, so it is
 	// replaced only once the fallback has something to say in its place.
+	// The refusal count survives either way: whichever source answers, the
+	// refusals may be the one fact explaining what a reader cannot see.
 	fallbackTrace := ProfileTrace{Consulted: true}
-	fallbackSaves, fallbackDestinations, err := s.applyProfile(
-		ctx, fallback.FindFallback, game, &fallbackTrace)
+	fallbackSaves, fallbackDestinations, _, err := s.applyProfile(
+		ctx, fallback.FindFallback, targetRoot, game, &fallbackTrace)
 	if err != nil {
 		return nil, nil, trace, err
 	}
@@ -200,8 +203,10 @@ func (s *Scanner) locateSaves(
 		if fallbackTrace.Err != nil && trace.Err == nil {
 			trace.Err = fallbackTrace.Err
 		}
+		trace.RefusedMirror += fallbackTrace.RefusedMirror
 		return saves, destinations, trace, nil
 	}
+	fallbackTrace.RefusedMirror += trace.RefusedMirror
 	return fallbackSaves, fallbackDestinations, fallbackTrace, nil
 }
 
@@ -212,22 +217,23 @@ func (s *Scanner) locateSaves(
 func (s *Scanner) applyProfile(
 	ctx context.Context,
 	find func(context.Context, target.GameIdentity) (*saveprofile.Profile, error),
+	targetRoot string,
 	game target.InstalledGame,
 	trace *ProfileTrace,
-) ([]target.Save, []target.SaveDestination, error) {
+) ([]target.Save, []target.SaveDestination, map[string]bool, error) {
 	profile, err := find(ctx, game.Identity)
 	switch {
 	case errors.Is(err, saveprofile.ErrNotFound):
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	case errors.Is(err, saveprofile.ErrUnplaceable):
 		// Not a failure: the source knows the game and can say why it has
 		// no answer, which a report needs where silence would imply the
 		// game is simply unknown. It closes nothing — the location stays
 		// unknown for another source to place.
 		trace.Err = err
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	case err != nil:
-		return nil, nil, fmt.Errorf("find save profile for %s: %w", game.ID, err)
+		return nil, nil, nil, fmt.Errorf("find save profile for %s: %w", game.ID, err)
 	}
 	trace.Found = true
 	trace.Provider = profile.Provider
@@ -235,11 +241,11 @@ func (s *Scanner) applyProfile(
 	trace.Title = profile.Title
 	saves, ruleTrace, err := saveprofile.ResolveWithTrace(game, *profile)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolve save profile for %s: %w", game.ID, err)
+		return nil, nil, nil, fmt.Errorf("resolve save profile for %s: %w", game.ID, err)
 	}
 	destinations, err := saveprofile.ResolveDestinations(game, *profile)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolve save profile locations for %s: %w", game.ID, err)
+		return nil, nil, nil, fmt.Errorf("resolve save profile locations for %s: %w", game.ID, err)
 	}
 	trace.Rules = ruleTrace
 	// The last word on what a save is: whatever a source resolved, nothing
@@ -251,8 +257,9 @@ func (s *Scanner) applyProfile(
 	// location's identity goes with it: left as an alias it would keep
 	// answering for the mirror, letting a mirror-shaped revision translate
 	// into a folder whose layout it does not speak.
-	saves, refused := refuseMirrorPaths(saves, game)
-	destinations, refusedDestinations := refuseMirrorDestinations(destinations, game)
+	roots := mirrorRoots(targetRoot, game)
+	saves, refused := refuseMirrorPaths(saves, roots)
+	destinations, refusedDestinations := refuseMirrorDestinations(destinations, roots)
 	for id := range refusedDestinations {
 		refused[id] = true
 	}
@@ -263,7 +270,33 @@ func (s *Scanner) applyProfile(
 	for index := range destinations {
 		destinations[index].LocationAliases = withoutAliases(destinations[index].LocationAliases, refused)
 	}
-	return saves, destinations, nil
+	return saves, destinations, refused, nil
+}
+
+// mirrorRoots is every root whose userdata tree marks the store's own
+// per-account area for this game. The target's root is where a Steam
+// installation actually keeps userdata; a secondary-library game's
+// StoreRoot is its library, which holds none — reading the root off the
+// game alone is how a mirror in the installation slips past the refusal.
+// The library root still participates: a rule spelling the mirror under it
+// names no better a place to restore into.
+func mirrorRoots(targetRoot string, game target.InstalledGame) []string {
+	roots := make([]string, 0, 2)
+	for _, root := range []string{targetRoot, game.Environment.StoreRoot} {
+		if root == "" {
+			continue
+		}
+		duplicate := false
+		for _, kept := range roots {
+			if kept == root {
+				duplicate = true
+			}
+		}
+		if !duplicate {
+			roots = append(roots, root)
+		}
+	}
+	return roots
 }
 
 // withoutAliases drops the refused location identities from an alias list.
@@ -289,13 +322,13 @@ func withoutAliases(aliases []string, refused map[string]bool) []string {
 // one to exist, so the same refusal covers destinations: a Device that has
 // never played a game is offered the game's own folder and never the
 // mirror (FDR-004).
-func refuseMirrorPaths(saves []target.Save, game target.InstalledGame) ([]target.Save, map[string]bool) {
+func refuseMirrorPaths(saves []target.Save, roots []string) ([]target.Save, map[string]bool) {
 	refused := make(map[string]bool)
 	kept := make([]target.Save, 0, len(saves))
 	for _, save := range saves {
 		files := make([]target.File, 0, len(save.Files))
 		for _, file := range save.Files {
-			if underCloudMirror(file.Path, game.Environment.StoreRoot) {
+			if underAnyCloudMirror(file.Path, roots) {
 				refused[file.LocationID] = true
 				continue
 			}
@@ -312,14 +345,14 @@ func refuseMirrorPaths(saves []target.Save, game target.InstalledGame) ([]target
 
 func refuseMirrorDestinations(
 	destinations []target.SaveDestination,
-	game target.InstalledGame,
+	roots []string,
 ) ([]target.SaveDestination, map[string]bool) {
 	refused := make(map[string]bool)
 	kept := make([]target.SaveDestination, 0, len(destinations))
 	for _, destination := range destinations {
 		locations := make([]target.SaveLocation, 0, len(destination.Locations))
 		for _, location := range destination.Locations {
-			if underCloudMirror(location.Path, game.Environment.StoreRoot) {
+			if underAnyCloudMirror(location.Path, roots) {
 				refused[location.ID] = true
 				continue
 			}
@@ -342,6 +375,15 @@ func refuseMirrorDestinations(
 // into, and nothing a game itself reads lives under there
 // ([ADR-018](../../docs/adr/ADR-018-embedded-save-profiles.md) drops rules
 // over it for the same reason).
+func underAnyCloudMirror(candidate string, roots []string) bool {
+	for _, root := range roots {
+		if underCloudMirror(candidate, root) {
+			return true
+		}
+	}
+	return false
+}
+
 func underCloudMirror(candidate, storeRoot string) bool {
 	if storeRoot == "" {
 		return false
@@ -358,9 +400,14 @@ func underCloudMirror(candidate, storeRoot string) bool {
 // A rule that applied and found nothing has still spoken: the game simply has
 // no save here yet, which a fallback source cannot improve on. A rule this
 // environment cannot even expand has not spoken — it named a place this
-// Device has no value for — so another source is still worth asking.
-func anyRuleApplied(rules []saveprofile.RuleOutcome) bool {
+// Device has no value for — and neither has a rule whose location was
+// refused: its answer named the mirror, which no answer may (FDR-003,
+// decision 10). Either way another source is still worth asking.
+func anyRuleApplied(rules []saveprofile.RuleOutcome, refused map[string]bool) bool {
 	for _, rule := range rules {
+		if refused[rule.Rule.ID] {
+			continue
+		}
 		switch rule.Outcome {
 		case saveprofile.OutcomeInapplicable, saveprofile.OutcomeUnexpandable:
 			continue

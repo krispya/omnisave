@@ -577,6 +577,112 @@ func TestScanRefusesAMirrorLocationHoweverItArrives(t *testing.T) {
 	}
 }
 
+// literalMirrorSource spells the mirror by an absolute path, the way a
+// community rule spelled through <home> reaches the Steam installation's
+// userdata no matter which library holds the game.
+type literalMirrorSource struct{ mirror string }
+
+func (s literalMirrorSource) Find(context.Context, target.GameIdentity) (*saveprofile.Profile, error) {
+	return &saveprofile.Profile{
+		Provider: "faulty", ProviderID: "413150", Title: "Stardew Valley",
+		Rules: []saveprofile.Rule{{ID: "mirror", Path: s.mirror + "/*", Kind: "save"}},
+	}, nil
+}
+
+// A game in a secondary library keeps that library as its store root, but
+// Steam's userdata lives under the installation. The refusal must key on
+// the target's own root, or every secondary-library game's mirror slips
+// through it (FDR-003, decision 10).
+func TestScanRefusesTheMirrorForASecondaryLibraryGame(t *testing.T) {
+	steamRoot := t.TempDir()
+	library := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(steamRoot, "steamapps"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	libraryFolders := fmt.Sprintf("\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\" %q\n\t}\n}\n", library)
+	if err := os.WriteFile(filepath.Join(steamRoot, "steamapps", "libraryfolders.vdf"), []byte(libraryFolders), 0600); err != nil {
+		t.Fatal(err)
+	}
+	writeSteamApp(t, library, "413150", "Stardew Valley", "Stardew Valley")
+	// The adapter canonicalizes the installation root it discovers, and a
+	// real rule resolves through the filesystem's own spelling too; the
+	// fixture must speak the same one for the containment check to mean
+	// what it means in the wild.
+	canonicalRoot, err := filepath.EvalSymlinks(steamRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteDirectory := filepath.Join(canonicalRoot, "userdata", "76561198000000000", "413150", "remote")
+	if err := os.MkdirAll(remoteDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteDirectory, "progress.sav"), []byte("mirror"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := client.NewScanner(
+		literalMirrorSource{mirror: filepath.Join(canonicalRoot, "userdata", "<storeUserId>", "413150", "remote")},
+		steamtarget.New(steamlocator.NewInstaller(steamRoot)))
+	scans, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	game := scans[0].Games[0]
+	if game.Game.Environment.StoreRoot == scans[0].Target.Root {
+		t.Fatalf("fixture must place the game in a secondary library, got store root %q", game.Game.Environment.StoreRoot)
+	}
+	if len(game.Saves) != 0 || len(game.Destinations) != 0 {
+		t.Fatalf("expected the mirror to be refused for a secondary-library game, got %+v", game.Saves)
+	}
+	if game.Profile.RefusedMirror != 1 {
+		t.Fatalf("expected the refusal to be recorded, got %+v", game.Profile)
+	}
+}
+
+// A primary whose only answer was refused has not spoken. The fallback is
+// still consulted, and the refusal count survives the trace swap — it is
+// the one fact explaining why the mirror's files are nowhere in the report.
+func TestARefusedPrimaryStillConsultsTheFallback(t *testing.T) {
+	steamRoot := t.TempDir()
+	writeSteamApp(t, steamRoot, "413150", "Stardew Valley", "Stardew Valley")
+	remoteDirectory := filepath.Join(steamRoot, "userdata", "76561198000000000", "413150", "remote")
+	if err := os.MkdirAll(remoteDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteDirectory, "progress.sav"), []byte("mirror"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	nativeDirectory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(nativeDirectory, "save.dat"), []byte("native"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	second := &secondSource{profile: &saveprofile.Profile{
+		Provider: "steam-ufs", ProviderID: "413150", Title: "Stardew Valley",
+		Rules: []saveprofile.Rule{{ID: "native", Path: nativeDirectory + "/*", Kind: "save"}},
+	}}
+
+	scanner := client.NewScanner(
+		saveprofile.Fallback{Primary: mirrorSource{}, Secondary: second},
+		steamtarget.New(steamlocator.NewInstaller(steamRoot)))
+	scans, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	game := scans[0].Games[0]
+	if second.asked == 0 {
+		t.Fatal("expected the fallback to be consulted once the primary's answer was refused")
+	}
+	if len(game.Saves) != 1 || len(game.Saves[0].Files) != 1 {
+		t.Fatalf("expected the fallback's native save, got %+v", game.Saves)
+	}
+	if game.Profile.Provider != "steam-ufs" {
+		t.Fatalf("expected the fallback to answer, got %+v", game.Profile)
+	}
+	if game.Profile.RefusedMirror != 1 {
+		t.Fatalf("expected the primary's refusal to survive the trace swap, got %+v", game.Profile)
+	}
+}
+
 // A refused location's identity goes with it. Left on the surviving save or
 // destination as an alias, the mirror's identity would keep translating
 // mirror-shaped revisions into the native folder — a layout they do not

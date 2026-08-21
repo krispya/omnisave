@@ -100,9 +100,23 @@ func verboseStatus(game client.GameScan) string {
 		return count(files, "file") + " · " + formatBytes(bytes)
 	}
 	if game.Profile.Consulted && !game.Profile.Found {
+		if errors.Is(game.Profile.Err, saveprofile.ErrUnplaceable) {
+			return "Save location unknown"
+		}
 		return "No save-location rules"
 	}
 	return "No save found"
+}
+
+// unplaceableCause is the source's own reason it could not place the game,
+// read from the error rather than restated here, so the sentence stays true
+// for sources this package has never heard of.
+func unplaceableCause(err error) string {
+	cause := err.Error()
+	if trimmed := strings.TrimPrefix(cause, saveprofile.ErrUnplaceable.Error()+": "); trimmed != cause {
+		return trimmed
+	}
+	return "a source knows this game but cannot place its saves"
 }
 
 // verboseLines is everything known about one game's discovery, in the order a
@@ -140,14 +154,14 @@ func verboseLines(game client.GameScan) []string {
 
 	if refused := game.Profile.RefusedMirror; refused > 0 {
 		sentence(fmt.Sprintf(
-			"%s refused inside Steam's own cloud area, which is a transport and never a save",
+			"%s refused inside the store's cloud mirror, which is a transport and never a save",
 			count(refused, "location")))
 	}
 	switch {
 	case !game.Profile.Consulted:
 		sentence("Save-location rules were not consulted")
 	case errors.Is(game.Profile.Err, saveprofile.ErrUnplaceable):
-		sentence("Steam stores this game's cloud saves through its API, which leaves its save folder unknown")
+		sentence("Save location unknown — " + unplaceableCause(game.Profile.Err))
 	case !game.Profile.Found:
 		sentence("No save-location rules for " + storeIdentity(game.Game))
 	default:

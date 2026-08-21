@@ -348,6 +348,55 @@ func TestSteamCloudLeavesARootItCannotPlaceUnknown(t *testing.T) {
 	}
 }
 
+// A synced file's name owes the reader nothing: it may carry spaces. The
+// narrowing must still see it, or the folder holding the real saves is
+// dropped while a stale sibling survives.
+func TestSteamCloudNarrowingSeesSyncedPathsWithSpaces(t *testing.T) {
+	steamRoot := t.TempDir()
+	writeAppinfo(t, filepath.Join(steamRoot, "appcache"), app{
+		id: 400,
+		section: map[string]any{
+			"common": map[string]any{"name": "Portal"},
+			"ufs": map[string]any{
+				"savefiles": map[string]any{
+					"0": map[string]any{"root": "gameinstall", "path": "My Games/Spaced", "pattern": "*.sav"},
+					"1": map[string]any{"root": "gameinstall", "path": "config", "pattern": "*.sav"},
+				},
+			},
+		},
+	})
+	directory := filepath.Join(steamRoot, "userdata", "67689364", "400")
+	if err := os.MkdirAll(directory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cache := "\"400\"\n{\n\t\"ChangeNumber\"\t\t\"9\"\n\t\"My Games/Spaced/slot 1.sav\"\n\t{\n\t\t\"root\"\t\t\"1\"\n\t}\n}\n"
+	if err := os.WriteFile(filepath.Join(directory, "remotecache.vdf"), []byte(cache), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	profile, err := steamcloud.New(steamRoot).Find(context.Background(), steamIdentity("400"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profile.Rules) != 1 || profile.Rules[0].Path != "<base>/My Games/Spaced/*.sav" {
+		t.Fatalf("expected the folder holding the spaced save to survive, got %+v", profile.Rules)
+	}
+}
+
+// A cache this host cannot read answers nothing rather than failing the
+// scan: Steam may be rewriting appinfo.vdf, or permissions may bar it.
+func TestSteamCloudTreatsAnUnreadableAppcacheAsAbsent(t *testing.T) {
+	steamRoot := t.TempDir()
+	// A directory where the file should be fails every read without being
+	// missing, on every platform.
+	if err := os.MkdirAll(filepath.Join(steamRoot, "appcache", "appinfo.vdf"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := steamcloud.New(steamRoot).Find(context.Background(), steamIdentity("400")); !errors.Is(err, saveprofile.ErrNotFound) {
+		t.Fatalf("expected an unreadable cache to answer nothing, got %v", err)
+	}
+}
+
 // Steam records each synced file under the folder it came from, so a declared
 // folder nothing was ever synced from is one this game no longer uses.
 func TestSteamCloudKeepsOnlyTheFoldersSteamHasSyncedFrom(t *testing.T) {
