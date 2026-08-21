@@ -23,6 +23,7 @@ type SaveListProps = {
   /** Pointing at a save is enough intent to start loading it. */
   onPrefetchSave: (save: Omnisave) => void;
   onDownloadSave: (save: Omnisave, name: string) => void;
+  onDownloadAllRevisions: (save: Omnisave, name: string) => void;
   onDownloadRevision: (save: Omnisave, name: string, revision: Revision) => void;
   onRequestDelete: (save: Omnisave, name: string) => void;
   onRenameSave: (save: Omnisave, displayName: string) => Promise<void>;
@@ -83,6 +84,7 @@ export function SaveList({
   onToggleSave,
   onPrefetchSave,
   onDownloadSave,
+  onDownloadAllRevisions,
   onDownloadRevision,
   onRequestDelete,
   onRenameSave,
@@ -175,6 +177,9 @@ export function SaveList({
                   label={name}
                   className="pointer-events-auto relative z-20 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100"
                   onDownload={save.current_revision_id ? () => onDownloadSave(save, name) : undefined}
+                  onDownloadAllRevisions={
+                    save.current_revision_id ? () => onDownloadAllRevisions(save, name) : undefined
+                  }
                   onDelete={() => onRequestDelete(save, name)}
                 />
               </div>
