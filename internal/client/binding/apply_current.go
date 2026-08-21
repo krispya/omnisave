@@ -311,6 +311,38 @@ func Materialize(ctx context.Context, source ArtifactSource, destination target.
 	}, nil
 }
 
+// AppliedFiles reports the local files a successful ApplyCurrent of current
+// into save left on disk: every revision file at the native path the save's
+// layout maps it to. The apply replaces the save's files wholesale, so this
+// — not the discovery the apply started from — is what the disk now holds;
+// a restored revision can carry files the local save had lost, and anything
+// acting on the placement (registering it with a store, say) must see them.
+func AppliedFiles(save target.Save, current omnisave.Revision) ([]target.File, error) {
+	layout, err := describeLocalLayout(save)
+	if err != nil {
+		return nil, err
+	}
+	currentLocation := singleLocation(current.Files)
+	files := make([]target.File, 0, len(current.Files))
+	for _, file := range current.Files {
+		targetPath, _, err := layout.pathFor(file.Path, currentLocation, len(current.Files))
+		if err != nil {
+			return nil, err
+		}
+		locationID, relative, err := splitCanonicalPath(file.Path)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, target.File{
+			Path:         targetPath,
+			LocationID:   locationID,
+			RelativePath: filepath.FromSlash(relative),
+			Size:         file.Artifact.Size,
+		})
+	}
+	return files, nil
+}
+
 // CanApply reports whether current maps into the local save's layout: every
 // canonical path must resolve under a location root this save carries. It
 // validates layout only and does not inspect or change the filesystem, so a

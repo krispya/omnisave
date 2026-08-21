@@ -197,6 +197,34 @@ func (r *TrackReport) Unlocked(title string, names []string) {
 	}
 }
 
+// StoreRegistered records placed files registered with Steam Cloud, which
+// is what lets a game that trusts the store's file registry keep a restore
+// (FDR-005). Only creations and refreshes are worth a sentence; a placement
+// the registry already agreed with registers nothing and says nothing.
+func (r *TrackReport) StoreRegistered(title string, count int) {
+	if count == 0 {
+		return
+	}
+	sentence := fmt.Sprintf("registered %d restored files with Steam Cloud", count)
+	if count == 1 {
+		sentence = "registered 1 restored file with Steam Cloud"
+	}
+	r.event(title, sentence)
+}
+
+// StoreRegistrationSkipped records a placement whose store registration
+// could not run, so a restore the game may discard is not reported as
+// finished silently.
+func (r *TrackReport) StoreRegistrationSkipped(title, reason string) {
+	r.event(title, "Steam Cloud registration skipped — "+reason)
+}
+
+// StoreRegistrationFailed records store writes that did not take.
+func (r *TrackReport) StoreRegistrationFailed(title string, err error) {
+	r.mark(title, errorStyle.Render("✗"))
+	r.event(title, "Steam Cloud registration failed — "+Cause(err))
+}
+
 // UpToDate records a game whose saves needed nothing this pass, so every
 // tracked game still gets its line.
 func (r *TrackReport) UpToDate(title string) {

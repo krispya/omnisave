@@ -83,6 +83,21 @@ func NewScanner(profiles saveprofile.Provider, adapters ...target.Adapter) *Scan
 	return &Scanner{adapters: adapters, profiles: profiles}
 }
 
+// Adapter returns the configured adapter with the given name, so flows
+// that hold a scan's results can ask its adapter for more than discovery —
+// finishing a placement, say (target.PlacementFinisher).
+func (s *Scanner) Adapter(name string) (target.Adapter, bool) {
+	if s == nil {
+		return nil, false
+	}
+	for _, adapter := range s.adapters {
+		if adapter.Name() == name {
+			return adapter, true
+		}
+	}
+	return nil, false
+}
+
 // AdapterNames returns configured adapters in scan order.
 func (s *Scanner) AdapterNames() []string {
 	names := make([]string, 0, len(s.adapters))

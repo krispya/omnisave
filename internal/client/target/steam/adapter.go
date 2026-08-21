@@ -14,6 +14,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/steam/locator"
+	"github.com/krisbaumgartner/omnisave/internal/client/target/steam/steamworks"
 )
 
 const adapterName = "steam"
@@ -26,6 +27,9 @@ var (
 type Adapter struct {
 	locators []locator.Locator
 	resolved resolver
+	// runHelper overrides how a placement's registry reconciliation runs;
+	// nil means a helper process (see FinishPlacement).
+	runHelper func(context.Context, steamworks.Request) (steamworks.Result, error)
 }
 
 // New creates a Steam adapter from installation locators.

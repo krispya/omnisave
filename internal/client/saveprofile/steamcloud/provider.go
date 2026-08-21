@@ -524,6 +524,16 @@ func normalizeOS(value string) string {
 // not relied on, so this can confirm that folders are in use but not which
 // declared folder a given file came from.
 func (p *Provider) syncedThroughAPI(steamRoot, appID string) bool {
+	return StoresThroughAPI(steamRoot, appID)
+}
+
+// StoresThroughAPI is the package's answer to whether a game's cloud saves
+// move through the store's API on this Device (see syncedThroughAPI). It is
+// exported because the same evidence decides whether a placement must
+// reconcile the store's registry: a folder-replicated game is watched by
+// Steam itself, while an API game trusts only what the API was told
+// (FDR-005).
+func StoresThroughAPI(steamRoot, appID string) bool {
 	userdata := userdataFor(steamRoot)
 	accounts, err := os.ReadDir(userdata)
 	if err != nil {

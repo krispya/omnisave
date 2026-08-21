@@ -85,6 +85,10 @@ func runWithOutput(ctx context.Context, arguments []string, output io.Writer) er
 		return runBind(ctx, scanner, arguments[1:])
 	case "service":
 		return runService(ctx, arguments[1:])
+	case steamCloudHelperCommand:
+		// Internal: the client re-executes itself here so each Steam Cloud
+		// reconciliation gets its own process (see steamcloudhelper.go).
+		return runSteamCloudHelper(os.Stdin, output)
 	case "update":
 		return runUpdate(ctx, arguments[1:])
 	case "help", "-h", "--help":
@@ -1012,9 +1016,11 @@ func reconcileSaves(
 		}
 		if bound, isBound := state.BindingFor(candidate.local); isBound {
 			if remoteSave, exists := savesByID[bound.OmnisaveID]; exists {
+				finish := finishPlacement(scanner, candidate.discovered, candidate.game,
+					candidate.local.GameTitle, report)
 				if err := syncBoundSave(ctx, server, state, candidate.local, candidate.save,
 					bound, remoteSave, savesByGame[candidate.serverGameID], loadHistory,
-					outcome, report, prompts, gate, pushFloor); err != nil {
+					finish, outcome, report, prompts, gate, pushFloor); err != nil {
 					return err
 				}
 				continue
@@ -1122,6 +1128,8 @@ func reconcileSaves(
 					report.SaveFailed(candidate.local.GameTitle, err)
 					continue
 				}
+				finishPlacement(scanner, candidate.discovered, candidate.game,
+					candidate.local.GameTitle, report)(ctx, appliedSave(candidate.save, current))
 				if err := state.Bind(candidate.local, matched.Omnisave.ID); err != nil {
 					outcome.Failed++
 					report.SaveFailed(candidate.local.GameTitle, err)
@@ -1236,8 +1244,10 @@ func reconcileSaves(
 				report.SaveFailed(candidate.local.GameTitle, errors.New("chosen save has no readable current revision"))
 				continue
 			}
+			finish := finishPlacement(scanner, candidate.discovered, candidate.game,
+				candidate.local.GameTitle, report)
 			if err := syncUnmatchedSave(ctx, server, state, candidate.local, candidate.save,
-				selected, current, outcome, report); err != nil {
+				selected, current, finish, outcome, report); err != nil {
 				return err
 			}
 		default:
@@ -1265,12 +1275,70 @@ func reconcileSaves(
 			continue
 		}
 		working(ctx, report, candidate.discovered.Game.Identity.DisplayTitle(candidate.discovered.Game.ID))
+		finish := finishPlacement(scanner, candidate.scan.Target, candidate.discovered.Game,
+			candidate.discovered.Game.Identity.DisplayTitle(candidate.discovered.Game.ID), report)
 		if err := syncSaveToDevice(ctx, server, state, candidate.scan, candidate.discovered,
-			gameSaves, loadHistory, outcome, report, prompts); err != nil {
+			gameSaves, loadHistory, finish, outcome, report, prompts); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// placementFinisher settles whatever a game's store must be told after
+// files land in the game's own save folder. The placement itself has
+// already succeeded when this runs, so it reports rather than fails: a
+// registry that could not be settled is a warning the user must see, not a
+// reason to unwind a completed placement (FDR-005).
+type placementFinisher func(ctx context.Context, save target.Save)
+
+// finishPlacement builds the finisher for one game's placements. Adapters
+// with nothing to settle produce a finisher that does nothing.
+func finishPlacement(
+	scanner *client.Scanner,
+	discovered target.Target,
+	game target.InstalledGame,
+	title string,
+	report *tui.TrackReport,
+) placementFinisher {
+	return func(ctx context.Context, save target.Save) {
+		adapter, exists := scanner.Adapter(discovered.Adapter)
+		if !exists {
+			return
+		}
+		finisher, finishes := adapter.(target.PlacementFinisher)
+		if !finishes {
+			return
+		}
+		placement, err := finisher.FinishPlacement(ctx, discovered, game, save)
+		if err != nil {
+			report.StoreRegistrationFailed(title, err)
+			return
+		}
+		if placement.Skipped != "" {
+			report.StoreRegistrationSkipped(title, placement.Skipped)
+			return
+		}
+		if len(placement.Failed) > 0 {
+			report.StoreRegistrationFailed(title,
+				fmt.Errorf("the store refused %d of the placed files", len(placement.Failed)))
+		}
+		report.StoreRegistered(title, len(placement.Registered))
+	}
+}
+
+// appliedSave is save as a successful ApplyCurrent of current left it: the
+// same identity holding the revision's files at their native paths. The
+// mapping just carried the apply, so a failure here is unreachable in
+// practice; the discovery-time files are the honest fallback if it happens.
+func appliedSave(save target.Save, current omnisave.Revision) target.Save {
+	files, err := binding.AppliedFiles(save, current)
+	if err != nil {
+		return save
+	}
+	applied := save
+	applied.Files = files
+	return applied
 }
 
 // syncSaveToDevice places one selected server lineage at an unambiguous local destination.
@@ -1282,6 +1350,7 @@ func syncSaveToDevice(
 	discovered client.GameScan,
 	gameSaves []omnisave.Omnisave,
 	loadHistory func(string) ([]omnisave.Revision, error),
+	finish placementFinisher,
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 	prompts *reconcilePrompts,
@@ -1352,6 +1421,7 @@ func syncSaveToDevice(
 		report.SaveFailed(title, err)
 		return nil
 	}
+	finish(ctx, materialized)
 	local := tracking.LocalSaveFrom(scan, discovered, materialized)
 	if err := state.Bind(local, selected.save.ID); err != nil {
 		outcome.Failed++
@@ -1411,6 +1481,7 @@ func syncUnmatchedSave(
 	save target.Save,
 	selected omnisave.Omnisave,
 	current omnisave.Revision,
+	finish placementFinisher,
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 ) error {
@@ -1441,6 +1512,7 @@ func syncUnmatchedSave(
 		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
+	finish(ctx, appliedSave(save, current))
 	if err := state.Bind(local, selected.ID); err != nil {
 		outcome.Failed++
 		state.RecordPendingPreservation(local, preserved.ID)
@@ -1517,6 +1589,7 @@ func syncBoundSave(
 	remoteSave omnisave.Omnisave,
 	gameSaves []omnisave.Omnisave,
 	loadHistory func(string) ([]omnisave.Revision, error),
+	finish placementFinisher,
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 	prompts *reconcilePrompts,
@@ -1566,7 +1639,7 @@ func syncBoundSave(
 		// A binding without a baseline (a manual bind to non-matching
 		// content) is diverged from the start (FDR-005, decision 1).
 		return resolveDivergence(ctx, server, state, local, save, remoteSave, current, nil,
-			history, manifest, gameSaves, loadHistory, outcome, report, prompts)
+			history, manifest, gameSaves, loadHistory, finish, outcome, report, prompts)
 	}
 
 	if current.ID == baseline.ID {
@@ -1631,6 +1704,7 @@ func syncBoundSave(
 			report.SaveFailed(local.GameTitle, err)
 			return nil
 		}
+		finish(ctx, appliedSave(save, current))
 		if err := state.RecordSynced(local, remoteSave.ID, current.ID); err != nil {
 			outcome.Failed++
 			report.SaveFailed(local.GameTitle, err)
@@ -1667,7 +1741,7 @@ func syncBoundSave(
 		return nil
 	}
 	return resolveDivergence(ctx, server, state, local, save, remoteSave, current, &baseline,
-		history, manifest, gameSaves, loadHistory, outcome, report, prompts)
+		history, manifest, gameSaves, loadHistory, finish, outcome, report, prompts)
 }
 
 // resolveDivergence keeps both sides recoverable, prompting only during
@@ -1688,6 +1762,7 @@ func resolveDivergence(
 	manifest []omnisave.RevisionFile,
 	gameSaves []omnisave.Omnisave,
 	loadHistory func(string) ([]omnisave.Revision, error),
+	finish placementFinisher,
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 	prompts *reconcilePrompts,
@@ -1752,7 +1827,7 @@ func resolveDivergence(
 			matched, contentKnown, baseline, earlier, resumable, deviceName, outcome, report)
 	}
 	return jumpDivergedSave(ctx, server, state, local, save, remoteSave, current,
-		matched, contentKnown, baseline, earlier, resumable, deviceName, outcome, report)
+		matched, contentKnown, baseline, earlier, resumable, deviceName, finish, outcome, report)
 }
 
 // forkDivergedSave continues this Device's progress as a new lineage named
@@ -1897,6 +1972,7 @@ func jumpDivergedSave(
 	earlier *preservedProgress,
 	resumable *preservedProgress,
 	deviceName string,
+	finish placementFinisher,
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
 ) error {
@@ -1954,6 +2030,7 @@ func jumpDivergedSave(
 		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
+	finish(ctx, appliedSave(save, current))
 	if err := state.Bind(local, remoteSave.ID); err != nil {
 		outcome.Failed++
 		state.RecordPendingPreservation(local, preservedID)
