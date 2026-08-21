@@ -4,6 +4,7 @@ type OptionsMenuProps = {
   label: string;
   className: string;
   onDownload?: () => void;
+  onDownloadAllRevisions?: () => void;
   onFixMatch?: () => void;
   deleteLabel?: string;
   onDelete?: () => void;
@@ -14,6 +15,7 @@ export function OptionsMenu({
   label,
   className,
   onDownload,
+  onDownloadAllRevisions,
   onFixMatch,
   deleteLabel = 'Delete',
   onDelete,
@@ -21,7 +23,9 @@ export function OptionsMenu({
 }: OptionsMenuProps) {
   const menuID = useId();
 
-  if (!onDownload && !onFixMatch && !onDelete && !onDeleteGame) return null;
+  if (!onDownload && !onDownloadAllRevisions && !onFixMatch && !onDelete && !onDeleteGame) {
+    return null;
+  }
 
   return (
     <div className={`popover-owner ${className}`}>
@@ -40,7 +44,9 @@ export function OptionsMenu({
       <div
         id={menuID}
         popover="auto"
-        className="anchored-popover w-36 rounded-md border border-outline bg-surface p-1"
+        className={`anchored-popover rounded-md border border-outline bg-surface p-1 ${
+          onDownloadAllRevisions ? 'w-48' : 'w-36'
+        }`}
       >
         {onDownload ? (
           <button
@@ -50,7 +56,18 @@ export function OptionsMenu({
             onClick={onDownload}
             className="w-full rounded px-3 py-2 text-left text-sm text-text hover:bg-text/8"
           >
-            Download
+            {onDownloadAllRevisions ? 'Download Current' : 'Download'}
+          </button>
+        ) : null}
+        {onDownloadAllRevisions ? (
+          <button
+            type="button"
+            popoverTarget={menuID}
+            popoverTargetAction="hide"
+            onClick={onDownloadAllRevisions}
+            className="w-full rounded px-3 py-2 text-left text-sm text-text hover:bg-text/8"
+          >
+            Download All
           </button>
         ) : null}
         {onFixMatch ? (
