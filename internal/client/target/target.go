@@ -150,6 +150,40 @@ type Adapter interface {
 	DiscoverSaveDestinations(context.Context, Target, InstalledGame) ([]SaveDestination, error)
 }
 
+// PlacementFinisher is an Adapter that has more to do after files reach a
+// game's own save folder. A store can keep bookkeeping the game trusts over
+// the folder itself — Steam's cloud file registry decides whether an API
+// game's live state exists at all (FDR-005) — and placing files without
+// settling that bookkeeping leaves a restore the game may discard on
+// launch. Placement flows call this after files land; an adapter with
+// nothing to settle is simply not a PlacementFinisher.
+type PlacementFinisher interface {
+	FinishPlacement(ctx context.Context, discovered Target, game InstalledGame, save Save) (PlacementReport, error)
+}
+
+// PlacementReport is what finishing a placement did, in the store's own
+// vocabulary of file names. Everything the reconciliation left undone is
+// carried, never dropped: a placed file without a registration may be
+// discarded when the game launches, and a restore must not look finished
+// while that is on the table (FDR-005, decision 13).
+type PlacementReport struct {
+	// Registered are store entries created or refreshed from placed files.
+	Registered []string
+	// Unregistered are placed files the store accepted no entry for — no
+	// precedent for files like them under the proven anchor.
+	Unregistered []string
+	// Outside counts placed files that lie outside the store's proven
+	// anchor and so could not be given store names at all.
+	Outside int
+	// Extras are store entries the placement carried no file for, left in
+	// place and surfaced so their effect on the game can be seen.
+	Extras []string
+	// Skipped is why nothing was attempted; empty when work ran.
+	Skipped string
+	// Failed are store writes that did not take, as name → cause.
+	Failed map[string]string
+}
+
 // Activity detects active InstalledGame IDs from a shared process snapshot.
 type Activity interface {
 	RunningGames(ctx context.Context, snapshot *running.Snapshot, discovered Target, games []InstalledGame) (map[string]bool, error)
