@@ -11,7 +11,7 @@ This feature places an existing Omnisave on a tracked Device that has no local s
 - A tracked game with no local save is offered its existing Omnisaves during binding. The choice is always explicit, even when only one Omnisave exists.
 - Choosing an Omnisave places its Current Revision at the Device's native save location and records that revision as the binding baseline.
 - Declining leaves the game tracked without local content, so the choice remains available on a later interactive run.
-- The adapter must identify one unambiguous native destination before content is offered. If no safe destination is known, nothing is placed.
+- The adapter must identify one unambiguous native destination before content is offered. If no safe destination is known, nothing is placed. A store's cloud mirror is never a destination, so a lineage shaped like one reports no usable location rather than being placed into a transport the game may never read from ([FDR-003](FDR-003-automatic-save-binding.md), decision 10).
 - Placement never overwrites unexpected local content. If content appears after discovery, the operation stops and a later pass reconsiders the save through normal binding.
 - A failed or interrupted transfer leaves no partial local save.
 - Games that already have local content are resolved by content matching rather than this flow ([FDR-003](FDR-003-automatic-save-binding.md)).

@@ -47,7 +47,7 @@ The JSON files are plain text on purpose. Open them in any editor.
        mkdir -p "$(dirname <path>)"
        gunzip -c objects/<first 2 characters of sha256>/<sha256>.gz > <path>
 
-   The result is exactly the bytes the game wrote. The paths are relative to wherever the game keeps its saves — next to the ROM for most emulators, under `userdata/<account>/<app>/remote/` for Steam Cloud games — so put them where the game expects them and it will load the save.
+   The result is exactly the bytes the game wrote. The paths are relative to wherever the game keeps its saves — next to the ROM for most emulators, and for a Steam game the folder the game itself reads and writes, which `omnisave scan --verbose` names for that game. Do not write them into Steam's `userdata/<account>/<app>/remote/`: that is Steam Cloud's staging area, not a save the game reads, and content placed there can be replaced or ignored at the next launch ([FDR-003](fdr/FDR-003-automatic-save-binding.md), decision 10). Put the files where the game expects them and it will load the save.
 
 ## Checking a copy is intact
 

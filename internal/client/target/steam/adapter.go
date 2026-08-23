@@ -4,7 +4,6 @@ package steam
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -148,71 +147,39 @@ func (a *Adapter) DiscoverGames(ctx context.Context, discovered target.Target) (
 	return games, nil
 }
 
-func (a *Adapter) DiscoverSaves(ctx context.Context, discovered target.Target, game target.InstalledGame) ([]target.Save, error) {
-	appID, hasAppID := game.Identity.Identifier("steam.app")
-	if discovered.Adapter != adapterName || discovered.Root == "" || game.TargetID != discovered.ID || !hasAppID {
-		return nil, fmt.Errorf("invalid Steam game")
-	}
-	accounts, err := numericDirectories(filepath.Join(discovered.Root, "userdata"))
-	if err != nil {
+// DiscoverSaves reports no saves. Steam replicates a game's saves through
+// the mirror under userdata, and a mirror is a transport, never a save: the
+// game may reach it through an API whose file list is Steam's own metadata
+// rather than the directory's contents, so content placed there can be
+// invisible to the game, and content read back from it can be a state the
+// game never held. A Steam game's saves are located by its save-location
+// rules — the community manifest, or Steam's own cloud configuration where
+// the manifest is silent (FDR-003, decision 10).
+func (a *Adapter) DiscoverSaves(_ context.Context, discovered target.Target, game target.InstalledGame) ([]target.Save, error) {
+	if err := validateGame(discovered, game); err != nil {
 		return nil, err
 	}
-
-	var saves []target.Save
-	for _, accountID := range accounts {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		remoteDirectory := filepath.Join(discovered.Root, "userdata", accountID, appID, "remote")
-		files, err := cloudFiles(remoteDirectory)
-		if err != nil {
-			return nil, err
-		}
-		if len(files) == 0 {
-			continue
-		}
-		saves = append(saves, target.Save{
-			ID:       game.ID + ":cloud:" + accountID,
-			TargetID: discovered.ID,
-			GameID:   game.ID,
-			Kind:     "cloud",
-			Files:    files,
-			Metadata: map[string]string{"account_id": accountID},
-		})
-	}
-	return saves, nil
+	return nil, nil
 }
 
-// DiscoverSaveDestinations reports a Steam Cloud destination only when exactly one
-// local account makes the destination unambiguous.
-func (a *Adapter) DiscoverSaveDestinations(ctx context.Context, discovered target.Target, game target.InstalledGame) ([]target.SaveDestination, error) {
-	appID, hasAppID := game.Identity.Identifier("steam.app")
+// DiscoverSaveDestinations reports no destinations, for the same reason
+// DiscoverSaves reports no saves: placing a save into the mirror would put
+// it where the game may never read it.
+func (a *Adapter) DiscoverSaveDestinations(_ context.Context, discovered target.Target, game target.InstalledGame) ([]target.SaveDestination, error) {
+	if err := validateGame(discovered, game); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// validateGame rejects a game that did not come from this adapter's scan of
+// this target, which is a programming error rather than a discovery result.
+func validateGame(discovered target.Target, game target.InstalledGame) error {
+	_, hasAppID := game.Identity.Identifier("steam.app")
 	if discovered.Adapter != adapterName || discovered.Root == "" || game.TargetID != discovered.ID || !hasAppID {
-		return nil, fmt.Errorf("invalid Steam game")
+		return fmt.Errorf("invalid Steam game")
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	accounts, err := numericDirectories(filepath.Join(discovered.Root, "userdata"))
-	if err != nil {
-		return nil, err
-	}
-	if len(accounts) != 1 {
-		return nil, nil
-	}
-	accountID := accounts[0]
-	return []target.SaveDestination{{
-		ID:       game.ID + ":cloud:" + accountID,
-		TargetID: discovered.ID,
-		GameID:   game.ID,
-		Kind:     "cloud",
-		Locations: []target.SaveLocation{{
-			ID:   "remote",
-			Path: filepath.Join(discovered.Root, "userdata", accountID, appID, "remote"),
-			Kind: target.SaveLocationDirectory,
-		}},
-		Metadata: map[string]string{"account_id": accountID},
-	}}, nil
+	return nil
 }
 
 type appManifest struct {
@@ -281,67 +248,6 @@ func canonicalRoot(root string) (string, error) {
 		return "", fmt.Errorf("Steam root is not a directory: %s", root)
 	}
 	return resolved, nil
-}
-
-func numericDirectories(path string) ([]string, error) {
-	entries, err := os.ReadDir(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var names []string
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		if _, err := strconv.ParseUint(entry.Name(), 10, 64); err == nil {
-			names = append(names, entry.Name())
-		}
-	}
-	return names, nil
-}
-
-func cloudFiles(root string) ([]target.File, error) {
-	var files []target.File
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			if os.IsNotExist(walkErr) && path == root {
-				return nil
-			}
-			return walkErr
-		}
-		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		relativePath, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		files = append(files, target.File{
-			Path:         path,
-			LocationID:   "remote",
-			RelativePath: relativePath,
-			Size:         info.Size(),
-			Modified:     info.ModTime(),
-		})
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	sort.Slice(files, func(left, right int) bool {
-		return files[left].RelativePath < files[right].RelativePath
-	})
-	return files, nil
 }
 
 var _ target.Adapter = (*Adapter)(nil)
