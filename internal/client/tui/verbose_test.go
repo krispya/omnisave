@@ -50,7 +50,7 @@ func TestVerboseSeparatesAMissingEntryFromAFruitlessSearch(t *testing.T) {
 
 	view := rendered(unknown, searched)
 	if !strings.Contains(view, "No save-location rules") ||
-		!strings.Contains(view, "No ludusavi entry for steam 4003310") {
+		!strings.Contains(view, "No save-location rules for steam 4003310") {
 		t.Errorf("expected an unknown game to name the missing entry, got %q", view)
 	}
 	if !strings.Contains(view, "No save found") || !strings.Contains(view, "1 location not found") {
@@ -153,18 +153,17 @@ func TestVerboseShowsATemplateOnlyWhenItAddsSomething(t *testing.T) {
 	}
 }
 
-// A save the rules found and the scanner then set aside is not a save the
-// rules failed to find, and the report has to say which happened.
-func TestVerboseReportsRulesSetAsideByAnAdapterSave(t *testing.T) {
+// The report names the source whose rules answered, so a reader can tell
+// community knowledge from Steam's own configuration.
+func TestVerboseNamesTheSourceThatLocatedTheSave(t *testing.T) {
 	game := client.GameScan{
 		Game: steamGame("Slay the Spire 2", "2868840"),
 		Saves: []target.Save{{
-			Kind:  "cloud",
-			Files: []target.File{{Path: "/steam/userdata/1/2868840/remote/profile.save", Size: 49}},
+			Kind:  "local",
+			Files: []target.File{{Path: "/Users/player/Library/SlayTheSpire2/profile.save", Size: 49}},
 		}},
 		Profile: client.ProfileTrace{
 			Consulted: true, Found: true, Provider: "ludusavi", Title: "Slay the Spire 2",
-			Suppressed: true,
 			Rules: []saveprofile.RuleOutcome{{
 				Rule:    saveprofile.Rule{ID: "native", Path: "<home>/Library/SlayTheSpire2"},
 				Outcome: saveprofile.OutcomeFound,
@@ -175,14 +174,11 @@ func TestVerboseReportsRulesSetAsideByAnAdapterSave(t *testing.T) {
 	}
 
 	view := rendered(game)
-	if !strings.Contains(view, "Rules set aside") {
-		t.Errorf("expected the suppression to be reported, got %q", view)
+	if !strings.Contains(view, "Rules from ludusavi") {
+		t.Errorf("expected the answering source to be named, got %q", view)
 	}
 	if !strings.Contains(view, "356 files") {
-		t.Errorf("expected the set-aside rule to report what it found, got %q", view)
-	}
-	if !strings.Contains(view, "cloud save from the adapter") {
-		t.Errorf("expected the adapter's own save to be named, got %q", view)
+		t.Errorf("expected the electing rule to report what it found, got %q", view)
 	}
 }
 
