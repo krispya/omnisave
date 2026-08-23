@@ -23,7 +23,9 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client/host"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
 	"github.com/krisbaumgartner/omnisave/internal/client/running"
+	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile"
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/ludusavi/embedded"
+	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/steamcloud"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/retroarch"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/steam"
@@ -57,7 +59,14 @@ func run(ctx context.Context, arguments []string) error {
 }
 
 func runWithOutput(ctx context.Context, arguments []string, output io.Writer) error {
-	scanner := client.NewScanner(embedded.Provider(), retroarch.NewDefault(), steam.NewDefault())
+	// Community save-location knowledge answers first; Steam's own cloud
+	// configuration answers for the games it has never heard of, so a game
+	// missing from the manifest is not left unprotected (FDR-003, decision 10).
+	profiles := saveprofile.Fallback{
+		Primary:   embedded.Provider(),
+		Secondary: steamcloud.NewDefault(),
+	}
+	scanner := client.NewScanner(profiles, retroarch.NewDefault(), steam.NewDefault())
 	if len(arguments) == 0 {
 		return runApp(ctx, scanner, nil)
 	}
