@@ -162,10 +162,19 @@ type PlacementFinisher interface {
 }
 
 // PlacementReport is what finishing a placement did, in the store's own
-// vocabulary of file names.
+// vocabulary of file names. Everything the reconciliation left undone is
+// carried, never dropped: a placed file without a registration may be
+// discarded when the game launches, and a restore must not look finished
+// while that is on the table (FDR-005, decision 13).
 type PlacementReport struct {
 	// Registered are store entries created or refreshed from placed files.
 	Registered []string
+	// Unregistered are placed files the store accepted no entry for — no
+	// precedent for files like them under the proven anchor.
+	Unregistered []string
+	// Outside counts placed files that lie outside the store's proven
+	// anchor and so could not be given store names at all.
+	Outside int
 	// Extras are store entries the placement carried no file for, left in
 	// place and surfaced so their effect on the game can be seen.
 	Extras []string

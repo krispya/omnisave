@@ -1324,6 +1324,8 @@ func finishPlacement(
 				fmt.Errorf("the store refused %d of the placed files", len(placement.Failed)))
 		}
 		report.StoreRegistered(title, len(placement.Registered))
+		report.StoreRegistrationIncomplete(title, len(placement.Unregistered)+placement.Outside)
+		report.StoreExtras(title, len(placement.Extras))
 	}
 }
 

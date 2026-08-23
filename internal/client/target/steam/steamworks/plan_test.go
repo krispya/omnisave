@@ -89,6 +89,30 @@ func TestPlanRefusesFilesTheGameNeverRegisters(t *testing.T) {
 	}
 }
 
+// Directory and extension are one piece of evidence, together. The registry
+// knows .run files in history and .save files in saves; a .save file in
+// history matches nothing the game has ever registered there.
+func TestPlanRefusesAKnownExtensionInTheWrongDirectory(t *testing.T) {
+	placed := []string{
+		anchor + "/profile1/saves/history/notes.save",
+		anchor + "/profile1/saves/progress.save",
+	}
+	plan, ok := PlanReconciliation(sts2Registry(), placed)
+	if !ok {
+		t.Fatal("expected an anchored plan")
+	}
+	var names []string
+	for _, write := range plan.Writes {
+		names = append(names, write.Name)
+	}
+	if !reflect.DeepEqual(names, []string{"profile1/saves/progress.save"}) {
+		t.Fatalf("writes = %v", names)
+	}
+	if !reflect.DeepEqual(plan.Ineligible, []string{"profile1/saves/history/notes.save"}) {
+		t.Fatalf("ineligible = %v", plan.Ineligible)
+	}
+}
+
 func TestPlanReportsExtrasItLeavesAlone(t *testing.T) {
 	placed := []string{anchor + "/profile1/saves/progress.save"}
 	plan, ok := PlanReconciliation(sts2Registry(), placed)

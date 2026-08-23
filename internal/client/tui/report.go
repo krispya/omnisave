@@ -225,6 +225,31 @@ func (r *TrackReport) StoreRegistrationFailed(title string, err error) {
 	r.event(title, "Steam Cloud registration failed — "+Cause(err))
 }
 
+// StoreRegistrationIncomplete records placed files that ended up with no
+// Steam Cloud registration — no precedent for files like them, or outside
+// the registry's proven anchor. The game may discard such files at its
+// next launch, so a restore must not read as finished without this line.
+func (r *TrackReport) StoreRegistrationIncomplete(title string, count int) {
+	if count == 0 {
+		return
+	}
+	sentence := fmt.Sprintf("%d restored files have no Steam Cloud registration and may not survive the game's next launch", count)
+	if count == 1 {
+		sentence = "1 restored file has no Steam Cloud registration and may not survive the game's next launch"
+	}
+	r.mark(title, mutedStyle.Render("○"))
+	r.event(title, sentence)
+}
+
+// StoreExtras records registry entries the restore placed no file for,
+// which stay registered and may resurface through the store.
+func (r *TrackReport) StoreExtras(title string, extras int) {
+	if extras == 0 {
+		return
+	}
+	r.event(title, fmt.Sprintf("Steam Cloud still lists %s this restore did not place", count(extras, "file")))
+}
+
 // UpToDate records a game whose saves needed nothing this pass, so every
 // tracked game still gets its line.
 func (r *TrackReport) UpToDate(title string) {

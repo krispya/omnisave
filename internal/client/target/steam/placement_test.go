@@ -60,10 +60,12 @@ func TestFinishPlacementReconcilesAPIGames(t *testing.T) {
 	adapter.runHelper = func(_ context.Context, request steamworks.Request) (steamworks.Result, error) {
 		received = request
 		return steamworks.Result{
-			Written:   []string{"file.save"},
-			Unchanged: []string{"other.save"},
-			Extras:    []string{"gone.save"},
-			Failed:    []steamworks.Failure{{Name: "big.save", Cause: "quota"}},
+			Written:    []string{"file.save"},
+			Unchanged:  []string{"other.save"},
+			Ineligible: []string{"replay.mcr"},
+			Outside:    2,
+			Extras:     []string{"gone.save"},
+			Failed:     []steamworks.Failure{{Name: "big.save", Cause: "quota"}},
 		}, nil
 	}
 	save := target.Save{Files: []target.File{{Path: filepath.Join(game.InstallRoot, "file.save")}}}
@@ -81,6 +83,9 @@ func TestFinishPlacementReconcilesAPIGames(t *testing.T) {
 		t.Fatalf("files = %v", received.Files)
 	}
 	// Unchanged entries stay out of the report; only real writes register.
+	if len(report.Unregistered) != 1 || report.Outside != 2 {
+		t.Fatalf("expected the undone work to be carried, got %+v", report)
+	}
 	if len(report.Registered) != 1 || report.Registered[0] != "file.save" || len(report.Extras) != 1 {
 		t.Fatalf("report = %+v", report)
 	}

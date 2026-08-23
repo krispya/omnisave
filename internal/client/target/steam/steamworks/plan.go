@@ -65,13 +65,11 @@ func PlanReconciliation(registry []RegistryFile, placed []string) (Plan, bool) {
 		return Plan{}, false
 	}
 	listed := make(map[string]RegistryFile, len(registry))
-	directories := make(map[string]bool, len(registry))
-	extensions := make(map[string]bool, len(registry))
+	precedent := make(map[string]bool, len(registry))
 	for _, entry := range registry {
 		key := strings.ToLower(entry.Name)
 		listed[key] = entry
-		directories[strings.ToLower(path.Dir(entry.Name))] = true
-		extensions[strings.ToLower(path.Ext(entry.Name))] = true
+		precedent[precedentKey(entry.Name)] = true
 	}
 
 	plan := Plan{Anchor: anchor}
@@ -91,14 +89,15 @@ func PlanReconciliation(registry []RegistryFile, placed []string) (Plan, bool) {
 			continue
 		}
 		// A new name is registered only where the registry shows the game
-		// keeps files like it: a directory and an extension the registry has
-		// carried. The registry root is deliberately not enough on its own —
-		// a game's root mixes registered files with deliberately local ones
-		// (Slay the Spire 2 registers profile.save but never settings.save),
-		// and a directory the game created for cloud files is the stronger
-		// precedent.
-		if path.Dir(name) != "." && directories[strings.ToLower(path.Dir(name))] &&
-			extensions[strings.ToLower(path.Ext(name))] {
+		// keeps files exactly like it: the same directory carrying the same
+		// extension. The two are one piece of evidence, not two — an
+		// extension seen only elsewhere authorizes nothing here, or a
+		// registry with .dat replays in one folder would admit a .dat the
+		// game keeps local in another. The registry root is likewise never
+		// enough on its own: a game's root mixes registered files with
+		// deliberately local ones (Slay the Spire 2 registers profile.save
+		// but never settings.save).
+		if path.Dir(name) != "." && precedent[precedentKey(name)] {
 			plan.Writes = append(plan.Writes, Write{Name: name, Path: file})
 			continue
 		}
@@ -145,6 +144,12 @@ func deriveAnchor(registry []RegistryFile, placed []string) (string, bool) {
 		found = true
 	}
 	return anchor, found
+}
+
+// precedentKey is where-and-what evidence for one registry name: its
+// directory and extension together, compared case-insensitively.
+func precedentKey(name string) string {
+	return strings.ToLower(path.Dir(name)) + "\x00" + strings.ToLower(path.Ext(name))
 }
 
 func toSlash(p string) string {

@@ -52,10 +52,14 @@ func (a *Adapter) FinishPlacement(ctx context.Context, discovered target.Target,
 	}
 	// Unchanged entries are deliberately not reported: a registry that
 	// already agreed with the placement has nothing worth a sentence.
+	// Everything left undone is: an unregistered file may not survive the
+	// game's next launch, which no caller may mistake for success.
 	report := target.PlacementReport{
-		Registered: result.Written,
-		Extras:     result.Extras,
-		Skipped:    result.Skipped,
+		Registered:   result.Written,
+		Unregistered: result.Ineligible,
+		Outside:      result.Outside,
+		Extras:       result.Extras,
+		Skipped:      result.Skipped,
 	}
 	if len(result.Failed) > 0 {
 		report.Failed = make(map[string]string, len(result.Failed))
