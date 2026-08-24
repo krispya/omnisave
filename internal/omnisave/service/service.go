@@ -26,7 +26,7 @@ type service struct {
 const (
 	maxDisplayNameLength  = 100
 	maxRevisionFiles      = 1024
-	maxRevisionPathLength = 1024
+	maxRevisionPathLength = omnisave.MaxRevisionPathLength
 	// A report carries what one Device saw unlock since its last report, which
 	// is a handful even after a long session away from the server.
 	maxAchievementsPerReport = 256
@@ -82,6 +82,7 @@ func (s *service) Create(ctx context.Context, input omnisave.CreateOmnisave) (*o
 		ID:                       uuid.NewString(),
 		GameID:                   input.GameID,
 		DisplayName:              displayName,
+		PathFormatVersion:        omnisave.PathFormatNative,
 		CreatedAt:                now,
 		CurrentRevisionCreatedAt: now,
 		LatestRevisionCreatedAt:  now,
@@ -149,6 +150,7 @@ func (s *service) Fork(ctx context.Context, saveID string, input omnisave.ForkOm
 		ID:                uuid.NewString(),
 		GameID:            source.GameID,
 		DisplayName:       displayName,
+		PathFormatVersion: source.PathFormatVersion,
 		CurrentRevisionID: &sourceRevision.ID,
 		ForkedFrom: &omnisave.ForkOrigin{
 			OmnisaveID: source.ID,
@@ -186,6 +188,45 @@ func (s *service) Restore(ctx context.Context, saveID string, input omnisave.Res
 		return nil, translateError(err)
 	}
 	return s.Get(ctx, saveID)
+}
+
+// MigrateLocations renames a lineage's location vocabulary. The service
+// validates only that the version names a retired format and the spellings
+// are well-formed names; whether the mapping is true is the caller's
+// evidence to own, and whether the rename is total is the repository's
+// guard. The result reports the version the repository actually reached.
+func (s *service) MigrateLocations(ctx context.Context, saveID string, input omnisave.MigrateLocations) (*omnisave.MigrationResult, error) {
+	migration, migratable := omnisave.MigrationFrom(input.ExpectedPathFormatVersion)
+	if !migratable || migration.Kind != omnisave.MigrationKindLocationRename ||
+		!validLocationName(input.To) || omnisave.IsRetiredLocation(input.To) {
+		return nil, omnisave.ErrInvalid
+	}
+	to := input.To
+	if input.Prefix != "" {
+		if !validLocationPath(input.Prefix) {
+			return nil, omnisave.ErrInvalid
+		}
+		to += "/" + input.Prefix
+	}
+	result, err := s.repository.MigrateRevisionPaths(ctx, saveID,
+		input.ExpectedPathFormatVersion, to)
+	if err != nil {
+		return nil, translateError(err)
+	}
+	return &result, nil
+}
+
+// validLocationName admits one path segment — what a location identity is —
+// by the same rules every committed revision path obeys.
+func validLocationName(name string) bool {
+	return validRevisionPath(name) && !strings.Contains(name, "/")
+}
+
+// validLocationPath admits slash-joined well-formed segments, again by the
+// committed-path rules so a migration can never mint a spelling a commit
+// would refuse.
+func validLocationPath(path string) bool {
+	return validRevisionPath(path)
 }
 
 func (s *service) CommitRevision(ctx context.Context, saveID string, input omnisave.CreateRevision) (*omnisave.Revision, error) {

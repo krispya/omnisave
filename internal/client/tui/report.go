@@ -197,6 +197,20 @@ func (r *TrackReport) Unlocked(title string, names []string) {
 	}
 }
 
+// Migrated records a lineage renamed out of the retired Steam Cloud mirror
+// vocabulary into the game's own save location, which is what makes its
+// history restorable again (FDR-005).
+func (r *TrackReport) Migrated(title, omnisaveName string) {
+	r.event(title, omnisaveName+" migrated to the game's own save location")
+}
+
+// MigrationHeld records a mirror-vocabulary lineage this pass could not
+// migrate, and why — its history cannot be restored until a device proves
+// the mapping, which must not look like a lineage in good standing.
+func (r *TrackReport) MigrationHeld(title, omnisaveName, cause string) {
+	r.event(title, omnisaveName+" not migrated — "+cause)
+}
+
 // StoreRegistered records placed files registered with Steam Cloud, which
 // is what lets a game that trusts the store's file registry keep a restore
 // (FDR-005). Only creations and refreshes are worth a sentence; a placement
@@ -593,8 +607,13 @@ type TrackOutcome struct {
 	// Conflicted counts commits the server refused because the Current
 	// Revision moved mid-pass; the next pass reconciles them.
 	Conflicted int
-	Failed     int
-	Synced     bool
+	// Held counts lineages this pass could not work because their paths
+	// still use a retired format and no migration proved out (FDR-005,
+	// decision 14). A held lineage is neither a failure nor a no-op, so it
+	// gets its own tally rather than disappearing from the summary.
+	Held   int
+	Failed int
+	Synced bool
 }
 
 // Changed reports whether the run did anything worth showing.
@@ -605,7 +624,7 @@ func (o TrackOutcome) Changed() bool {
 func (o TrackOutcome) changes() int {
 	return o.Added + o.Linked + o.Untracked + o.Pending + o.Seeded + o.Rebound + o.Jumped +
 		o.Forked + o.Bound + o.Unbound + o.Pushed + o.Pulled + o.Branched + o.Diverged + o.Deferred +
-		o.Conflicted + o.Failed
+		o.Conflicted + o.Held + o.Failed
 }
 
 // TrackSummary prints the closing dim tally.
@@ -660,6 +679,9 @@ func SummaryLine(outcome TrackOutcome) string {
 	}
 	if outcome.Conflicted > 0 {
 		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d conflicted", outcome.Conflicted)))
+	}
+	if outcome.Held > 0 {
+		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d held", outcome.Held)))
 	}
 	if outcome.Failed > 0 {
 		segments = append(segments, errorStyle.Render(fmt.Sprintf("%d failed", outcome.Failed)))

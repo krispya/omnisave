@@ -72,6 +72,9 @@ type Omnisave struct {
 	ID          string `json:"id"`
 	GameID      string `json:"game_id"`
 	DisplayName string `json:"display_name"`
+	// PathFormatVersion is the lineage's explicit location-vocabulary state.
+	// Zero is accepted only while importing records written before version 5.
+	PathFormatVersion int `json:"path_format_version,omitempty"`
 	// CurrentRevisionID is the global snapshot Devices synchronize toward.
 	// It is not derivable once restoring can select any node in the tree.
 	CurrentRevisionID *string `json:"current_revision_id,omitempty"`
@@ -86,9 +89,17 @@ type Omnisave struct {
 	// than to a snapshot: an unlock is an account's event, not part of the
 	// bytes a manifest describes, and the same snapshot restored elsewhere has
 	// earned nothing.
-	Achievements []Achievement        `json:"achievements,omitempty"`
-	ForkedFrom   *omnisave.ForkOrigin `json:"forked_from,omitempty"`
-	CreatedAt    time.Time            `json:"created_at"`
+	Achievements []Achievement `json:"achievements,omitempty"`
+	// PathMigrations records each location-vocabulary rename applied to the
+	// lineage, oldest first. Snapshot manifests are immutable, so renames
+	// live here as durable facts; recovery replays them over imported
+	// manifests to reach the vocabulary the lineage speaks now. Each fact
+	// carries both version endpoints so its meaning does not depend on a
+	// later build's migration table — the same pattern RevisionNames uses to
+	// keep mutable labels out of manifests.
+	PathMigrations []omnisave.PathMigration `json:"path_migrations,omitempty"`
+	ForkedFrom     *omnisave.ForkOrigin     `json:"forked_from,omitempty"`
+	CreatedAt      time.Time                `json:"created_at"`
 	// DeletedAt and DeletedRevisions are version-3 compatibility fields. Open
 	// migrates them to immutable deletion markers before recovery.
 	DeletedAt        *time.Time        `json:"deleted_at,omitempty"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"sort"
 	"time"
@@ -136,6 +137,26 @@ func (r *Repository) rebuild(ctx context.Context, inventory recoveryInventory) (
 	}
 	imported.revisions += count
 	imported.missingObjects += missing
+	// Vocabulary repair, in order: recorded renames are replayed over
+	// whatever paths survived — imported manifests still speak the
+	// vocabulary they were minted in — and then every lineage's path format
+	// is re-derived from the history that resulted. Records and rows
+	// restored from different backups can disagree about the version; the
+	// paths themselves are what a Device will be handed, so they decide.
+	unreplayable, err := r.replayPathMigrations(ctx)
+	if err != nil {
+		return false, err
+	}
+	if err := r.classifyPathFormats(ctx); err != nil {
+		return false, err
+	}
+	for id := range unreplayable {
+		if _, err := r.db.ExecContext(ctx,
+			`UPDATE omnisaves SET path_format_version = ? WHERE id = ?`,
+			omnisave.PathFormatUnclassified, id); err != nil {
+			return false, err
+		}
+	}
 
 	// Marks last, because each one names the revision it landed on and that
 	// node has to be in the database before it can be pointed at.
@@ -323,20 +344,215 @@ func (r *Repository) importOmnisave(ctx context.Context, record store.Omnisave) 
 	if err != nil {
 		return err
 	}
+	migrations, err := r.mergedPathMigrations(ctx, record)
+	if err != nil {
+		return err
+	}
+	// The record's version is written as its provisional claim — including 0,
+	// the unclassified state every mutation guard holds. classifyPathFormats
+	// re-derives the truth from the history once manifests are in place, so
+	// a rebuild that stops early leaves lineages held, never misfiled.
 	_, err = r.db.ExecContext(ctx, `INSERT INTO omnisaves(
-		id, game_id, display_name, current_revision_id,
+		id, game_id, display_name, path_format_version, path_migrations, current_revision_id,
 		forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		game_id = excluded.game_id, display_name = excluded.display_name,
+		path_format_version = excluded.path_format_version,
+		path_migrations = excluded.path_migrations,
 		current_revision_id = excluded.current_revision_id,
 		forked_from_omnisave_id = excluded.forked_from_omnisave_id,
 		forked_from_revision_id = excluded.forked_from_revision_id,
 		created_at = excluded.created_at, metadata = excluded.metadata`,
-		record.ID, record.GameID, record.DisplayName, record.CurrentRevisionID,
-		forkOmnisaveID(record.ForkedFrom), forkRevisionID(record.ForkedFrom),
+		record.ID, record.GameID, record.DisplayName, record.PathFormatVersion, migrations,
+		record.CurrentRevisionID, forkOmnisaveID(record.ForkedFrom), forkRevisionID(record.ForkedFrom),
 		record.CreatedAt.Format(time.RFC3339Nano), string(metadata))
 	return err
+}
+
+// mergedPathMigrations joins the record's migration facts with any the row
+// already holds. Facts are append-only: whichever side of a backup skew
+// remembers more renames wins, so an applied rename is never forgotten by
+// restoring the older artifact.
+func (r *Repository) mergedPathMigrations(ctx context.Context, record store.Omnisave) (string, error) {
+	held := "[]"
+	err := r.db.QueryRowContext(ctx,
+		`SELECT path_migrations FROM omnisaves WHERE id = ?`, record.ID,
+	).Scan(&held)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	known, err := decodePathMigrations(held)
+	if err != nil {
+		return "", err
+	}
+	merged := known
+	for _, fact := range record.PathMigrations {
+		applied := false
+		for _, kept := range known {
+			if kept.Kind == fact.Kind && kept.FromVersion == fact.FromVersion &&
+				kept.ToVersion == fact.ToVersion && kept.From == fact.From && kept.To == fact.To {
+				applied = true
+				break
+			}
+		}
+		if !applied {
+			merged = append(merged, fact)
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].FromVersion < merged[j].FromVersion
+	})
+	if len(merged) == 0 {
+		return "[]", nil
+	}
+	encoded, err := json.Marshal(merged)
+	return string(encoded), err
+}
+
+// replayPathMigrations reapplies each lineage's recorded renames to any of
+// its revision paths still speaking the renamed-away vocabulary. Imported
+// manifests always arrive in the vocabulary they were minted in — snapshot
+// manifests are immutable — so the recorded facts are what carry them
+// forward to the vocabulary the lineage reached. Idempotent: a path already
+// renamed no longer matches its fact's source vocabulary. A fact whose
+// operation, endpoints, source vocabulary, or ordering this build cannot
+// reproduce is not applied; its lineage is returned for classification to
+// hold as unclassified.
+func (r *Repository) replayPathMigrations(ctx context.Context) (map[string]bool, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, path_migrations FROM omnisaves WHERE path_migrations != '[]'`)
+	if err != nil {
+		return nil, err
+	}
+	type recordedMigrations struct {
+		id    string
+		facts []omnisave.PathMigration
+	}
+	var lineages []recordedMigrations
+	for rows.Next() {
+		var id, recorded string
+		if err := rows.Scan(&id, &recorded); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		facts, err := decodePathMigrations(recorded)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		lineages = append(lineages, recordedMigrations{id: id, facts: facts})
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	unreplayable := make(map[string]bool)
+	var replayed int64
+	for _, lineage := range lineages {
+		for index, fact := range lineage.facts {
+			migration, known := omnisave.MigrationFrom(fact.FromVersion)
+			ordered := index == 0 || lineage.facts[index-1].ToVersion == fact.FromVersion
+			if !known || !ordered || fact.Kind != migration.Kind ||
+				fact.ToVersion != migration.ToVersion || fact.From != migration.Location {
+				unreplayable[lineage.id] = true
+				log.Printf("save store: save %s records a path migration this build cannot replay; holding its path format",
+					lineage.id)
+				break
+			}
+		}
+		if unreplayable[lineage.id] {
+			continue
+		}
+		for _, fact := range lineage.facts {
+			prefix := fact.From + "/"
+			result, err := r.db.ExecContext(ctx,
+				`UPDATE revision_files SET path = ? || substr(path, ?)
+				WHERE revision_id IN (SELECT id FROM revisions WHERE omnisave_id = ?)
+				AND substr(path, 1, ?) = ?`,
+				fact.To+"/", len(prefix)+1, lineage.id, len(prefix), prefix)
+			if err != nil {
+				return nil, err
+			}
+			count, err := result.RowsAffected()
+			if err != nil {
+				return nil, err
+			}
+			replayed += count
+		}
+	}
+	if replayed > 0 {
+		log.Printf("save store: replayed recorded path migrations over %d recovered file path(s)", replayed)
+	}
+	return unreplayable, nil
+}
+
+// classifyPathFormats re-derives every lineage's path format from the
+// vocabulary its reachable history speaks, after recorded renames are
+// replayed. Unclassified rows get their first answer here; a classified row
+// is corrected only when its claim disagrees with its paths, which is what
+// repairs a database and a store restored from different moments. The
+// schema migration holds a frozen snapshot of this classification for the
+// one-time upgrade; this is the live copy recovery runs on every open.
+func (r *Repository) classifyPathFormats(ctx context.Context) error {
+	const speaks = `EXISTS (
+		WITH RECURSIVE members(id) AS (
+			SELECT id FROM revisions WHERE omnisave_id = candidate.id
+			UNION SELECT current_revision_id FROM omnisaves
+				WHERE id = candidate.id AND current_revision_id IS NOT NULL
+			UNION SELECT forked_from_revision_id FROM omnisaves
+				WHERE id = candidate.id AND forked_from_revision_id IS NOT NULL
+			UNION SELECT revisions.parent_id FROM revisions JOIN members ON revisions.id = members.id
+				WHERE revisions.parent_id IS NOT NULL
+		)
+		SELECT 1 FROM revision_files WHERE revision_id IN (SELECT id FROM members)
+		AND substr(path, 1, ?) = ?
+	)`
+	var classified int64
+	// Oldest retired format first; a history speaking several keeps the
+	// oldest claim (it is held and refused as mixed either way). Only
+	// location renames are recognizable from paths; a future migration kind
+	// brings its own classifier.
+	notOlder := ""
+	var olderArgs []any
+	for _, migration := range omnisave.PathFormatMigrations() {
+		if migration.Kind != omnisave.MigrationKindLocationRename {
+			continue
+		}
+		query := `UPDATE omnisaves AS candidate SET path_format_version = ?
+			WHERE path_format_version != ? AND ` + speaks + notOlder
+		args := append([]any{migration.FromVersion, migration.FromVersion,
+			len(migration.Location) + 1, migration.Location + "/"}, olderArgs...)
+		result, err := r.db.ExecContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		classified += count
+		notOlder += ` AND NOT ` + speaks
+		olderArgs = append(olderArgs, len(migration.Location)+1, migration.Location+"/")
+	}
+	query := `UPDATE omnisaves AS candidate SET path_format_version = ?
+		WHERE path_format_version != ?` + notOlder
+	args := append([]any{omnisave.PathFormatNative, omnisave.PathFormatNative}, olderArgs...)
+	result, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	classified += count
+	if classified > 0 {
+		log.Printf("save store: classified the path format of %d lineage(s) from their history", classified)
+	}
+	return nil
 }
 
 // importRevisions inserts all lineages parents-first, then restores imported

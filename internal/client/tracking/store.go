@@ -129,6 +129,28 @@ type State struct {
 	// cannot tell this Device's own preservation from an independent lineage
 	// that happens to hold the same bytes for a moment.
 	PendingPreservations map[string]string `json:"pending_preservations,omitempty"`
+	// HeldProofs remembers, per local save and lineage, migration proofs
+	// that failed and the exact evidence they failed against, so passes stop
+	// re-reading a save that can only reach the same verdict.
+	HeldProofs map[string]HeldProof `json:"held_proofs,omitempty"`
+}
+
+// HeldProof pins a failed migration proof to every input that decided it:
+// the local save's file summary, a digest of the lineage's history — the
+// full revision set the proof read, so even a deletion that never moves
+// Current Revision expires the verdict — and whether the save was already
+// bound to this lineage, because an unbound save must clear a stricter bar
+// than a bound one. While all three stand, re-reading and re-hashing the
+// save can only reach the same hold, so a pass skips straight to it; any of
+// them changing retries the proof for real. Server refusals are never
+// recorded here — they can heal without any input changing.
+type HeldProof struct {
+	LocalSignature string `json:"local_signature"`
+	HistoryDigest  string `json:"history_digest,omitempty"`
+	// Bound records that the save was bound to this very lineage when the
+	// proof ran, which is what waives the content-match requirement.
+	Bound bool   `json:"bound,omitempty"`
+	Cause string `json:"cause"`
 }
 
 // EnsureDevice mints the device identity on first use and defaults its name.
@@ -376,6 +398,33 @@ func (s *State) ClearPendingPreservation(local LocalSave) {
 
 func pendingPreservationKey(local LocalSave) string {
 	return localSaveKey(Binding{Adapter: local.Adapter, TargetID: local.TargetID, LocalSaveID: local.ID})
+}
+
+// RecordHeldProof remembers a failed migration proof and its evidence.
+func (s *State) RecordHeldProof(local LocalSave, omnisaveID string, proof HeldProof) {
+	if omnisaveID == "" {
+		return
+	}
+	if s.HeldProofs == nil {
+		s.HeldProofs = make(map[string]HeldProof)
+	}
+	s.HeldProofs[heldProofKey(local, omnisaveID)] = proof
+}
+
+// HeldProofFor reports the failed proof recorded for this save and lineage.
+func (s State) HeldProofFor(local LocalSave, omnisaveID string) (HeldProof, bool) {
+	proof, ok := s.HeldProofs[heldProofKey(local, omnisaveID)]
+	return proof, ok
+}
+
+// ClearHeldProof forgets a recorded proof failure, because the lineage
+// migrated or the evidence it was pinned to no longer stands.
+func (s *State) ClearHeldProof(local LocalSave, omnisaveID string) {
+	delete(s.HeldProofs, heldProofKey(local, omnisaveID))
+}
+
+func heldProofKey(local LocalSave, omnisaveID string) string {
+	return pendingPreservationKey(local) + "\x00" + omnisaveID
 }
 
 // Unbind removes any mapping for a discovered local save.
