@@ -81,7 +81,7 @@ func TestTrackingReattachesALocalSaveThatMatchesOneExistingCurrentRevision(t *te
 	fixture := newBindingFixture(t, "saved-game-content")
 	digest := sha256.Sum256(fixture.content)
 	currentID := "revision-2"
-	remoteSave := omnisave.Omnisave{ID: "omnisave-1", GameID: "server-game-1", CurrentRevisionID: &currentID}
+	remoteSave := omnisave.Omnisave{ID: "omnisave-1", GameID: "server-game-1", PathFormatVersion: omnisave.PathFormatNative, CurrentRevisionID: &currentID}
 	history := []omnisave.Revision{
 		{
 			ID:         "revision-1",
@@ -145,7 +145,7 @@ func TestTrackingCanJumpAStaleLocalSaveToTheCurrentRevision(t *testing.T) {
 	fixture := newBindingFixture(t, "old-progress")
 	currentID := "revision-2"
 	remoteSave := omnisave.Omnisave{
-		ID: "omnisave-1", GameID: "server-game-1", DisplayName: "New Game+", CurrentRevisionID: &currentID,
+		ID: "omnisave-1", GameID: "server-game-1", PathFormatVersion: omnisave.PathFormatNative, DisplayName: "New Game+", CurrentRevisionID: &currentID,
 	}
 	matched := testRevision("revision-1", remoteSave.ID, "old-progress")
 	current := testRevision(currentID, remoteSave.ID, "new-progress")
@@ -196,14 +196,14 @@ func TestTrackingCanForkAStaleLocalSaveAtItsMatchingRevision(t *testing.T) {
 	fixture := newBindingFixture(t, "old-progress")
 	currentID := "revision-2"
 	remoteSave := omnisave.Omnisave{
-		ID: "omnisave-1", GameID: "server-game-1", DisplayName: "New Game+", CurrentRevisionID: &currentID,
+		ID: "omnisave-1", GameID: "server-game-1", PathFormatVersion: omnisave.PathFormatNative, DisplayName: "New Game+", CurrentRevisionID: &currentID,
 	}
 	matched := testRevision("revision-1", remoteSave.ID, "old-progress")
 	current := testRevision(currentID, remoteSave.ID, "new-progress")
 	forkTip := "fork-revision-1"
 	fork := omnisave.ForkResult{
 		Omnisave: omnisave.Omnisave{
-			ID: "omnisave-fork", GameID: remoteSave.GameID, DisplayName: "New Game+ (fork)", CurrentRevisionID: &forkTip,
+			ID: "omnisave-fork", GameID: remoteSave.GameID, PathFormatVersion: omnisave.PathFormatNative, DisplayName: "New Game+ (fork)", CurrentRevisionID: &forkTip,
 		},
 		Revision: omnisave.Revision{ID: forkTip, OmnisaveID: "omnisave-fork", Files: matched.Files},
 	}
@@ -265,7 +265,7 @@ func TestAReverseStaleSaveGetsTheStalePromptAndCanAdoptTheOlderCurrent(t *testin
 	fixture := newBindingFixture(t, "descendant-progress")
 	currentID := "revision-1"
 	remoteSave := omnisave.Omnisave{
-		ID: "omnisave-1", GameID: "server-game-1", DisplayName: "New Game+", CurrentRevisionID: &currentID,
+		ID: "omnisave-1", GameID: "server-game-1", PathFormatVersion: omnisave.PathFormatNative, DisplayName: "New Game+", CurrentRevisionID: &currentID,
 	}
 	current := testRevision(currentID, remoteSave.ID, "restored-progress")
 	descendant := testRevision("revision-2", remoteSave.ID, "descendant-progress")
@@ -321,14 +321,14 @@ func TestAReverseStaleSaveCanForkToKeepItsDescendantContent(t *testing.T) {
 	fixture := newBindingFixture(t, "descendant-progress")
 	currentID := "revision-1"
 	remoteSave := omnisave.Omnisave{
-		ID: "omnisave-1", GameID: "server-game-1", DisplayName: "New Game+", CurrentRevisionID: &currentID,
+		ID: "omnisave-1", GameID: "server-game-1", PathFormatVersion: omnisave.PathFormatNative, DisplayName: "New Game+", CurrentRevisionID: &currentID,
 	}
 	current := testRevision(currentID, remoteSave.ID, "restored-progress")
 	descendant := testRevision("revision-2", remoteSave.ID, "descendant-progress")
 	forkTip := "fork-revision-1"
 	fork := omnisave.ForkResult{
 		Omnisave: omnisave.Omnisave{
-			ID: "omnisave-fork", GameID: remoteSave.GameID, DisplayName: "New Game+ (fork)", CurrentRevisionID: &forkTip,
+			ID: "omnisave-fork", GameID: remoteSave.GameID, PathFormatVersion: omnisave.PathFormatNative, DisplayName: "New Game+ (fork)", CurrentRevisionID: &forkTip,
 		},
 		Revision: omnisave.Revision{ID: forkTip, OmnisaveID: "omnisave-fork", Files: descendant.Files},
 	}
@@ -438,7 +438,7 @@ func TestAnUnboundSaveStillSeedsWhenTheServerHasNoSaves(t *testing.T) {
 		case request.URL.Path == "/api/v1/omnisaves" && request.Method == http.MethodPost:
 			seeded = true
 			response.WriteHeader(http.StatusCreated)
-			writeTestJSON(t, response, omnisave.Omnisave{ID: "omnisave-new", GameID: "server-game-1", DisplayName: "Save 1"})
+			writeTestJSON(t, response, omnisave.Omnisave{ID: "omnisave-new", GameID: "server-game-1", PathFormatVersion: omnisave.PathFormatNative, DisplayName: "Save 1"})
 		case request.URL.Path == "/api/v1/omnisaves/omnisave-new/revisions":
 			response.WriteHeader(http.StatusCreated)
 			writeTestJSON(t, response, omnisave.Revision{ID: currentID, OmnisaveID: "omnisave-new"})
@@ -472,7 +472,7 @@ func TestFreshDeviceCanChooseAndMaterializeAnExistingServerSave(t *testing.T) {
 	destination := filepath.Join(directory, "saves", "Chrono Trigger.srm")
 	currentID := "revision-2"
 	remoteSave := omnisave.Omnisave{
-		ID: "omnisave-1", GameID: "server-game-1", DisplayName: "Main Playthrough", CurrentRevisionID: &currentID,
+		ID: "omnisave-1", GameID: "server-game-1", PathFormatVersion: omnisave.PathFormatNative, DisplayName: "Main Playthrough", CurrentRevisionID: &currentID,
 	}
 	current := testRevision(currentID, remoteSave.ID, "server-progress")
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -742,8 +742,8 @@ func TestASaveMatchingTwoForkedLineagesBindsAtTheChosenRevision(t *testing.T) {
 	first := "revision-a"
 	second := "revision-b"
 	remoteSaves := []omnisave.Omnisave{
-		{ID: "omnisave-1", GameID: "server-game-1", DisplayName: "Save 1", CurrentRevisionID: &first},
-		{ID: "omnisave-2", GameID: "server-game-1", DisplayName: "Save 1 (fork)", CurrentRevisionID: &second},
+		{ID: "omnisave-1", GameID: "server-game-1", PathFormatVersion: omnisave.PathFormatNative, DisplayName: "Save 1", CurrentRevisionID: &first},
+		{ID: "omnisave-2", GameID: "server-game-1", PathFormatVersion: omnisave.PathFormatNative, DisplayName: "Save 1 (fork)", CurrentRevisionID: &second},
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
@@ -791,14 +791,14 @@ func TestAnUnmatchedLocalSaveCanCreateANewSave(t *testing.T) {
 		switch {
 		case request.URL.Path == "/api/v1/omnisaves" && request.Method == http.MethodGet:
 			writeTestJSON(t, response, []omnisave.Omnisave{
-				{ID: "omnisave-1", GameID: "server-game-1", DisplayName: "Save 1", CurrentRevisionID: &current},
+				{ID: "omnisave-1", GameID: "server-game-1", PathFormatVersion: omnisave.PathFormatNative, DisplayName: "Save 1", CurrentRevisionID: &current},
 			})
 		case request.URL.Path == "/api/v1/omnisaves/omnisave-1/revisions":
 			writeTestJSON(t, response, []omnisave.Revision{testRevision(current, "omnisave-1", "other-content")})
 		case request.URL.Path == "/api/v1/omnisaves" && request.Method == http.MethodPost:
 			seeded = true
 			response.WriteHeader(http.StatusCreated)
-			writeTestJSON(t, response, omnisave.Omnisave{ID: "omnisave-new", GameID: "server-game-1", DisplayName: "Save 2"})
+			writeTestJSON(t, response, omnisave.Omnisave{ID: "omnisave-new", GameID: "server-game-1", PathFormatVersion: omnisave.PathFormatNative, DisplayName: "Save 2"})
 		case request.URL.Path == "/api/v1/omnisaves/omnisave-new/revisions":
 			response.WriteHeader(http.StatusCreated)
 			writeTestJSON(t, response, omnisave.Revision{ID: "seed-revision", OmnisaveID: "omnisave-new"})

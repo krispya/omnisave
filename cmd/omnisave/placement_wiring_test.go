@@ -60,7 +60,7 @@ func TestAPullFinishesThePlacementWithTheAdapter(t *testing.T) {
 
 	currentID := "revision-2"
 	remoteSave := omnisave.Omnisave{
-		ID: "omnisave-1", GameID: "server-game-1", DisplayName: "Journey", CurrentRevisionID: &currentID,
+		ID: "omnisave-1", GameID: "server-game-1", PathFormatVersion: omnisave.PathFormatNative, DisplayName: "Journey", CurrentRevisionID: &currentID,
 	}
 	baseline := testRevision("revision-1", remoteSave.ID, "old-progress")
 	current := testRevision(currentID, remoteSave.ID, "new-progress")
@@ -131,7 +131,7 @@ func TestAPullHandsTheFinisherFilesTheRevisionRestored(t *testing.T) {
 
 	currentID := "revision-2"
 	remoteSave := omnisave.Omnisave{
-		ID: "omnisave-1", GameID: "server-game-1", DisplayName: "Journey", CurrentRevisionID: &currentID,
+		ID: "omnisave-1", GameID: "server-game-1", PathFormatVersion: omnisave.PathFormatNative, DisplayName: "Journey", CurrentRevisionID: &currentID,
 	}
 	baseline := testRevision("revision-1", remoteSave.ID, "old-progress")
 	current := testRevision(currentID, remoteSave.ID, "new-progress")
