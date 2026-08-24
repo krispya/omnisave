@@ -3,11 +3,13 @@ package omnisave
 
 import "time"
 
-// Omnisave identifies one independently versioned game save.
+// Omnisave identifies one independently versioned game save. Path-format
+// versions and the retired-location vocabulary live in pathformat.go.
 type Omnisave struct {
 	ID                string      `json:"id"`
 	GameID            string      `json:"game_id"`
 	DisplayName       string      `json:"display_name"`
+	PathFormatVersion int         `json:"path_format_version"`
 	CurrentRevisionID *string     `json:"current_revision_id"`
 	ForkedFrom        *ForkOrigin `json:"forked_from,omitempty"`
 	CreatedAt         time.Time   `json:"created_at"`
@@ -141,6 +143,27 @@ type CreateRevision struct {
 type RestoreRevision struct {
 	ExpectedCurrentRevisionID *string `json:"expected_current_revision_id"`
 	RevisionID                string  `json:"revision_id"`
+}
+
+// MigrateLocations renames one lineage's location vocabulary: every file
+// path `From/rest` across the save's own revisions becomes `To/Prefix/rest`
+// (or `To/rest` with an empty Prefix). It is a rename and nothing more —
+// artifacts, revision identities, ancestry, and achievements are untouched
+// — used to move a lineage minted under a store's transport spelling into
+// the vocabulary of the folder the game itself reads (FDR-003, decision
+// 10). The caller owns the evidence that the mapping is real; the server
+// only refuses rewrites that could not be a whole lineage's rename.
+type MigrateLocations struct {
+	ExpectedPathFormatVersion int    `json:"expected_path_format_version"`
+	To                        string `json:"to"`
+	Prefix                    string `json:"prefix,omitempty"`
+}
+
+// MigrationResult reports what a location migration renamed.
+type MigrationResult struct {
+	PathFormatVersion int `json:"path_format_version"`
+	Revisions         int `json:"revisions"`
+	Files             int `json:"files"`
 }
 
 // ForkOmnisave creates a new selectable lineage from an existing snapshot.

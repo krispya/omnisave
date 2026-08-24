@@ -20,7 +20,7 @@ import (
 )
 
 // Version is the store format written by this package. Newer formats are rejected.
-const Version = 4
+const Version = 5
 
 const (
 	versionFile   = "VERSION"

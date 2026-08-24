@@ -524,6 +524,40 @@ var migrations = []string{
 	// created_at, when it reached the server. Null for revisions committed
 	// before clients reported it.
 	`ALTER TABLE revisions ADD COLUMN saved_at TEXT;`,
+
+	// Location vocabulary became explicit after mirror-backed saves retired.
+	// Existing lineages are classified once from their reachable history;
+	// normal synchronization never needs to infer the version from paths.
+	// Version 0 is the unclassified state only store recovery writes: every
+	// mutation guard requires native (2), so a lineage recovery could not
+	// classify yet is held rather than passed off as native.
+	//
+	// path_migrations records each applied vocabulary rename as a durable
+	// fact. Snapshot manifests are immutable, so recovery replays these
+	// facts over imported manifests to reach the vocabulary the lineage
+	// speaks now.
+	//
+	// The classification below is a frozen snapshot of the rule recovery
+	// applies live in rebuild.go; the two evolve separately on purpose.
+	`ALTER TABLE omnisaves ADD COLUMN path_format_version INTEGER NOT NULL DEFAULT 2
+		CHECK (path_format_version IN (0, 1, 2));
+	ALTER TABLE omnisaves ADD COLUMN path_migrations TEXT NOT NULL DEFAULT '[]';
+
+	UPDATE omnisaves AS candidate SET path_format_version = 1
+	WHERE EXISTS (
+		WITH RECURSIVE members(id) AS (
+			SELECT id FROM revisions WHERE omnisave_id = candidate.id
+			UNION SELECT current_revision_id FROM omnisaves
+				WHERE id = candidate.id AND current_revision_id IS NOT NULL
+			UNION SELECT forked_from_revision_id FROM omnisaves
+				WHERE id = candidate.id AND forked_from_revision_id IS NOT NULL
+			UNION SELECT revisions.parent_id FROM revisions JOIN members ON revisions.id = members.id
+				WHERE revisions.parent_id IS NOT NULL
+		)
+		SELECT 1 FROM revision_files
+		WHERE revision_id IN (SELECT id FROM members)
+		AND substr(path, 1, 7) = 'remote/'
+	);`,
 }
 
 func migrate(db *sql.DB) error {

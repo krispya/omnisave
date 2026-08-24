@@ -260,6 +260,17 @@ func (c *Client) DeleteOmnisave(ctx context.Context, id string) error {
 	return c.send(ctx, http.MethodDelete, "/api/v1/omnisaves/"+url.PathEscape(id), nil)
 }
 
+// MigrateLocations renames one lineage's location vocabulary on the server;
+// see omnisave.MigrateLocations for the contract.
+func (c *Client) MigrateLocations(ctx context.Context, id string, input omnisave.MigrateLocations) (*omnisave.MigrationResult, error) {
+	var result omnisave.MigrationResult
+	path := "/api/v1/omnisaves/" + url.PathEscape(id) + "/migrate-locations"
+	if err := c.postJSON(ctx, path, input, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // ForkOmnisave creates a new lineage from one revision of an existing save.
 func (c *Client) ForkOmnisave(ctx context.Context, id string, input omnisave.ForkOmnisave) (*omnisave.ForkResult, error) {
 	var fork omnisave.ForkResult
@@ -371,12 +382,15 @@ func postJSON(ctx context.Context, httpClient *http.Client, url, token string, p
 
 // decodeErrorResponse surfaces structured API errors the client acts on —
 // a commit rejected for missing artifacts carries exactly which content to
-// upload, a stale commit carries where the Current Revision actually is —
-// and reports everything else by status.
+// upload, a stale commit carries where the Current Revision actually is, a
+// refused migration carries the reason the hold report must show, and a
+// write refused because the lineage is not native says so as itself rather
+// than as a bare conflict — and reports everything else by status.
 func decodeErrorResponse(response *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(response.Body, maxResponseBody))
 	var details struct {
 		Error                   string   `json:"error"`
+		Reason                  string   `json:"reason"`
 		MissingSHA256           []string `json:"missing_sha256"`
 		ActualCurrentRevisionID *string  `json:"actual_current_revision_id"`
 	}
@@ -386,6 +400,13 @@ func decodeErrorResponse(response *http.Response) error {
 			return &omnisave.MissingArtifacts{SHA256: details.MissingSHA256}
 		case "current_revision_conflict":
 			return &CurrentRevisionConflict{ActualCurrentRevisionID: details.ActualCurrentRevisionID}
+		case "migration_refused":
+			return &omnisave.MigrationRefused{Reason: details.Reason}
+		case "path_format_migration_required":
+			// The lineage went legacy between this pass's listing and the
+			// write — a recovery reclassified it. Naming the error keeps the
+			// caller reporting a hold instead of a generic conflict.
+			return omnisave.ErrPathFormatMigrationRequired
 		}
 	}
 	return &ResponseError{StatusCode: response.StatusCode}
