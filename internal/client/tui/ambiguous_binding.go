@@ -71,6 +71,31 @@ func promptUnmatchedBinding(gameTitle string, options []AmbiguousBindingOption) 
 	return AmbiguousBindingChoice{OmnisaveID: selected}, nil
 }
 
+// PromptHeldLineageSeed asks before starting a new save for a game whose
+// existing lineages are all held awaiting path-format migration. A new save
+// cannot rejoin a held lineage that later migrates, so splitting the game's
+// history is the user's call, never a silent default.
+func PromptHeldLineageSeed(gameTitle string) (bool, error) {
+	action := heldLineageWait
+	prompt := huh.NewSelect[string]().
+		Title("Existing saves are held for migration").
+		Description("A new save cannot rejoin them later.").
+		Options(
+			huh.NewOption("Wait for migration", heldLineageWait),
+			huh.NewOption("Create a new save", heldLineageCreate),
+		).
+		Value(&action)
+	if err := huh.NewForm(huh.NewGroup(prompt).Title(gameTitle)).WithTheme(trackingTheme()).Run(); err != nil {
+		return false, bindingPromptError(err)
+	}
+	return action == heldLineageCreate, nil
+}
+
+const (
+	heldLineageWait   = "wait"
+	heldLineageCreate = "create"
+)
+
 func bindingPromptError(err error) error {
 	if errors.Is(err, huh.ErrUserAborted) {
 		return ErrAborted

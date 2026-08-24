@@ -9,8 +9,84 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	"github.com/krisbaumgartner/omnisave/internal/storage"
 )
+
+// The path-format migration classifies legacy data once at schema upgrade.
+// Both an owning lineage and a fork that reaches its mirror ancestor remain
+// v1; a native lineage starts at the current format without any sync-time
+// inspection.
+func TestMigrationVersionsExistingLineagePathFormats(t *testing.T) {
+	ctx := context.Background()
+	databasePath := filepath.Join(t.TempDir(), "omnisave.db")
+	db, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	for index, migration := range migrations[:len(migrations)-1] {
+		if _, err := db.Exec(migration); err != nil {
+			t.Fatalf("apply migration %d: %v", index+1, err)
+		}
+		if _, err := db.Exec(`INSERT INTO schema_migrations(version) VALUES (?)`, index+1); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, statement := range []struct {
+		query     string
+		arguments []any
+	}{
+		{`INSERT INTO omnisaves(id, game_id, display_name, current_revision_id,
+			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata)
+			VALUES (?, 'game', ?, ?, NULL, NULL, ?, '{}')`, []any{"mirror", "Mirror", "mirror-r1", now}},
+		{`INSERT INTO omnisaves(id, game_id, display_name, current_revision_id,
+			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata)
+			VALUES (?, 'game', ?, ?, ?, ?, ?, '{}')`, []any{"fork", "Fork", "mirror-r1", "mirror", "mirror-r1", now}},
+		{`INSERT INTO omnisaves(id, game_id, display_name, current_revision_id,
+			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata)
+			VALUES (?, 'game', ?, ?, NULL, NULL, ?, '{}')`, []any{"native", "Native", "native-r1", now}},
+		{`INSERT INTO revisions(id, game_id, omnisave_id, display_name, name_source,
+			parent_id, created_at, saved_at, metadata) VALUES (?, 'game', ?, '', '', NULL, ?, NULL, '{}')`,
+			[]any{"mirror-r1", "mirror", now}},
+		{`INSERT INTO revisions(id, game_id, omnisave_id, display_name, name_source,
+			parent_id, created_at, saved_at, metadata) VALUES (?, 'game', ?, '', '', NULL, ?, NULL, '{}')`,
+			[]any{"native-r1", "native", now}},
+		{`INSERT INTO artifacts(sha256, size, available) VALUES ('mirror-hash', 1, 1)`, nil},
+		{`INSERT INTO artifacts(sha256, size, available) VALUES ('native-hash', 1, 1)`, nil},
+		{`INSERT INTO revision_files(revision_id, path, artifact_format, artifact_sha256, artifact_size)
+			VALUES ('mirror-r1', 'remote/save.dat', 'application/octet-stream', 'mirror-hash', 1)`, nil},
+		{`INSERT INTO revision_files(revision_id, path, artifact_format, artifact_sha256, artifact_size)
+			VALUES ('native-r1', 'battery/save.dat', 'application/octet-stream', 'native-hash', 1)`, nil},
+	} {
+		if _, err := db.ExecContext(ctx, statement.query, statement.arguments...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	for id, expected := range map[string]int{
+		"mirror": omnisave.PathFormatMirror,
+		"fork":   omnisave.PathFormatMirror,
+		"native": omnisave.PathFormatNative,
+	} {
+		var actual int
+		if err := db.QueryRowContext(ctx,
+			`SELECT path_format_version FROM omnisaves WHERE id = ?`, id,
+		).Scan(&actual); err != nil {
+			t.Fatal(err)
+		}
+		if actual != expected {
+			t.Fatalf("%s path format = %d, want %d", id, actual, expected)
+		}
+	}
+}
 
 // The shared-ancestry migration turns head_revision_id into the movable Current
 // Revision, and adopts forks made before shared ancestry: such a fork owns a

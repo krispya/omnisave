@@ -73,7 +73,13 @@ func FindContentMatchesContext(ctx context.Context, save target.Save, lineages [
 	if err != nil {
 		return nil, err
 	}
+	return FindManifestMatches(manifest, save, lineages), nil
+}
 
+// FindManifestMatches compares an already-prepared manifest of save against
+// every revision in each lineage, for callers that computed the manifest for
+// another decision in the same pass and should not read the save twice.
+func FindManifestMatches(manifest []omnisave.RevisionFile, save target.Save, lineages []Lineage) []ContentMatch {
 	var matches []ContentMatch
 	for _, lineage := range lineages {
 		match := ContentMatch{Omnisave: lineage.Omnisave}
@@ -86,7 +92,7 @@ func FindContentMatchesContext(ctx context.Context, save target.Save, lineages [
 			matches = append(matches, match)
 		}
 	}
-	return matches, nil
+	return matches
 }
 
 // Manifest reads a local save into the canonical, content-addressed file list

@@ -38,7 +38,7 @@ func TestProvesAnAccountPrefixedMapping(t *testing.T) {
 		"remote/profile.save":                 "hash-profile",
 		"remote/profile1/saves/progress.save": "old-progress",
 	})
-	proof, proven := ProveLocationMigration(manifest, history)
+	proof, proven := ProveLocationMigration(omnisave.MirrorLocation, manifest, history)
 	if !proven {
 		t.Fatal("expected a proof")
 	}
@@ -48,6 +48,9 @@ func TestProvesAnAccountPrefixedMapping(t *testing.T) {
 	if proof.Corroborated != 1 {
 		t.Fatalf("corroborated = %d", proof.Corroborated)
 	}
+	if proof.ContentMatched {
+		t.Fatal("one matching file is not a complete historical content match")
+	}
 }
 
 func TestProvesAFlatMapping(t *testing.T) {
@@ -56,11 +59,32 @@ func TestProvesAFlatMapping(t *testing.T) {
 		"e986be36/undertale.ini": "hash-b",
 	})
 	history := mirrorHistory(map[string]string{
-		"remote/file0": "hash-a",
+		"remote/file0":         "hash-a",
+		"remote/undertale.ini": "hash-b",
 	})
-	proof, proven := ProveLocationMigration(manifest, history)
+	proof, proven := ProveLocationMigration(omnisave.MirrorLocation, manifest, history)
 	if !proven || proof.To != "e986be36" || proof.Prefix != "" {
 		t.Fatalf("proof = %+v, proven = %v", proof, proven)
+	}
+	if !proof.ContentMatched {
+		t.Fatal("the complete historical snapshot should match local content")
+	}
+}
+
+func TestContentMatchRefusesExtraLocalFiles(t *testing.T) {
+	manifest := manifestOf(map[string]string{
+		"e986be36/file0":         "hash-a",
+		"e986be36/undertale.ini": "hash-b",
+	})
+	history := mirrorHistory(map[string]string{
+		"remote/file0": "hash-a",
+	})
+	proof, proven := ProveLocationMigration(omnisave.MirrorLocation, manifest, history)
+	if !proven {
+		t.Fatal("the shared filename should still prove the location mapping")
+	}
+	if proof.ContentMatched {
+		t.Fatal("a historical subset must not associate an unbound save with the lineage")
 	}
 }
 
@@ -70,7 +94,7 @@ func TestRefusesAmbiguousAndConflictingEvidence(t *testing.T) {
 		"loc/a/SaveData": "x",
 		"loc/b/SaveData": "y",
 	})
-	if _, proven := ProveLocationMigration(ambiguous, mirrorHistory(map[string]string{
+	if _, proven := ProveLocationMigration(omnisave.MirrorLocation, ambiguous, mirrorHistory(map[string]string{
 		"remote/SaveData": "x",
 	})); proven {
 		t.Fatal("an ambiguous name must not prove a mapping")
@@ -80,7 +104,7 @@ func TestRefusesAmbiguousAndConflictingEvidence(t *testing.T) {
 		"loc/one/alpha.sav": "x",
 		"loc/two/beta.sav":  "y",
 	})
-	if _, proven := ProveLocationMigration(conflicting, mirrorHistory(map[string]string{
+	if _, proven := ProveLocationMigration(omnisave.MirrorLocation, conflicting, mirrorHistory(map[string]string{
 		"remote/alpha.sav": "x",
 		"remote/beta.sav":  "y",
 	})); proven {
@@ -90,21 +114,15 @@ func TestRefusesAmbiguousAndConflictingEvidence(t *testing.T) {
 
 func TestRefusesImpureAndUnmatchedLineages(t *testing.T) {
 	manifest := manifestOf(map[string]string{"loc/save.dat": "x"})
-	if _, proven := ProveLocationMigration(manifest, mirrorHistory(map[string]string{
+	if _, proven := ProveLocationMigration(omnisave.MirrorLocation, manifest, mirrorHistory(map[string]string{
 		"remote/save.dat": "x",
 		"other/file.dat":  "y",
 	})); proven {
 		t.Fatal("a lineage speaking two locations is not a mirror lineage")
 	}
-	if _, proven := ProveLocationMigration(manifest, mirrorHistory(map[string]string{
+	if _, proven := ProveLocationMigration(omnisave.MirrorLocation, manifest, mirrorHistory(map[string]string{
 		"remote/unheard-of.bin": "x",
 	})); proven {
 		t.Fatal("a lineage matching nothing proves no anchor")
-	}
-	if SpeaksMirror(mirrorHistory(map[string]string{"loc/save.dat": "x"})) {
-		t.Fatal("a rule-vocabulary lineage does not speak the mirror")
-	}
-	if !SpeaksMirror(mirrorHistory(map[string]string{"remote/save.dat": "x"})) {
-		t.Fatal("a mirror lineage speaks the mirror")
 	}
 }

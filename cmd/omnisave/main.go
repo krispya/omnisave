@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -38,6 +40,10 @@ import (
 // errReported marks failures already rendered by the TUI: exit non-zero
 // without printing a second, plainer copy of the error.
 var errReported = errors.New("failure already reported")
+
+// errMigrationHeld is an internal control result: the reason is already in
+// the report, and the legacy lineage must not enter ordinary reconciliation.
+var errMigrationHeld = errors.New("lineage path-format migration held")
 
 // Build metadata is replaced at build time for distributed binaries.
 var (
@@ -606,6 +612,12 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 				})
 				return choice, err
 			},
+			heldSeed: func(gameTitle string) (create bool, err error) {
+				session.Interact(func() {
+					create, err = tui.PromptHeldLineageSeed(gameTitle)
+				})
+				return create, err
+			},
 			diverged: func(question tui.DivergedQuestion) (choice tui.DivergedBindingChoice, err error) {
 				session.Interact(func() {
 					choice, err = tui.PromptDivergedBinding(question)
@@ -866,6 +878,9 @@ type reconcilePrompts struct {
 	stale     func(question tui.StaleQuestion) (tui.StaleBindingChoice, error)
 	ambiguous func(gameTitle string, options []tui.AmbiguousBindingOption) (tui.AmbiguousBindingChoice, error)
 	diverged  func(question tui.DivergedQuestion) (tui.DivergedBindingChoice, error)
+	// heldSeed asks before seeding a new lineage for a game whose existing
+	// lineages are held for migration; unanswered means wait.
+	heldSeed func(gameTitle string) (bool, error)
 }
 
 // errUnanswered is how a replayed answer says a question is not the one it
@@ -888,6 +903,7 @@ func interactivePrompts() *reconcilePrompts {
 		stale:     tui.PromptStaleBinding,
 		ambiguous: tui.PromptAmbiguousBinding,
 		diverged:  tui.PromptDivergedBinding,
+		heldSeed:  tui.PromptHeldLineageSeed,
 	}
 }
 
@@ -916,6 +932,132 @@ func working(ctx context.Context, report *tui.TrackReport, title string) {
 	// rather than in the header the pass had just been speaking from.
 	report.Working(title)
 	activity.Report(ctx, "checking "+title)
+}
+
+// lineagePass is one reconciliation pass's view of the server's lineages:
+// the single authority every consumer reads saves, histories, and
+// path-format state through, so an in-pass migration is visible everywhere
+// at once instead of wherever a copy happened to be taken.
+type lineagePass struct {
+	server    *remote.Client
+	saves     map[string]*omnisave.Omnisave
+	byGame    map[string][]string
+	histories map[string][]omnisave.Revision
+	loaded    map[string]bool
+}
+
+func newLineagePass(server *remote.Client, saves []omnisave.Omnisave) *lineagePass {
+	pass := &lineagePass{
+		server:    server,
+		saves:     make(map[string]*omnisave.Omnisave, len(saves)),
+		byGame:    make(map[string][]string),
+		histories: make(map[string][]omnisave.Revision),
+		loaded:    make(map[string]bool),
+	}
+	for _, listed := range saves {
+		save := listed
+		pass.saves[save.ID] = &save
+		pass.byGame[save.GameID] = append(pass.byGame[save.GameID], save.ID)
+	}
+	return pass
+}
+
+// save is the current record for one lineage, reflecting any migration this
+// pass has already performed.
+func (p *lineagePass) save(id string) (omnisave.Omnisave, bool) {
+	save, exists := p.saves[id]
+	if !exists {
+		return omnisave.Omnisave{}, false
+	}
+	return *save, true
+}
+
+// gameSaves lists a game's lineages as they stand right now.
+func (p *lineagePass) gameSaves(gameID string) []omnisave.Omnisave {
+	ids := p.byGame[gameID]
+	saves := make([]omnisave.Omnisave, 0, len(ids))
+	for _, id := range ids {
+		saves = append(saves, *p.saves[id])
+	}
+	return saves
+}
+
+// history fetches one lineage's revisions at most once per pass.
+func (p *lineagePass) history(ctx context.Context, id string) ([]omnisave.Revision, error) {
+	if !p.loaded[id] {
+		history, err := p.server.ListRevisions(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		p.histories[id] = history
+		p.loaded[id] = true
+	}
+	return p.histories[id], nil
+}
+
+// migrated records a completed in-pass migration: the version advances for
+// every reader and the cached history is dropped so the next read sees the
+// renamed paths.
+func (p *lineagePass) migrated(id string, version int) {
+	if save, exists := p.saves[id]; exists {
+		save.PathFormatVersion = version
+	}
+	delete(p.histories, id)
+	delete(p.loaded, id)
+}
+
+// memoManifest reads and hashes a save at most once per candidate, however
+// many decisions need the manifest in one pass.
+func memoManifest(ctx context.Context, save target.Save) func() ([]omnisave.RevisionFile, error) {
+	var manifest []omnisave.RevisionFile
+	var err error
+	ready := false
+	return func() ([]omnisave.RevisionFile, error) {
+		if !ready {
+			ready = true
+			manifest, err = binding.ManifestContext(ctx, save)
+		}
+		return manifest, err
+	}
+}
+
+// historyProofDigest summarizes everything a migration proof reads from a
+// lineage's history — the revision set and each file's path and content
+// identity — so a remembered verdict expires on any history change,
+// including a deletion that never moves Current Revision.
+func historyProofDigest(history []omnisave.Revision) string {
+	digest := sha256.New()
+	for _, revision := range history {
+		fmt.Fprintf(digest, "%s\n", revision.ID)
+		for _, file := range revision.Files {
+			fmt.Fprintf(digest, "%s\x00%s\x00%d\n", file.Path, file.Artifact.SHA256, file.Artifact.Size)
+		}
+	}
+	return hex.EncodeToString(digest.Sum(nil))
+}
+
+// migrationRefusalCause spells a server's migration refusal as the hold
+// report's cause sentence; every other error keeps its generic cause.
+func migrationRefusalCause(err error) string {
+	var refused *omnisave.MigrationRefused
+	if !errors.As(err, &refused) {
+		return tui.Cause(err)
+	}
+	switch refused.Reason {
+	case omnisave.MigrationRefusedForkFamily:
+		return "the lineage shares history with a fork"
+	case omnisave.MigrationRefusedMixed:
+		return "the lineage's history mixes location vocabularies"
+	case omnisave.MigrationRefusedEmpty:
+		return "the lineage has nothing left to rename"
+	case omnisave.MigrationRefusedUnknownVersion:
+		return "the server knows no migration for this lineage's path format"
+	case omnisave.MigrationRefusedVersion:
+		return "the server sees a different path format"
+	case omnisave.MigrationRefusedPathLength:
+		return "the renamed paths would be too long"
+	}
+	return tui.Cause(err)
 }
 
 func reconcileSaves(
@@ -988,71 +1130,108 @@ func reconcileSaves(
 		report.BindingFailed(err)
 		return nil
 	}
-	savesByID := make(map[string]omnisave.Omnisave, len(remoteSaves))
-	savesByGame := make(map[string][]omnisave.Omnisave)
-	for _, save := range remoteSaves {
-		savesByID[save.ID] = save
-		savesByGame[save.GameID] = append(savesByGame[save.GameID], save)
-	}
-	histories := make(map[string][]omnisave.Revision)
-	historyLoaded := make(map[string]bool)
-	loadHistory := func(omnisaveID string) ([]omnisave.Revision, error) {
-		if !historyLoaded[omnisaveID] {
-			history, err := server.ListRevisions(ctx, omnisaveID)
-			if err != nil {
-				return nil, err
-			}
-			histories[omnisaveID] = history
-			historyLoaded[omnisaveID] = true
-		}
-		return histories[omnisaveID], nil
-	}
+	lineages := newLineagePass(server, remoteSaves)
 
-	// Lineages minted under the retired mirror vocabulary migrate to the
-	// game's own the moment a device can prove the mapping (FDR-005). The
-	// attempt rides on histories the pass was loading anyway — a settled
-	// save keeps costing no history request — so migration happens exactly
-	// when a lineage is being worked: matched, adopted, verified, or
-	// restored. A lineage that stays unproven is reported, not skipped
-	// silently, since its history cannot be restored until it migrates and
-	// only a device holding the native save can supply the evidence.
-	migratingLoader := func(save target.Save, title string) func(string) ([]omnisave.Revision, error) {
-		var manifest []omnisave.RevisionFile
-		var manifestErr error
-		manifestReady := false
-		attempted := make(map[string]bool)
+	// A lineage's persisted path-format version decides whether it may enter
+	// ordinary reconciliation. Only native admits; a retired version is
+	// migrated or held; and a version nobody persisted — a server that
+	// predates the field, or a recovery that has not classified yet — holds
+	// outright, because classification can pick a migration but never stand
+	// in for the server's answer. A held lineage never reaches ordinary
+	// reconciliation: mixing a native commit into it would destroy the total
+	// rename the upgrade requires.
+	migratingLoader := func(local tracking.LocalSave, save target.Save,
+		readManifest func() ([]omnisave.RevisionFile, error)) func(string) ([]omnisave.Revision, error) {
+		// held is per candidate: another local save of the same game may
+		// hold different evidence and must get its own attempt.
+		held := make(map[string]bool)
 		return func(omnisaveID string) ([]omnisave.Revision, error) {
-			history, err := loadHistory(omnisaveID)
-			if err != nil || !binding.SpeaksMirror(history) || attempted[omnisaveID] {
-				return history, err
+			remoteSave, tracked := lineages.save(omnisaveID)
+			if !tracked {
+				return lineages.history(ctx, omnisaveID)
 			}
-			attempted[omnisaveID] = true
-			name := omnisaveDisplayName(savesByID[omnisaveID])
-			if !manifestReady {
-				manifestReady = true
-				manifest, manifestErr = binding.ManifestContext(ctx, save)
+			if held[omnisaveID] {
+				return nil, errMigrationHeld
 			}
-			if manifestErr != nil {
-				report.MigrationHeld(title, name, tui.Cause(manifestErr))
-				return history, nil
+			title, name := local.GameTitle, omnisaveDisplayName(remoteSave)
+			hold := func(cause string) ([]omnisave.Revision, error) {
+				report.MigrationHeld(title, name, cause)
+				outcome.Held++
+				held[omnisaveID] = true
+				return nil, errMigrationHeld
 			}
-			proof, proven := binding.ProveLocationMigration(manifest, history)
-			if !proven {
-				report.MigrationHeld(title, name,
-					"this device's save gives no evidence for the mapping")
-				return history, nil
+			for remoteSave.PathFormatVersion != omnisave.PathFormatNative {
+				if remoteSave.PathFormatVersion == omnisave.PathFormatUnclassified {
+					return hold("the server does not report the lineage's path format")
+				}
+				migration, migratable := omnisave.MigrationFrom(remoteSave.PathFormatVersion)
+				if !migratable || migration.Kind != omnisave.MigrationKindLocationRename {
+					return hold("no known migration advances this lineage's path format")
+				}
+				history, err := lineages.history(ctx, omnisaveID)
+				if err != nil {
+					return nil, err
+				}
+				signature := saveSignature(save)
+				digest := historyProofDigest(history)
+				bound, isBound := state.BindingFor(local)
+				boundHere := isBound && bound.OmnisaveID == omnisaveID
+				if recorded, exists := state.HeldProofFor(local, omnisaveID); exists {
+					if recorded.LocalSignature == signature &&
+						recorded.HistoryDigest == digest && recorded.Bound == boundHere {
+						// The exact evidence that failed the proof still stands;
+						// re-reading the save could only reach the same hold.
+						return hold(recorded.Cause)
+					}
+					state.ClearHeldProof(local, omnisaveID)
+				}
+				holdProven := func(cause string) ([]omnisave.Revision, error) {
+					// A proof verdict is a function of the save's files, the
+					// lineage's history, and whether the save is already bound
+					// here; it is remembered against all three so later passes
+					// skip re-reading a save that cannot answer differently,
+					// and a save that since bound to this lineage — which
+					// waives the content match — is proven again.
+					state.RecordHeldProof(local, omnisaveID, tracking.HeldProof{
+						LocalSignature: signature,
+						HistoryDigest:  digest,
+						Bound:          boundHere,
+						Cause:          cause,
+					})
+					return hold(cause)
+				}
+				manifest, err := readManifest()
+				if err != nil {
+					return hold(tui.Cause(err))
+				}
+				proof, proven := binding.ProveLocationMigration(migration.Location, manifest, history)
+				if !proven {
+					return holdProven("this device's save gives no evidence for the mapping")
+				}
+				if !boundHere && !proof.ContentMatched {
+					return holdProven("this unbound save matches no complete revision in the lineage")
+				}
+				result, err := server.MigrateLocations(ctx, omnisaveID, omnisave.MigrateLocations{
+					ExpectedPathFormatVersion: remoteSave.PathFormatVersion,
+					To:                        proof.To, Prefix: proof.Prefix,
+				})
+				if err != nil {
+					// Server refusals are held but never remembered: they can
+					// heal without the save or the history changing.
+					return hold(migrationRefusalCause(err))
+				}
+				if result.PathFormatVersion != migration.ToVersion {
+					return hold("the server did not advance the lineage path format")
+				}
+				// The rewritten history and advanced version are what the rest of
+				// this pass must see, whichever consumer reads next. Looping here
+				// makes the ordered table a chain rather than a one-step switch.
+				lineages.migrated(omnisaveID, result.PathFormatVersion)
+				state.ClearHeldProof(local, omnisaveID)
+				report.Migrated(title, name)
+				remoteSave.PathFormatVersion = result.PathFormatVersion
 			}
-			if _, err := server.MigrateLocations(ctx, omnisaveID, omnisave.MigrateLocations{
-				From: proof.From, To: proof.To, Prefix: proof.Prefix,
-			}); err != nil {
-				report.MigrationHeld(title, name, tui.Cause(err))
-				return history, nil
-			}
-			// The rewritten history is what the rest of this pass must see.
-			delete(histories, omnisaveID)
-			delete(historyLoaded, omnisaveID)
-			report.Migrated(title, name)
-			return loadHistory(omnisaveID)
+			return lineages.history(ctx, omnisaveID)
 		}
 	}
 
@@ -1062,19 +1241,20 @@ func reconcileSaves(
 			// game mid-pass; its remaining saves have nothing to bind to.
 			continue
 		}
-		loadHistory := migratingLoader(candidate.save, candidate.local.GameTitle)
+		readManifest := memoManifest(ctx, candidate.save)
+		loadHistory := migratingLoader(candidate.local, candidate.save, readManifest)
 		if bound, isBound := state.BindingFor(candidate.local); isBound {
-			if remoteSave, exists := savesByID[bound.OmnisaveID]; exists {
+			if remoteSave, exists := lineages.save(bound.OmnisaveID); exists {
 				finish := finishPlacement(scanner, candidate.discovered, candidate.game,
 					candidate.local.GameTitle, report)
 				if err := syncBoundSave(ctx, server, state, candidate.local, candidate.save,
-					bound, remoteSave, savesByGame[candidate.serverGameID], loadHistory,
+					bound, remoteSave, lineages, loadHistory, readManifest,
 					finish, outcome, report, prompts, gate, pushFloor); err != nil {
 					return err
 				}
 				continue
 			}
-			if len(savesByGame[candidate.serverGameID]) == 0 {
+			if len(lineages.byGame[candidate.serverGameID]) == 0 {
 				// The Omnisave this device protected was deleted on the
 				// authoritative server and no other lineage remains, so the
 				// deletion syncs back as untracking — reseeding here would
@@ -1095,7 +1275,7 @@ func reconcileSaves(
 			state.Unbind(candidate.local)
 		}
 
-		gameSaves := savesByGame[candidate.serverGameID]
+		gameSaves := lineages.gameSaves(candidate.serverGameID)
 		if len(gameSaves) == 0 {
 			working(ctx, report, candidate.local.GameTitle)
 			seedCandidateSave(ctx, server, state, candidate.local, candidate.save, candidate.serverGameID, outcome, report)
@@ -1104,17 +1284,24 @@ func reconcileSaves(
 
 		// Matching content against every lineage reads the save in full.
 		working(ctx, report, candidate.local.GameTitle)
-		lineages := make([]binding.Lineage, 0, len(gameSaves))
+		matchable := make([]binding.Lineage, 0, len(gameSaves))
+		held := 0
 		loadFailed := false
-		for _, remoteSave := range gameSaves {
-			history, err := loadHistory(remoteSave.ID)
+		for _, listed := range gameSaves {
+			history, err := loadHistory(listed.ID)
+			if errors.Is(err, errMigrationHeld) {
+				held++
+				continue
+			}
 			if err != nil {
 				outcome.Failed++
 				report.SaveFailed(candidate.local.GameTitle, err)
 				loadFailed = true
 				break
 			}
-			lineages = append(lineages, binding.Lineage{
+			// Re-read after loading: the loader may just have migrated it.
+			remoteSave, _ := lineages.save(listed.ID)
+			matchable = append(matchable, binding.Lineage{
 				Omnisave:  remoteSave,
 				Revisions: history,
 			})
@@ -1122,12 +1309,13 @@ func reconcileSaves(
 		if loadFailed {
 			continue
 		}
-		matches, err := binding.FindContentMatchesContext(ctx, candidate.save, lineages)
+		manifest, err := readManifest()
 		if err != nil {
 			outcome.Failed++
 			report.SaveFailed(candidate.local.GameTitle, err)
 			continue
 		}
+		matches := binding.FindManifestMatches(manifest, candidate.save, matchable)
 		if len(matches) == 1 && matches[0].MatchesCurrent() {
 			matched := matches[0].Omnisave
 			if err := state.Bind(candidate.local, matched.ID); err != nil {
@@ -1146,7 +1334,7 @@ func reconcileSaves(
 		}
 		if len(matches) == 1 {
 			matched := matches[0]
-			current, currentFound := revisionByID(histories[matched.Omnisave.ID], matched.Omnisave.CurrentRevisionID)
+			current, currentFound := revisionByID(lineages.histories[matched.Omnisave.ID], matched.Omnisave.CurrentRevisionID)
 			if !currentFound {
 				outcome.Failed++
 				report.SaveFailed(candidate.local.GameTitle, errors.New("matching Omnisave has no readable current revision"))
@@ -1229,14 +1417,21 @@ func reconcileSaves(
 		for _, match := range matches {
 			matchedRevisions[match.Omnisave.ID] = match.Revisions[len(match.Revisions)-1].ID
 		}
-		options := make([]tui.AmbiguousBindingOption, 0, len(gameSaves))
-		for _, remoteSave := range gameSaves {
+		// Offered from the matchable lineages, never from every listed one:
+		// a held lineage has no adoptable future until it migrates, and
+		// binding to one would only earn refusals on the next commit. Held
+		// lineages never entered matchable, so the rule holds by
+		// construction rather than by whether their retired paths happen to
+		// fail the layout check below.
+		options := make([]tui.AmbiguousBindingOption, 0, len(matchable))
+		for _, lineage := range matchable {
+			remoteSave := lineage.Omnisave
 			if matchedRevisions[remoteSave.ID] == "" {
 				// Adopting an unmatched lineage ends by applying its Current
 				// Revision to this save's files, so a lineage whose current
 				// cannot land in this save's layout has no adoptable future
 				// here and is not offered.
-				current, exists := revisionByID(histories[remoteSave.ID], remoteSave.CurrentRevisionID)
+				current, exists := revisionByID(lineage.Revisions, remoteSave.CurrentRevisionID)
 				if !exists || binding.CanApply(candidate.save, current) != nil {
 					continue
 				}
@@ -1248,10 +1443,31 @@ func reconcileSaves(
 			})
 		}
 		if len(options) == 0 {
-			// Nothing matched and nothing is adoptable from this save's
-			// layout, so creating a new Omnisave is the one safe outcome
-			// left and the pass takes it without a question (FDR-003,
-			// decision 1).
+			if held == 0 {
+				// Nothing matched and nothing is adoptable from this save's
+				// layout, so creating a new Omnisave is the one safe outcome
+				// left and the pass takes it without a question (FDR-003,
+				// decision 1).
+				seedCandidateSave(ctx, server, state, candidate.local, candidate.save, candidate.serverGameID, outcome, report)
+				continue
+			}
+			// A held lineage may be this very save's history waiting on its
+			// migration. A new lineage could never rejoin it, so splitting
+			// the game's history is the user's explicit call — an unanswered
+			// question waits, exactly like every other question here.
+			create := false
+			if prompts.heldSeed != nil {
+				var err error
+				create, err = prompts.heldSeed(candidate.local.GameTitle)
+				if err != nil {
+					return err
+				}
+			}
+			if !create {
+				outcome.Unbound++
+				report.Unbound(candidate.local.GameTitle)
+				continue
+			}
 			seedCandidateSave(ctx, server, state, candidate.local, candidate.save, candidate.serverGameID, outcome, report)
 			continue
 		}
@@ -1276,18 +1492,18 @@ func reconcileSaves(
 					continue
 				}
 				outcome.Bound++
-				name := omnisaveDisplayName(savesByID[choice.OmnisaveID])
-				report.SyncedWith(candidate.local.GameTitle, name, time.Now())
+				chosen, _ := lineages.save(choice.OmnisaveID)
+				report.SyncedWith(candidate.local.GameTitle, omnisaveDisplayName(chosen), time.Now())
 				continue
 			}
 
-			selected, exists := savesByID[choice.OmnisaveID]
+			selected, exists := lineages.save(choice.OmnisaveID)
 			if !exists || selected.GameID != candidate.serverGameID {
 				outcome.Failed++
 				report.SaveFailed(candidate.local.GameTitle, errors.New("chosen save is no longer available"))
 				continue
 			}
-			current, currentFound := revisionByID(histories[selected.ID], selected.CurrentRevisionID)
+			current, currentFound := revisionByID(lineages.histories[selected.ID], selected.CurrentRevisionID)
 			if !currentFound {
 				outcome.Failed++
 				report.SaveFailed(candidate.local.GameTitle, errors.New("chosen save has no readable current revision"))
@@ -1316,8 +1532,7 @@ func reconcileSaves(
 		if _, tracked := state.Games[candidate.discovered.Game.ID]; !tracked {
 			continue
 		}
-		gameSaves := savesByGame[candidate.serverGameID]
-		if len(gameSaves) == 0 {
+		if len(lineages.byGame[candidate.serverGameID]) == 0 {
 			// A game with nothing local and nothing on the server is one line
 			// in the report and no work at all.
 			report.NoSave(candidate.discovered.Game.Identity.DisplayTitle(candidate.discovered.Game.ID))
@@ -1327,7 +1542,7 @@ func reconcileSaves(
 		finish := finishPlacement(scanner, candidate.scan.Target, candidate.discovered.Game,
 			candidate.discovered.Game.Identity.DisplayTitle(candidate.discovered.Game.ID), report)
 		if err := syncSaveToDevice(ctx, server, state, candidate.scan, candidate.discovered,
-			gameSaves, loadHistory, finish, outcome, report, prompts); err != nil {
+			candidate.serverGameID, lineages, finish, outcome, report, prompts); err != nil {
 			return err
 		}
 	}
@@ -1399,8 +1614,8 @@ func syncSaveToDevice(
 	state *tracking.State,
 	scan client.TargetScan,
 	discovered client.GameScan,
-	gameSaves []omnisave.Omnisave,
-	loadHistory func(string) ([]omnisave.Revision, error),
+	serverGameID string,
+	lineages *lineagePass,
 	finish placementFinisher,
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
@@ -1416,13 +1631,23 @@ func syncSaveToDevice(
 		current     omnisave.Revision
 		destination target.SaveDestination
 	}
+	gameSaves := lineages.gameSaves(serverGameID)
 	options := make([]tui.SyncToDeviceOption, 0, len(gameSaves))
 	available := make(map[string]availableSave, len(gameSaves))
 	for _, save := range gameSaves {
 		if save.CurrentRevisionID == nil {
 			continue
 		}
-		history, err := loadHistory(save.ID)
+		if save.PathFormatVersion != omnisave.PathFormatNative {
+			// Only a persisted native version admits placement. With no
+			// local save there is no manifest to prove a mapping, so a
+			// retired — or unreported — version only waits here.
+			report.MigrationHeld(title, omnisaveDisplayName(save),
+				"this device has no native save to prove the mapping")
+			outcome.Held++
+			continue
+		}
+		history, err := lineages.history(ctx, save.ID)
 		if err != nil {
 			outcome.Failed++
 			report.SaveFailed(title, err)
@@ -1628,7 +1853,7 @@ func omnisaveDisplayName(save omnisave.Omnisave) string {
 }
 
 // syncBoundSave compares local content, its baseline, and the Current Revision.
-// gameSaves is every lineage the game has, so a divergence answer can find
+// lineages carries every save the game has, so a divergence answer can find
 // progress an earlier answer already preserved.
 func syncBoundSave(
 	ctx context.Context,
@@ -1638,8 +1863,9 @@ func syncBoundSave(
 	save target.Save,
 	bound tracking.Binding,
 	remoteSave omnisave.Omnisave,
-	gameSaves []omnisave.Omnisave,
+	lineages *lineagePass,
 	loadHistory func(string) ([]omnisave.Revision, error),
+	readManifest func() ([]omnisave.RevisionFile, error),
 	finish placementFinisher,
 	outcome *tui.TrackOutcome,
 	report *tui.TrackReport,
@@ -1652,11 +1878,14 @@ func syncBoundSave(
 	// a summary that no longer describes the content this pass verified;
 	// the next pass then reads the save rather than trusting the summary.
 	signature := saveSignature(save)
-	if settledSince(bound, remoteSave, signature) {
+	if remoteSave.PathFormatVersion == omnisave.PathFormatNative &&
+		settledSince(bound, remoteSave, signature) {
 		// Neither side has moved since a pass proved this save equal to the
 		// revision it is synced to, so there is nothing to commit and nothing
 		// to apply. Reading the save and its history would spend the whole
-		// save, and a round trip, to prove what is already known.
+		// save, and a round trip, to prove what is already known. Only a
+		// native lineage can be settled: any other version state must reach
+		// the loader below and be migrated or held.
 		report.SyncedWith(local.GameTitle, name, lastSyncedAt(bound))
 		return nil
 	}
@@ -1664,12 +1893,15 @@ func syncBoundSave(
 	// pass's from now until it settles.
 	working(ctx, report, local.GameTitle)
 	history, err := loadHistory(remoteSave.ID)
+	if errors.Is(err, errMigrationHeld) {
+		return nil
+	}
 	if err != nil {
 		outcome.Failed++
 		report.SaveFailed(local.GameTitle, err)
 		return nil
 	}
-	manifest, err := binding.ManifestContext(ctx, save)
+	manifest, err := readManifest()
 	if err != nil {
 		outcome.Failed++
 		report.SaveFailed(local.GameTitle, err)
@@ -1690,7 +1922,7 @@ func syncBoundSave(
 		// A binding without a baseline (a manual bind to non-matching
 		// content) is diverged from the start (FDR-005, decision 1).
 		return resolveDivergence(ctx, server, state, local, save, remoteSave, current, nil,
-			history, manifest, gameSaves, loadHistory, finish, outcome, report, prompts)
+			history, manifest, lineages.gameSaves(remoteSave.GameID), loadHistory, finish, outcome, report, prompts)
 	}
 
 	if current.ID == baseline.ID {
@@ -1792,7 +2024,7 @@ func syncBoundSave(
 		return nil
 	}
 	return resolveDivergence(ctx, server, state, local, save, remoteSave, current, &baseline,
-		history, manifest, gameSaves, loadHistory, finish, outcome, report, prompts)
+		history, manifest, lineages.gameSaves(remoteSave.GameID), loadHistory, finish, outcome, report, prompts)
 }
 
 // resolveDivergence keeps both sides recoverable, prompting only during
@@ -2146,6 +2378,9 @@ func recordedPreservation(
 		return nil, nil, nil
 	}
 	history, err := loadHistory(pendingID)
+	if errors.Is(err, errMigrationHeld) {
+		return nil, nil, nil
+	}
 	if err != nil {
 		return nil, nil, err
 	}

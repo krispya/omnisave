@@ -109,17 +109,21 @@ func (r *Repository) buildOmnisaveFrom(
 		forkedRev  sql.NullString
 		createdAt  string
 		metadata   string
+		migrations string
 	)
-	err := queryer.QueryRowContext(ctx, `SELECT id, game_id, display_name, current_revision_id,
-			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
+	err := queryer.QueryRowContext(ctx, `SELECT id, game_id, display_name, path_format_version, path_migrations,
+			current_revision_id, forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
 		FROM omnisaves WHERE id = ?`, id).Scan(
-		&record.ID, &record.GameID, &record.DisplayName, &record.CurrentRevisionID,
-		&forkedSave, &forkedRev, &createdAt, &metadata,
+		&record.ID, &record.GameID, &record.DisplayName, &record.PathFormatVersion, &migrations,
+		&record.CurrentRevisionID, &forkedSave, &forkedRev, &createdAt, &metadata,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.Omnisave{}, storage.ErrNotFound
 	}
 	if err != nil {
+		return store.Omnisave{}, err
+	}
+	if record.PathMigrations, err = decodePathMigrations(migrations); err != nil {
 		return store.Omnisave{}, err
 	}
 	if forkedSave.Valid && forkedRev.Valid {

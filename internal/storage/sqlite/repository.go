@@ -156,6 +156,9 @@ func (r *Repository) InsertOmnisave(ctx context.Context, save omnisave.Omnisave)
 	if r.store.HasDeletion(store.DeletionOmnisave, save.ID) {
 		return storage.ErrConflict
 	}
+	if save.PathFormatVersion == 0 {
+		save.PathFormatVersion = omnisave.PathFormatNative
+	}
 	metadata, err := json.Marshal(save.Metadata)
 	if err != nil {
 		return err
@@ -167,10 +170,10 @@ func (r *Repository) InsertOmnisave(ctx context.Context, save omnisave.Omnisave)
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO omnisaves(
-			id, game_id, display_name, current_revision_id,
+			id, game_id, display_name, path_format_version, current_revision_id,
 			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		save.ID, save.GameID, save.DisplayName, save.CurrentRevisionID,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		save.ID, save.GameID, save.DisplayName, save.PathFormatVersion, save.CurrentRevisionID,
 		forkOmnisaveID(save.ForkedFrom), forkRevisionID(save.ForkedFrom),
 		save.CreatedAt.Format(time.RFC3339Nano), string(metadata),
 	)
@@ -188,7 +191,7 @@ func (r *Repository) InsertOmnisave(ctx context.Context, save omnisave.Omnisave)
 
 func (r *Repository) ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, game_id, display_name, current_revision_id,
+		`SELECT id, game_id, display_name, path_format_version, current_revision_id,
 			forked_from_omnisave_id, forked_from_revision_id, created_at,
 			COALESCE(
 				(SELECT created_at FROM revisions WHERE id = omnisaves.current_revision_id),
@@ -222,7 +225,7 @@ func (r *Repository) ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, er
 
 func (r *Repository) GetOmnisave(ctx context.Context, id string) (*omnisave.Omnisave, error) {
 	save, err := scanOmnisave(r.db.QueryRowContext(ctx,
-		`SELECT id, game_id, display_name, current_revision_id,
+		`SELECT id, game_id, display_name, path_format_version, current_revision_id,
 			forked_from_omnisave_id, forked_from_revision_id, created_at,
 			COALESCE(
 				(SELECT created_at FROM revisions WHERE id = omnisaves.current_revision_id),
@@ -392,9 +395,13 @@ func (r *Repository) ForkOmnisave(ctx context.Context, save omnisave.Omnisave) e
 	}
 	defer tx.Rollback()
 	var sourceGameID string
-	if err := tx.QueryRowContext(ctx, `SELECT game_id FROM omnisaves WHERE id = ?`,
-		save.ForkedFrom.OmnisaveID).Scan(&sourceGameID); err != nil {
+	var sourcePathFormat int
+	if err := tx.QueryRowContext(ctx, `SELECT game_id, path_format_version FROM omnisaves WHERE id = ?`,
+		save.ForkedFrom.OmnisaveID).Scan(&sourceGameID, &sourcePathFormat); err != nil {
 		return translateNotFound(err)
+	}
+	if sourcePathFormat != omnisave.PathFormatNative {
+		return omnisave.ErrPathFormatMigrationRequired
 	}
 	member, err := revisionIsMember(ctx, tx, save.ForkedFrom.OmnisaveID, save.ForkedFrom.RevisionID)
 	if err != nil {
@@ -404,10 +411,10 @@ func (r *Repository) ForkOmnisave(ctx context.Context, save omnisave.Omnisave) e
 		return storage.ErrNotFound
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO omnisaves(
-		id, game_id, display_name, current_revision_id,
+		id, game_id, display_name, path_format_version, current_revision_id,
 		forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, save.ID, save.GameID, save.DisplayName,
-		save.CurrentRevisionID, forkOmnisaveID(save.ForkedFrom), forkRevisionID(save.ForkedFrom),
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, save.ID, save.GameID, save.DisplayName,
+		sourcePathFormat, save.CurrentRevisionID, forkOmnisaveID(save.ForkedFrom), forkRevisionID(save.ForkedFrom),
 		save.CreatedAt.Format(time.RFC3339Nano), string(saveMetadata)); err != nil {
 		return translateUniqueViolation(err)
 	}
@@ -437,6 +444,9 @@ func (r *Repository) RestoreOmnisave(ctx context.Context, id, revisionID string,
 	}
 	if !sameNullableString(actual, expectedCurrentRevisionID) {
 		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: nullableStringPointer(actual)}
+	}
+	if err := requireNativePathFormat(ctx, tx, id); err != nil {
+		return err
 	}
 	member, err := revisionIsMember(ctx, tx, id, revisionID)
 	if err != nil {
@@ -492,6 +502,9 @@ func (r *Repository) CommitRevision(ctx context.Context, expectedCurrentRevision
 	}
 	if !sameNullableString(actualCurrentRevisionID, expectedCurrentRevisionID) {
 		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: nullableStringPointer(actualCurrentRevisionID)}
+	}
+	if err := requireNativePathFormat(ctx, tx, revision.OmnisaveID); err != nil {
+		return err
 	}
 	descriptors := make(map[string]int64, len(revision.Files))
 	for _, file := range revision.Files {
@@ -678,36 +691,51 @@ func (r *Repository) updateRevisionDisplayName(
 
 // MigrateRevisionPaths renames a lineage's location vocabulary in place:
 // `from/rest` becomes `to/rest` on every file of every revision the save
-// itself owns. Identities, artifacts, ancestry, and achievements are
-// untouched — only path labels change — which is what keeps the operation
-// reversible and every reference into the lineage valid.
+// itself owns, where `from` is the vocabulary the retired fromVersion
+// speaks (the omnisave.PathFormatMigrations chain owns that mapping and the
+// version the rename advances to). Identities,
+// artifacts, ancestry, and achievements are untouched — only path labels
+// change — which is what keeps the operation reversible and every reference
+// into the lineage valid. The rename is also recorded on the row as a
+// migration fact, because snapshot manifests in the portable store are
+// immutable: recovery replays the fact over imported manifests so a rebuilt
+// database reaches this vocabulary again.
 //
 // Refused whenever the rewrite could not be a whole lineage's rename: a
 // save that shares revisions with a fork in either direction would leave a
-// mixed-vocabulary history on one side, and a lineage with files outside
-// `from` is either already migrated (empty) or was never single-voiced
-// (mixed). The caller owns the evidence that `to` is the right spelling;
-// these guards only ensure the rename is total or absent.
-func (r *Repository) MigrateRevisionPaths(ctx context.Context, saveID, from, to string) (int, int, error) {
+// mixed-vocabulary history on one side, a lineage with files outside `from`
+// is either already migrated (empty) or was never single-voiced (mixed),
+// and a rename minting a path longer than any commit may reference would
+// break the bound every other write upholds. The caller owns the evidence
+// that `to` is the right spelling; these guards only ensure the rename is
+// total or absent.
+func (r *Repository) MigrateRevisionPaths(ctx context.Context, saveID string, fromVersion int, to string) (omnisave.MigrationResult, error) {
+	none := omnisave.MigrationResult{}
+	migration, migratable := omnisave.MigrationFrom(fromVersion)
+	if !migratable || migration.Kind != omnisave.MigrationKindLocationRename {
+		return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedUnknownVersion}
+	}
+	from := migration.Location
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
 	if err := r.requireStoreReady(); err != nil {
-		return 0, 0, err
+		return none, err
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, 0, err
+		return none, err
 	}
 	defer tx.Rollback()
 
-	var exists bool
+	var pathFormatVersion int
+	var recorded string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM omnisaves WHERE id = ?)`, saveID,
-	).Scan(&exists); err != nil {
-		return 0, 0, err
+		`SELECT path_format_version, path_migrations FROM omnisaves WHERE id = ?`, saveID,
+	).Scan(&pathFormatVersion, &recorded); err != nil {
+		return none, translateNotFound(err)
 	}
-	if !exists {
-		return 0, 0, storage.ErrNotFound
+	if pathFormatVersion != fromVersion {
+		return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedVersion}
 	}
 	var forkFamily bool
 	if err := tx.QueryRowContext(ctx, `SELECT
@@ -718,25 +746,37 @@ func (r *Repository) MigrateRevisionPaths(ctx context.Context, saveID, from, to 
 			WHERE parent.omnisave_id = ? AND child.omnisave_id != ?)`,
 		saveID, saveID, saveID, saveID, saveID,
 	).Scan(&forkFamily); err != nil {
-		return 0, 0, err
+		return none, err
 	}
 	if forkFamily {
-		return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedForkFamily}
+		return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedForkFamily}
 	}
 	prefix := from + "/"
-	var speaking, total int
+	var speaking, total, overlong int
+	// The length bound counts bytes, because that is what a commit's own
+	// validator counts; length() on text would count characters and let a
+	// rename mint a path the next commit would refuse. The prefix
+	// comparison stays on text: a retired location is ASCII, so its
+	// character and byte offsets coincide, and the offsets are what the
+	// rename below reuses.
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FILTER (WHERE substr(path, 1, ?) = ?), COUNT(*)
+		`SELECT COUNT(*) FILTER (WHERE substr(path, 1, ?) = ?), COUNT(*),
+			COUNT(*) FILTER (WHERE substr(path, 1, ?) = ?
+				AND length(CAST(path AS BLOB)) - ? + ? > ?)
 		FROM revision_files WHERE revision_id IN (SELECT id FROM revisions WHERE omnisave_id = ?)`,
-		len(prefix), prefix, saveID,
-	).Scan(&speaking, &total); err != nil {
-		return 0, 0, err
+		len(prefix), prefix, len(prefix), prefix, len(prefix), len(to)+1,
+		omnisave.MaxRevisionPathLength, saveID,
+	).Scan(&speaking, &total, &overlong); err != nil {
+		return none, err
 	}
 	if speaking == 0 {
-		return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedEmpty}
+		return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedEmpty}
 	}
 	if speaking != total {
-		return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedMixed}
+		return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedMixed}
+	}
+	if overlong > 0 {
+		return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedPathLength}
 	}
 	result, err := tx.ExecContext(ctx,
 		`UPDATE revision_files SET path = ? || substr(path, ?)
@@ -744,25 +784,69 @@ func (r *Repository) MigrateRevisionPaths(ctx context.Context, saveID, from, to 
 		to+"/", len(prefix)+1, saveID,
 	)
 	if err != nil {
-		return 0, 0, err
+		return none, err
 	}
 	files, err := result.RowsAffected()
 	if err != nil {
-		return 0, 0, err
+		return none, err
+	}
+	migrations, err := appendPathMigration(recorded, omnisave.PathMigration{
+		Kind:        migration.Kind,
+		FromVersion: fromVersion,
+		ToVersion:   migration.ToVersion,
+		From:        from,
+		To:          to,
+		MigratedAt:  time.Now().UTC(),
+	})
+	if err != nil {
+		return none, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE omnisaves SET path_format_version = ?, path_migrations = ? WHERE id = ?`,
+		migration.ToVersion, migrations, saveID); err != nil {
+		return none, err
 	}
 	var revisions int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM revisions WHERE omnisave_id = ?`, saveID,
 	).Scan(&revisions); err != nil {
-		return 0, 0, err
+		return none, err
 	}
 	if err := r.enqueueOmnisaveProjection(ctx, tx, saveID); err != nil {
-		return 0, 0, err
+		return none, err
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, 0, err
+		return none, err
 	}
-	return revisions, int(files), r.projectStore(ctx)
+	return omnisave.MigrationResult{
+		PathFormatVersion: migration.ToVersion,
+		Revisions:         revisions,
+		Files:             int(files),
+	}, r.projectStore(ctx)
+}
+
+// appendPathMigration adds one applied rename to a row's recorded, encoded
+// migration facts.
+func appendPathMigration(recorded string, applied omnisave.PathMigration) (string, error) {
+	migrations, err := decodePathMigrations(recorded)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(append(migrations, applied))
+	return string(encoded), err
+}
+
+// decodePathMigrations reads a row's encoded migration facts; an empty list
+// decodes to nil so record projections omit the field entirely.
+func decodePathMigrations(recorded string) ([]omnisave.PathMigration, error) {
+	if recorded == "" || recorded == "[]" {
+		return nil, nil
+	}
+	var migrations []omnisave.PathMigration
+	if err := json.Unmarshal([]byte(recorded), &migrations); err != nil {
+		return nil, err
+	}
+	return migrations, nil
 }
 
 // RecordAchievements files unlocks against a save. An achievement already
@@ -1074,6 +1158,21 @@ func currentRevision(ctx context.Context, tx *sql.Tx, saveID string) (sql.NullSt
 	return current, err
 }
 
+// requireNativePathFormat is the mutation boundary that keeps a legacy
+// lineage from accumulating another vocabulary before its explicit upgrade.
+func requireNativePathFormat(ctx context.Context, tx *sql.Tx, saveID string) error {
+	var version int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT path_format_version FROM omnisaves WHERE id = ?`, saveID,
+	).Scan(&version); err != nil {
+		return translateNotFound(err)
+	}
+	if version != omnisave.PathFormatNative {
+		return omnisave.ErrPathFormatMigrationRequired
+	}
+	return nil
+}
+
 type rowQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
@@ -1135,7 +1234,7 @@ func scanOmnisave(row scanner) (*omnisave.Omnisave, error) {
 	var createdAt, currentRevisionCreatedAt, latestRevisionCreatedAt, metadata string
 	var current, forkSave, forkRevision, currentRevisionSavedAt sql.NullString
 	if err := row.Scan(
-		&save.ID, &save.GameID, &save.DisplayName, &current,
+		&save.ID, &save.GameID, &save.DisplayName, &save.PathFormatVersion, &current,
 		&forkSave, &forkRevision, &createdAt, &currentRevisionCreatedAt,
 		&latestRevisionCreatedAt, &currentRevisionSavedAt, &metadata,
 	); err != nil {

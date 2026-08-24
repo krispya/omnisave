@@ -65,6 +65,9 @@ func (r *MemoryRepository) InsertOmnisave(_ context.Context, save omnisave.Omnis
 	if _, exists := r.saves[save.ID]; exists {
 		return storage.ErrConflict
 	}
+	if save.PathFormatVersion == 0 {
+		save.PathFormatVersion = omnisave.PathFormatNative
+	}
 	r.saves[save.ID] = save
 	return nil
 }
@@ -209,9 +212,13 @@ func (r *MemoryRepository) ForkOmnisave(_ context.Context, save omnisave.Omnisav
 	if !exists || source.GameID != save.GameID {
 		return storage.ErrNotFound
 	}
+	if source.PathFormatVersion != omnisave.PathFormatNative {
+		return omnisave.ErrPathFormatMigrationRequired
+	}
 	if _, err := r.findRevision(source.ID, save.ForkedFrom.RevisionID); err != nil {
 		return err
 	}
+	save.PathFormatVersion = source.PathFormatVersion
 	r.saves[save.ID] = save
 	return nil
 }
@@ -225,6 +232,9 @@ func (r *MemoryRepository) RestoreOmnisave(_ context.Context, id, revisionID str
 	}
 	if !equalStringPointers(save.CurrentRevisionID, expectedCurrentRevisionID) {
 		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: copyStringPointer(save.CurrentRevisionID)}
+	}
+	if save.PathFormatVersion != omnisave.PathFormatNative {
+		return omnisave.ErrPathFormatMigrationRequired
 	}
 	if _, err := r.findRevision(id, revisionID); err != nil {
 		return err
@@ -243,6 +253,9 @@ func (r *MemoryRepository) CommitRevision(_ context.Context, expectedCurrentRevi
 	}
 	if !equalStringPointers(save.CurrentRevisionID, expectedCurrentRevisionID) {
 		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: copyStringPointer(save.CurrentRevisionID)}
+	}
+	if save.PathFormatVersion != omnisave.PathFormatNative {
+		return omnisave.ErrPathFormatMigrationRequired
 	}
 	r.revisions[revision.OmnisaveID] = append(r.revisions[revision.OmnisaveID], revision)
 	if !keepCurrent {
@@ -363,17 +376,27 @@ func (r *MemoryRepository) updateRevisionDisplayName(
 }
 
 // MigrateRevisionPaths mirrors the SQL repository: a total in-place rename
-// of the save's own revisions' location vocabulary, refused for fork
-// families and lineages not speaking `from` alone.
-func (r *MemoryRepository) MigrateRevisionPaths(_ context.Context, saveID, from, to string) (int, int, error) {
+// of the save's own revisions out of the vocabulary fromVersion speaks,
+// refused for fork families, lineages not speaking that vocabulary alone,
+// and renames that would exceed the committed-path length bound.
+func (r *MemoryRepository) MigrateRevisionPaths(_ context.Context, saveID string, fromVersion int, to string) (omnisave.MigrationResult, error) {
+	none := omnisave.MigrationResult{}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	save, exists := r.saves[saveID]
 	if !exists {
-		return 0, 0, storage.ErrNotFound
+		return none, storage.ErrNotFound
 	}
+	migration, migratable := omnisave.MigrationFrom(fromVersion)
+	if !migratable || migration.Kind != omnisave.MigrationKindLocationRename {
+		return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedUnknownVersion}
+	}
+	if save.PathFormatVersion != fromVersion {
+		return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedVersion}
+	}
+	from := migration.Location
 	if save.ForkedFrom != nil {
-		return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedForkFamily}
+		return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedForkFamily}
 	}
 	owned := map[string]bool{}
 	for _, revision := range r.revisions[saveID] {
@@ -385,30 +408,36 @@ func (r *MemoryRepository) MigrateRevisionPaths(_ context.Context, saveID, from,
 		}
 		for _, revision := range revisions {
 			if revision.ParentID != nil && owned[*revision.ParentID] {
-				return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedForkFamily}
+				return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedForkFamily}
 			}
 		}
 	}
 	for _, other := range r.saves {
 		if other.ID != saveID && other.ForkedFrom != nil && owned[other.ForkedFrom.RevisionID] {
-			return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedForkFamily}
+			return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedForkFamily}
 		}
 	}
 	prefix := from + "/"
-	speaking, total := 0, 0
+	speaking, total, overlong := 0, 0, 0
 	for _, revision := range r.revisions[saveID] {
 		for _, file := range revision.Files {
 			total++
 			if strings.HasPrefix(file.Path, prefix) {
 				speaking++
+				if len(file.Path)-len(prefix)+len(to)+1 > omnisave.MaxRevisionPathLength {
+					overlong++
+				}
 			}
 		}
 	}
 	if speaking == 0 {
-		return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedEmpty}
+		return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedEmpty}
 	}
 	if speaking != total {
-		return 0, 0, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedMixed}
+		return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedMixed}
+	}
+	if overlong > 0 {
+		return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedPathLength}
 	}
 	revisions := r.revisions[saveID]
 	for index := range revisions {
@@ -420,7 +449,13 @@ func (r *MemoryRepository) MigrateRevisionPaths(_ context.Context, saveID, from,
 		revisions[index].Files = files
 	}
 	r.revisions[saveID] = revisions
-	return len(revisions), total, nil
+	save.PathFormatVersion = migration.ToVersion
+	r.saves[saveID] = save
+	return omnisave.MigrationResult{
+		PathFormatVersion: migration.ToVersion,
+		Revisions:         len(revisions),
+		Files:             total,
+	}, nil
 }
 
 // DeleteRevision mirrors the SQL repository: only a node the graph no longer

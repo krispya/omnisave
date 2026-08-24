@@ -907,6 +907,13 @@ func writeError(w http.ResponseWriter, err error) {
 		})
 		return
 	}
+	if errors.Is(err, omnisave.ErrPathFormatMigrationRequired) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":  "path_format_migration_required",
+			"status": http.StatusConflict,
+		})
+		return
+	}
 	var lockedOut *access.LockedOut
 	if errors.As(err, &lockedOut) {
 		seconds := int(lockedOut.RetryAfter.Seconds()) + 1
