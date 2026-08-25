@@ -100,23 +100,25 @@ func TestTrackingPromptKeepsGamesBeforeASelectedGameVisible(t *testing.T) {
 	}
 }
 
-func TestBindingChoicesNameBothSidesAndShowAnExistingMapping(t *testing.T) {
+func TestBindingFlowChoosesALocalSaveBeforeShowingItsDestinations(t *testing.T) {
 	current := "revision-123456"
 	local := []tracking.LocalSave{{
 		ID: "local-save", Adapter: "steam", TargetID: "steam-one", GameTitle: "Stardew Valley", Kind: "cloud", FileCount: 3, Size: 4096,
 	}}
-	remote := []omnisave.Omnisave{{
-		ID: "remote-save", GameID: "game-123456", DisplayName: "Farm run", CurrentRevisionID: &current,
-	}}
+	remote := []omnisave.Omnisave{
+		{ID: "remote-save", GameID: "game-123456", DisplayName: "Farm run", CurrentRevisionID: &current},
+		{ID: "remote-new", GameID: "game-123456", DisplayName: "New farm"},
+	}
 	bindings := []tracking.Binding{{
 		Adapter: "steam", TargetID: "steam-one", LocalSaveID: "local-save", OmnisaveID: "remote-save",
 	}}
 
-	localChoices, remoteChoices := bindingChoices(local, remote, bindings)
+	localChoices := localBindingChoices(local, remote, bindings)
 	if len(localChoices) != 1 || !strings.Contains(localChoices[0].label, "Steam · Stardew Valley · cloud · 3 files · 4.0 KiB · currently Farm run") {
 		t.Fatalf("unexpected local binding choice: %+v", localChoices)
 	}
-	if len(remoteChoices) != 1 || !strings.Contains(remoteChoices[0].label, "Farm run · game game-123 · current revision") {
-		t.Fatalf("unexpected remote binding choice: %+v", remoteChoices)
+	destinationChoices := omnisaveBindingChoices(remote, "remote-save")
+	if len(destinationChoices) != 2 || destinationChoices[0].label != "Farm run · currently bound" || destinationChoices[1].label != "New farm · no revisions" {
+		t.Fatalf("expected a concise save chooser for the selected game, got %+v", destinationChoices)
 	}
 }

@@ -312,39 +312,58 @@ func trackingChoiceGroups(scans []client.TargetScan, tracked map[string]bool) []
 	return groups
 }
 
-// BindingSelection maps one discovered native save to one server Omnisave.
-type BindingSelection struct {
-	Local    tracking.LocalSave
-	Omnisave omnisave.Omnisave
-}
-
 type bindingChoice struct {
 	label string
 	index int
 }
 
-// SelectBinding prompts for one exact local-to-server save mapping.
-func SelectBinding(local []tracking.LocalSave, remote []omnisave.Omnisave, bindings []tracking.Binding) (BindingSelection, error) {
+// SelectLocalSaveForBinding asks which discovered save the user wants to map.
+// Choosing its destination is a separate prompt so unrelated games never
+// share one list of binding choices.
+func SelectLocalSaveForBinding(local []tracking.LocalSave, remote []omnisave.Omnisave, bindings []tracking.Binding) (tracking.LocalSave, error) {
 	if len(local) == 0 {
-		return BindingSelection{}, ErrNoSaves
+		return tracking.LocalSave{}, ErrNoSaves
 	}
-	if len(remote) == 0 {
-		return BindingSelection{}, ErrNoOmnisaves
-	}
-	localChoices, remoteChoices := bindingChoices(local, remote, bindings)
-	localIndex, remoteIndex := 0, 0
+	localChoices := localBindingChoices(local, remote, bindings)
+	localIndex := 0
 	form := huh.NewForm(huh.NewGroup(
 		bindingSelect("Local save", localChoices, &localIndex),
-		bindingSelect("Omnisave", remoteChoices, &remoteIndex),
 	).Title("Choose what this machine syncs"))
 	form.WithTheme(trackingTheme())
 	if err := form.Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
-			return BindingSelection{}, ErrAborted
+			return tracking.LocalSave{}, ErrAborted
 		}
-		return BindingSelection{}, err
+		return tracking.LocalSave{}, err
 	}
-	return BindingSelection{Local: local[localIndex], Omnisave: remote[remoteIndex]}, nil
+	return local[localIndex], nil
+}
+
+// SelectOmnisaveForBinding asks which save of one game the selected Local
+// Save should follow. The caller supplies only destinations for that game.
+func SelectOmnisaveForBinding(gameTitle string, remote []omnisave.Omnisave, currentID string) (omnisave.Omnisave, error) {
+	if len(remote) == 0 {
+		return omnisave.Omnisave{}, ErrNoOmnisaves
+	}
+	choices := omnisaveBindingChoices(remote, currentID)
+	selected := 0
+	for index, save := range remote {
+		if save.ID == currentID {
+			selected = index
+			break
+		}
+	}
+	form := huh.NewForm(huh.NewGroup(
+		bindingSelect("Choose a save", choices, &selected),
+	).Title(gameTitle))
+	form.WithTheme(trackingTheme())
+	if err := form.Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return omnisave.Omnisave{}, ErrAborted
+		}
+		return omnisave.Omnisave{}, err
+	}
+	return remote[selected], nil
 }
 
 func bindingSelect(title string, choices []bindingChoice, value *int) *huh.Select[int] {
@@ -364,7 +383,7 @@ func bindingSelect(title string, choices []bindingChoice, value *int) *huh.Selec
 		Value(value)
 }
 
-func bindingChoices(local []tracking.LocalSave, remote []omnisave.Omnisave, bindings []tracking.Binding) ([]bindingChoice, []bindingChoice) {
+func localBindingChoices(local []tracking.LocalSave, remote []omnisave.Omnisave, bindings []tracking.Binding) []bindingChoice {
 	remoteNames := make(map[string]string, len(remote))
 	for _, save := range remote {
 		remoteNames[save.ID] = save.DisplayName
@@ -384,17 +403,22 @@ func bindingChoices(local []tracking.LocalSave, remote []omnisave.Omnisave, bind
 		}
 		localChoices = append(localChoices, bindingChoice{label: strings.Join(parts, " · "), index: index})
 	}
-	remoteChoices := make([]bindingChoice, 0, len(remote))
+	return localChoices
+}
+
+func omnisaveBindingChoices(remote []omnisave.Omnisave, currentID string) []bindingChoice {
+	choices := make([]bindingChoice, 0, len(remote))
 	for index, save := range remote {
-		parts := []string{save.DisplayName, "game " + shortID(save.GameID)}
+		parts := []string{save.DisplayName}
+		if save.ID == currentID {
+			parts = append(parts, "currently bound")
+		}
 		if save.CurrentRevisionID == nil {
 			parts = append(parts, "no revisions")
-		} else {
-			parts = append(parts, "current "+shortID(*save.CurrentRevisionID))
 		}
-		remoteChoices = append(remoteChoices, bindingChoice{label: strings.Join(parts, " · "), index: index})
+		choices = append(choices, bindingChoice{label: strings.Join(parts, " · "), index: index})
 	}
-	return localChoices, remoteChoices
+	return choices
 }
 
 func shortID(id string) string {
