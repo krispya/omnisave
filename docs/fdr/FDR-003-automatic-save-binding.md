@@ -1,6 +1,6 @@
 # FDR-003: Automatic Save Binding
 
-**Status:** Experimental **Last reviewed:** 2026-08-22
+**Status:** Experimental **Last reviewed:** 2026-08-24
 
 ## Overview
 
@@ -15,6 +15,7 @@ Automatic Save Binding connects a Device's Local Saves to Omnisaves as part of t
 - One match at the Current Revision rebinds automatically. One match at an older revision requires a choice between adopting current progress and continuing the older progress as a separate Omnisave.
 - A Local Save matching no revision is an Unmatched Local Save. The user can synchronize it with an existing Omnisave or create a new Omnisave from it. Synchronizing first preserves the unmatched local content independently, then applies and binds the selected Omnisave's Current Revision. Only Omnisaves whose Current Revision can be applied into this save's layout are offered; when none qualify and nothing matches, creating a new Omnisave is the one safe outcome left and is taken without a question.
 - A Local Save matching several Omnisaves requires the user to choose one of the matches or preserve the content as another independent Omnisave.
+- Manual rebinding starts with one Local Save and offers only Omnisaves belonging to that save's resolved Game. A Local Save can never be mapped across game identities.
 - Interactive binding offers no ignore outcome: tracking expresses an intent to synchronize. Leaving a question aborts without changing the unresolved save.
 - Each Local Save binds independently, so a game with several local saves may seed or bind several Omnisaves.
 - Untracking and later re-tracking does not duplicate content already held by the server; content matching restores the binding.
