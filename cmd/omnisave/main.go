@@ -412,25 +412,68 @@ func runBind(ctx context.Context, scanner *client.Scanner, arguments []string) e
 	if err != nil {
 		return err
 	}
-	selection, err := tui.SelectBinding(local, remoteSaves, state.Bindings)
-	if errors.Is(err, tui.ErrAborted) {
+	if len(remoteSaves) == 0 {
+		fmt.Println("The server has no Omnisaves to bind. Create one in the dashboard first.")
 		return nil
 	}
-	if errors.Is(err, tui.ErrNoOmnisaves) {
-		fmt.Println("The server has no Omnisaves to bind. Create one in the dashboard first.")
+	selectedLocal, err := tui.SelectLocalSaveForBinding(local, remoteSaves, state.Bindings)
+	if errors.Is(err, tui.ErrAborted) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if err := state.Bind(selection.Local, selection.Omnisave.ID); err != nil {
+	destinations, err := bindingDestinations(state, selectedLocal, remoteSaves)
+	if err != nil {
+		return err
+	}
+	if len(destinations) == 0 {
+		fmt.Printf("The server has no Omnisaves for %s to bind.\n", selectedLocal.GameTitle)
+		return nil
+	}
+	currentID := ""
+	if current, exists := state.BindingFor(selectedLocal); exists {
+		currentID = current.OmnisaveID
+	}
+	selectedOmnisave, err := tui.SelectOmnisaveForBinding(selectedLocal.GameTitle, destinations, currentID)
+	if errors.Is(err, tui.ErrAborted) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	game := state.Games[selectedLocal.GameID]
+	if selectedOmnisave.GameID != game.ServerGameID {
+		return errors.New("cannot bind a local save to an Omnisave from another game")
+	}
+	if currentID == selectedOmnisave.ID {
+		fmt.Printf("✓ %s (%s) already syncs with %s.\n", selectedLocal.GameTitle, selectedLocal.Kind, selectedOmnisave.DisplayName)
+		return nil
+	}
+	if err := state.Bind(selectedLocal, selectedOmnisave.ID); err != nil {
 		return err
 	}
 	if err := store.Save(state); err != nil {
 		return err
 	}
-	fmt.Printf("✓ %s (%s) will sync with %s.\n", selection.Local.GameTitle, selection.Local.Kind, selection.Omnisave.DisplayName)
+	fmt.Printf("✓ %s (%s) will sync with %s.\n", selectedLocal.GameTitle, selectedLocal.Kind, selectedOmnisave.DisplayName)
 	return nil
+}
+
+// bindingDestinations limits a manual mapping to the selected Local Save's
+// resolved Library game. A binding is never meaningful across game identities.
+func bindingDestinations(state tracking.State, local tracking.LocalSave, remote []omnisave.Omnisave) ([]omnisave.Omnisave, error) {
+	game, tracked := state.Games[local.GameID]
+	if !tracked || game.ServerGameID == "" {
+		return nil, errors.New("local save has no resolved server game; run omnisave track first")
+	}
+	destinations := make([]omnisave.Omnisave, 0, len(remote))
+	for _, save := range remote {
+		if save.GameID == game.ServerGameID {
+			destinations = append(destinations, save)
+		}
+	}
+	return destinations, nil
 }
 
 func trackingStore(path string) (*tracking.Store, error) {
