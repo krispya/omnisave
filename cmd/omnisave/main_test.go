@@ -77,6 +77,41 @@ func newBindingFixture(t *testing.T, content string) bindingFixture {
 	return bindingFixture{localPath: localPath, content: payload, save: save, scans: scans, state: state}
 }
 
+func TestManualBindingOffersOnlySavesForTheSelectedGame(t *testing.T) {
+	state := tracking.NewState()
+	state.Games["local-zomboid"] = tracking.Game{
+		ID: "local-zomboid", ServerGameID: "server-zomboid",
+	}
+	local := tracking.LocalSave{
+		ID: "local-save", Adapter: "steam", TargetID: "steam", GameID: "local-zomboid",
+	}
+	remote := []omnisave.Omnisave{
+		{ID: "zomboid-main", GameID: "server-zomboid", DisplayName: "Main"},
+		{ID: "spire-main", GameID: "server-spire", DisplayName: "Main"},
+		{ID: "undertale-main", GameID: "server-undertale", DisplayName: "Main"},
+	}
+
+	destinations, err := bindingDestinations(state, local, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(destinations) != 1 || destinations[0].ID != "zomboid-main" {
+		t.Fatalf("expected only the selected game's save, got %+v", destinations)
+	}
+}
+
+func TestManualBindingRequiresAResolvedGameIdentity(t *testing.T) {
+	state := tracking.NewState()
+	state.Games["local-zomboid"] = tracking.Game{ID: "local-zomboid"}
+	local := tracking.LocalSave{
+		ID: "local-save", Adapter: "steam", TargetID: "steam", GameID: "local-zomboid",
+	}
+
+	if _, err := bindingDestinations(state, local, nil); err == nil {
+		t.Fatal("expected an unresolved game to have no manual binding destinations")
+	}
+}
+
 func TestTrackingReattachesALocalSaveThatMatchesOneExistingCurrentRevision(t *testing.T) {
 	fixture := newBindingFixture(t, "saved-game-content")
 	digest := sha256.Sum256(fixture.content)
