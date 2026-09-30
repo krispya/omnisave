@@ -2,6 +2,8 @@ package steamworks
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +29,26 @@ func (f *fakeRegistry) Registry() []RegistryFile {
 func (f *fakeRegistry) Holds(name string, content []byte) bool {
 	held, exists := f.files[name]
 	return exists && bytes.Equal(held, content)
+}
+
+func (f *fakeRegistry) Exists(name string) bool { _, ok := f.files[name]; return ok }
+
+func (f *fakeRegistry) Digest(name string) (string, error) {
+	content, ok := f.files[name]
+	if !ok {
+		return "", fmt.Errorf("missing file")
+	}
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func cloudBefore(store *fakeRegistry, root string) map[string]string {
+	before := map[string]string{}
+	for name := range store.files {
+		digest, _ := store.Digest(name)
+		before[filepath.Join(root, filepath.FromSlash(name))] = digest
+	}
+	return before
 }
 
 func (f *fakeRegistry) WriteFile(name string, content []byte) error {
@@ -76,7 +98,7 @@ func TestReconcileRegistersAndRefreshes(t *testing.T) {
 		"profile1/saves/progress.save": []byte("newer progress"),
 		"profile1/saves/prefs.save":    []byte("same prefs"),
 	}}
-	result := Reconcile(store, Request{Files: placed})
+	result := Reconcile(store, Request{Files: placed, Before: cloudBefore(store, root)})
 	if result.Skipped != "" {
 		t.Fatalf("skipped: %s", result.Skipped)
 	}
@@ -105,7 +127,7 @@ func TestReconcileDeletesEntriesForRemovedFiles(t *testing.T) {
 		"profile1/saves/history/kept-extra.run": []byte("no removal vouches"),
 	}}
 	removed := []string{filepath.Join(root, "profile1", "saves", "history", "1784516859.run")}
-	result := Reconcile(store, Request{Files: placed, Removed: removed})
+	result := Reconcile(store, Request{Files: placed, Before: cloudBefore(store, root), Removed: removed})
 	if result.Skipped != "" {
 		t.Fatalf("skipped: %s", result.Skipped)
 	}
@@ -136,7 +158,7 @@ func TestReconcileReportsRefusedDeletes(t *testing.T) {
 		refuse: map[string]bool{"stale-extra.save": true},
 	}
 	removed := []string{filepath.Join(root, "stale-extra.save")}
-	result := Reconcile(store, Request{Files: placed, Removed: removed})
+	result := Reconcile(store, Request{Files: placed, Before: cloudBefore(store, root), Removed: removed})
 	if len(result.Failed) != 1 || result.Failed[0].Name != "stale-extra.save" {
 		t.Fatalf("failed = %+v", result.Failed)
 	}
@@ -155,7 +177,7 @@ func TestReconcileDryRunWritesNothing(t *testing.T) {
 		"stale.save":   []byte("stale"),
 	}}
 	removed := []string{filepath.Join(root, "stale.save")}
-	result := Reconcile(store, Request{Files: placed, Removed: removed, DryRun: true})
+	result := Reconcile(store, Request{Files: placed, Before: cloudBefore(store, root), Removed: removed, DryRun: true})
 	if !reflect.DeepEqual(result.Written, []string{"profile.save"}) {
 		t.Fatalf("written = %v", result.Written)
 	}
@@ -179,7 +201,7 @@ func TestReconcileReportsRefusedWrites(t *testing.T) {
 		files:  map[string][]byte{"profile.save": []byte("newer profile")},
 		refuse: map[string]bool{"profile.save": true},
 	}
-	result := Reconcile(store, Request{Files: placed})
+	result := Reconcile(store, Request{Files: placed, Before: cloudBefore(store, root)})
 	if len(result.Failed) != 1 || result.Failed[0].Name != "profile.save" {
 		t.Fatalf("failed = %+v", result.Failed)
 	}
@@ -235,7 +257,7 @@ func TestReconcileKeepsRemovalsUntilWritesSucceed(t *testing.T) {
 		},
 		refuse: map[string]bool{"profile.save": true},
 	}
-	request := Request{Files: placed, Removed: []string{filepath.Join(root, "history/finished.run")}}
+	request := Request{Files: placed, Before: cloudBefore(store, root), Removed: []string{filepath.Join(root, "history/finished.run")}}
 
 	failed := Reconcile(store, request)
 	if len(failed.Failed) != 1 || len(store.deletes) != 0 {
@@ -248,5 +270,47 @@ func TestReconcileKeepsRemovalsUntilWritesSucceed(t *testing.T) {
 	completed := Reconcile(store, request)
 	if len(completed.Failed) != 0 || !reflect.DeepEqual(completed.Deleted, []string{"history/finished.run"}) {
 		t.Fatalf("retry did not finish the restore: %+v", completed)
+	}
+}
+
+// Another device's cloud bytes cannot be retired merely because this device
+// removed the same filename. Refusal must happen before any cloud writes.
+func TestReconcileRefusesChangedCloudContent(t *testing.T) {
+	for _, changed := range []string{"profile.save", "history/finished.run"} {
+		t.Run(changed, func(t *testing.T) {
+			root := t.TempDir()
+			placed := placeFiles(t, root, map[string]string{"profile.save": "restored"})
+			store := &fakeRegistry{files: map[string][]byte{"profile.save": []byte("baseline"), "history/finished.run": []byte("finished")}}
+			request := Request{Files: placed, Removed: []string{filepath.Join(root, "history/finished.run")}, Before: cloudBefore(store, root)}
+			store.files[changed] = []byte("another device's progress")
+			result := Reconcile(store, request)
+			if len(result.Failed) != 1 || len(store.writes) != 0 || len(store.deletes) != 0 {
+				t.Fatalf("changed cloud content was mutated: %+v", result)
+			}
+		})
+	}
+}
+
+// A disconnected delete can be retried after successful writes without
+// losing the proof for the old history or rewriting the restored run.
+func TestReconcileResumesAfterACloudDeleteFails(t *testing.T) {
+	root := t.TempDir()
+	placed := placeFiles(t, root, map[string]string{"saves/progress.save": "progress", "saves/current_run.save": "active"})
+	store := &fakeRegistry{files: map[string][]byte{
+		"saves/progress.save": []byte("progress"), "saves/finished.run": []byte("finished"),
+	}, refuse: map[string]bool{"saves/finished.run": true}}
+	request := Request{Files: placed, Removed: []string{filepath.Join(root, "saves/finished.run")}, Before: cloudBefore(store, root)}
+	first := Reconcile(store, request)
+	if len(first.Failed) != 1 || !store.Holds("saves/current_run.save", []byte("active")) || !store.Exists("saves/finished.run") {
+		t.Fatalf("unexpected partial restore: %+v", first)
+	}
+	delete(store.refuse, "saves/finished.run")
+	second := Reconcile(store, request)
+	if len(second.Failed) != 0 || len(second.Written) != 0 || len(second.Deleted) != 1 || store.Exists("saves/finished.run") {
+		t.Fatalf("retry did not finish: %+v", second)
+	}
+	third := Reconcile(store, request)
+	if len(third.Failed) != 0 || len(third.Written) != 0 || len(third.Deleted) != 0 {
+		t.Fatalf("completed restore was not idempotent: %+v", third)
 	}
 }

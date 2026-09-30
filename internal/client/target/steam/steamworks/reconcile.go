@@ -3,7 +3,9 @@ package steamworks
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // HelperCommand names the client's hidden subcommand that runs one
@@ -26,6 +28,8 @@ type Request struct {
 	// by a placing flow, which is what entitles the reconciliation to also
 	// delete the matching registry entries (FDR-005, decision 13).
 	Removed []string `json:"removed,omitempty"`
+	// Before pins cloud mutations to bytes preserved before the placement.
+	Before map[string]string `json:"before,omitempty"`
 	// DryRun computes and reports the plan without writing anything.
 	DryRun bool `json:"dry_run,omitempty"`
 }
@@ -66,6 +70,8 @@ type Result struct {
 type registry interface {
 	Registry() []RegistryFile
 	Holds(name string, content []byte) bool
+	Digest(name string) (string, error)
+	Exists(name string) bool
 	WriteFile(name string, content []byte) error
 	DeleteFile(name string) error
 }
@@ -88,22 +94,56 @@ func Reconcile(store registry, request Request) Result {
 		Extras:     plan.Extras,
 		Outside:    len(plan.Outside),
 	}
+	// Read and validate the complete plan before any mutation. Unknown cloud
+	// content belongs to another writer, not to this restore.
+	contents := make(map[string][]byte, len(plan.Writes))
+	unchanged := make(map[string]bool)
+	checkBefore := func(name, localPath string) bool {
+		expected := request.Before[localPath]
+		digest, err := store.Digest(name)
+		if err != nil || expected == "" || !strings.EqualFold(digest, expected) {
+			result.Failed = append(result.Failed, Failure{Name: name, Cause: "cloud content differs from the preserved baseline"})
+			return false
+		}
+		return true
+	}
 	for _, write := range plan.Writes {
 		content, err := os.ReadFile(write.Path)
 		if err != nil {
-			result.Failed = append(result.Failed, Failure{Name: write.Name, Cause: err.Error()})
+			result.Failed = append(result.Failed, Failure{Name: write.Name, Cause: "cloud operation or local read failed"})
 			continue
 		}
 		if write.Listed && store.Holds(write.Name, content) {
 			result.Unchanged = append(result.Unchanged, write.Name)
+			unchanged[write.Name] = true
+			continue
+		}
+		contents[write.Name] = content
+		if write.Listed {
+			checkBefore(write.Name, write.Path)
+		}
+	}
+	for _, name := range plan.Deletes {
+		checkBefore(name, filepath.Join(plan.Anchor, filepath.FromSlash(name)))
+	}
+	if len(result.Failed) > 0 {
+		result.Extras = append(result.Extras, plan.Deletes...)
+		sort.Strings(result.Extras)
+		return result
+	}
+	for _, write := range plan.Writes {
+		if unchanged[write.Name] {
 			continue
 		}
 		if request.DryRun {
 			result.Written = append(result.Written, write.Name)
 			continue
 		}
-		if err := store.WriteFile(write.Name, content); err != nil {
-			result.Failed = append(result.Failed, Failure{Name: write.Name, Cause: err.Error()})
+		if store.Exists(write.Name) && !store.Holds(write.Name, contents[write.Name]) && !checkBefore(write.Name, write.Path) {
+			continue
+		}
+		if err := store.WriteFile(write.Name, contents[write.Name]); err != nil {
+			result.Failed = append(result.Failed, Failure{Name: write.Name, Cause: "cloud write failed"})
 			continue
 		}
 		result.Written = append(result.Written, write.Name)
@@ -120,8 +160,16 @@ func Reconcile(store registry, request Request) Result {
 			result.Deleted = append(result.Deleted, name)
 			continue
 		}
+		localPath := filepath.Join(plan.Anchor, filepath.FromSlash(name))
+		if _, err := os.Lstat(localPath); !os.IsNotExist(err) {
+			result.Failed = append(result.Failed, Failure{Name: name, Cause: "removed local file reappeared or cannot be checked"})
+			continue
+		}
+		if store.Exists(name) && !checkBefore(name, localPath) {
+			continue
+		}
 		if err := store.DeleteFile(name); err != nil {
-			result.Failed = append(result.Failed, Failure{Name: name, Cause: err.Error()})
+			result.Failed = append(result.Failed, Failure{Name: name, Cause: "cloud operation or local read failed"})
 			continue
 		}
 		result.Deleted = append(result.Deleted, name)

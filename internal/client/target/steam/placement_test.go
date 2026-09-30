@@ -71,7 +71,7 @@ func TestFinishPlacementReconcilesAPIGames(t *testing.T) {
 	}
 	save := target.Save{Files: []target.File{{Path: filepath.Join(game.InstallRoot, "file.save")}}}
 	removed := []string{filepath.Join(game.InstallRoot, "stale.save")}
-	report, err := adapter.FinishPlacement(context.Background(), discovered, game, save, removed)
+	report, err := adapter.FinishPlacement(context.Background(), discovered, game, save, target.PlacementEvidence{Removed: removed})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestFinishPlacementLeavesFolderGamesToSteam(t *testing.T) {
 		t.Fatal("a folder-replicated game must not be reconciled")
 		return steamworks.Result{}, nil
 	}
-	report, err := adapter.FinishPlacement(context.Background(), discovered, game, target.Save{}, nil)
+	report, err := adapter.FinishPlacement(context.Background(), discovered, game, target.Save{}, target.PlacementEvidence{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestFinishPlacementReportsAMissingLibrary(t *testing.T) {
 	discovered, game := placementFixture(t, "0")
 	game.InstallRoot = t.TempDir()
 	adapter := New()
-	if _, err := adapter.FinishPlacement(context.Background(), discovered, game, target.Save{}, nil); err == nil {
+	if _, err := adapter.FinishPlacement(context.Background(), discovered, game, target.Save{}, target.PlacementEvidence{}); err == nil {
 		t.Fatal("expected an error when the game ships no steamworks library")
 	}
 }

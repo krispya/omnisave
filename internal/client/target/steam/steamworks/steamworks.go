@@ -2,6 +2,8 @@ package steamworks
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"runtime"
@@ -157,10 +159,33 @@ func (c *Client) WriteFile(name string, content []byte) error {
 	if !ok {
 		return fmt.Errorf("steam refused the write (quota, size, or connectivity)")
 	}
-	if int(c.getFileSize(c.storage, name)) != len(content) {
-		return fmt.Errorf("steam recorded a different size than was written")
+	if !c.Holds(name, content) {
+		return fmt.Errorf("steam read-back differs from the written content")
 	}
 	return nil
+}
+
+// Exists reports whether Steam currently lists a file.
+func (c *Client) Exists(name string) bool { return c.fileExists(c.storage, name) }
+
+// Digest reads cloud content for a conditional mutation. An unreadable entry
+// is an error, never evidence that a cloud file is safe to replace.
+func (c *Client) Digest(name string) (string, error) {
+	if !c.fileExists(c.storage, name) {
+		return "", fmt.Errorf("cloud entry disappeared")
+	}
+	size := c.getFileSize(c.storage, name)
+	if size < 0 {
+		return "", fmt.Errorf("invalid cloud size")
+	}
+	content := make([]byte, max(1, int(size)))
+	read := c.fileRead(c.storage, name, unsafe.Pointer(&content[0]), size)
+	runtime.KeepAlive(content)
+	if read != size {
+		return "", fmt.Errorf("cloud read incomplete")
+	}
+	digest := sha256.Sum256(content[:size])
+	return hex.EncodeToString(digest[:]), nil
 }
 
 // DeleteFile removes name from the store's cloud and registry, exactly as

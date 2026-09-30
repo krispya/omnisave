@@ -150,6 +150,15 @@ type Adapter interface {
 	DiscoverSaveDestinations(context.Context, Target, InstalledGame) ([]SaveDestination, error)
 }
 
+// PlacementEvidence describes the preserved local state replaced by a restore.
+// Before maps absolute native paths to their committed SHA-256 digests. Removed
+// is the subset absent from the restored revision. Stores must refuse mutations
+// when their current content differs from both the baseline and restored bytes.
+type PlacementEvidence struct {
+	Before  map[string]string
+	Removed []string
+}
+
 // PlacementFinisher is an Adapter that has more to do after files reach a
 // game's own save folder. A store can keep bookkeeping the game trusts over
 // the folder itself — Steam's cloud file registry decides whether an API
@@ -158,14 +167,11 @@ type Adapter interface {
 // launch. Placement flows call this after files land; an adapter with
 // nothing to settle is simply not a PlacementFinisher.
 //
-// removed are absolute native paths the placement removed from the save
-// folder. A placing flow only removes content a committed revision holds,
-// so the adapter may retire the store's matching entries without losing
-// anything unrecoverable; the store otherwise resurrects them at the
-// game's next launch (FDR-005, decision 13). A placement that removed
-// nothing passes nil.
+// Evidence retains the preserved baseline and removals across retries. An
+// adapter may delete only matching preserved cloud content; local absence
+// alone never authorizes deleting unknown cloud progress.
 type PlacementFinisher interface {
-	FinishPlacement(ctx context.Context, discovered Target, game InstalledGame, save Save, removed []string) (PlacementReport, error)
+	FinishPlacement(ctx context.Context, discovered Target, game InstalledGame, save Save, evidence PlacementEvidence) (PlacementReport, error)
 }
 
 // PlacementReport is what finishing a placement did, in the store's own

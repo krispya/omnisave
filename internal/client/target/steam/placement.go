@@ -27,7 +27,7 @@ import (
 // one game per process, and while connected the account shows as playing
 // the game — the helper holds the connection only as long as the writes
 // take.
-func (a *Adapter) FinishPlacement(ctx context.Context, discovered target.Target, game target.InstalledGame, save target.Save, removed []string) (target.PlacementReport, error) {
+func (a *Adapter) FinishPlacement(ctx context.Context, discovered target.Target, game target.InstalledGame, save target.Save, evidence target.PlacementEvidence) (target.PlacementReport, error) {
 	if err := validateGame(discovered, game); err != nil {
 		return target.PlacementReport{}, err
 	}
@@ -47,7 +47,7 @@ func (a *Adapter) FinishPlacement(ctx context.Context, discovered target.Target,
 	if run == nil {
 		run = execHelper
 	}
-	result, err := run(ctx, steamworks.Request{Library: library, AppID: appID, Files: files, Removed: removed})
+	result, err := run(ctx, steamworks.Request{Library: library, AppID: appID, Files: files, Removed: evidence.Removed, Before: evidence.Before})
 	if err != nil {
 		return target.PlacementReport{}, err
 	}

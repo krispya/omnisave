@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/krisbaumgartner/omnisave/internal/client/target"
+	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
 // Game is the local identity retained when a discovered game is tracked.
@@ -113,12 +115,25 @@ type AchievementWatch struct {
 	IDs     []string  `json:"ids,omitempty"`
 }
 
+// PendingPlacement retains a restore across local placement, store failures,
+// and process restarts. Save is the original layout; revisions retain the
+// preserved baseline and desired content. No file bytes are stored here.
+type PendingPlacement struct {
+	Destination *target.SaveDestination `json:",omitempty"`
+	BindingID   string
+	OmnisaveID  string
+	Save        target.Save
+	Before      omnisave.Revision
+	Current     omnisave.Revision
+}
+
 // State contains this machine's tracked games and save bindings.
 type State struct {
-	Device   Device          `json:"device"`
-	Server   Server          `json:"server"`
-	Games    map[string]Game `json:"games"`
-	Bindings []Binding       `json:"bindings"`
+	Device            Device                      `json:"device"`
+	Server            Server                      `json:"server"`
+	Games             map[string]Game             `json:"games"`
+	Bindings          []Binding                   `json:"bindings"`
+	PendingPlacements map[string]PendingPlacement `json:"pending_placements,omitempty"`
 	// PendingPreservations remembers, per local save, the Omnisave a
 	// divergence answer created to preserve local progress before the answer
 	// failed partway. The next answer resumes that exact Omnisave instead of
@@ -324,6 +339,11 @@ func (s *State) ApplyVisible(visible []Game, selectedIDs []string) ([]Game, erro
 		}
 	}
 	s.Bindings = bindings
+	for key, pending := range s.PendingPlacements {
+		if _, wasVisible := available[pending.Save.GameID]; wasVisible && !selected[pending.Save.GameID] {
+			delete(s.PendingPlacements, key)
+		}
+	}
 	return removed, nil
 }
 
@@ -334,6 +354,11 @@ func (s *State) Untrack(gameID string) bool {
 		return false
 	}
 	delete(s.Games, gameID)
+	for key, pending := range s.PendingPlacements {
+		if pending.Save.GameID == gameID {
+			delete(s.PendingPlacements, key)
+		}
+	}
 	bindings := s.Bindings[:0]
 	for _, binding := range s.Bindings {
 		if binding.LocalGameID != gameID {
@@ -366,6 +391,25 @@ func (s *State) Bind(local LocalSave, omnisaveID string) error {
 	s.Bindings = append(s.Bindings, binding)
 	s.ClearPendingPreservation(local)
 	return nil
+}
+
+// RecordPlacement journals work before placement can change local files.
+func (s *State) RecordPlacement(local LocalSave, placement PendingPlacement) {
+	if s.PendingPlacements == nil {
+		s.PendingPlacements = map[string]PendingPlacement{}
+	}
+	s.PendingPlacements[pendingPreservationKey(local)] = placement
+}
+
+// PlacementFor returns unfinished work for this local save.
+func (s State) PlacementFor(local LocalSave) (PendingPlacement, bool) {
+	p, ok := s.PendingPlacements[pendingPreservationKey(local)]
+	return p, ok
+}
+
+// ClearPlacement retires a completed or cancelled placement.
+func (s *State) ClearPlacement(local LocalSave) {
+	delete(s.PendingPlacements, pendingPreservationKey(local))
 }
 
 // RecordPendingPreservation remembers the Omnisave a failed answer created
