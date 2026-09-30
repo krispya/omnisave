@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 )
 
@@ -161,6 +162,8 @@ func TestTrackingRemovalDropsVisibleBindingsAndPreservesUnavailableOnes(t *testi
 		t.Fatal(err)
 	}
 
+	state.RecordPlacement(localA, tracking.PendingPlacement{Save: target.Save{GameID: gameA.ID}})
+	state.RecordPlacement(localB, tracking.PendingPlacement{Save: target.Save{GameID: gameB.ID}})
 	if _, err := state.ApplyVisible([]tracking.Game{gameA}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -169,6 +172,12 @@ func TestTrackingRemovalDropsVisibleBindingsAndPreservesUnavailableOnes(t *testi
 	}
 	if _, exists := state.BindingFor(localB); !exists {
 		t.Fatal("expected an unavailable tracked game to retain its save binding")
+	}
+	if _, exists := state.PlacementFor(localA); exists {
+		t.Fatal("untracking retained a pending restore")
+	}
+	if _, exists := state.PlacementFor(localB); !exists {
+		t.Fatal("unavailable game lost its pending restore")
 	}
 }
 

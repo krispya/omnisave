@@ -401,6 +401,23 @@ func CanApply(save target.Save, current omnisave.Revision) error {
 	return nil
 }
 
+// PlannedMaterialization resolves the save's paths without writing files, so
+// callers can durably journal a first placement before changing the filesystem.
+func PlannedMaterialization(destination target.SaveDestination, current omnisave.Revision) (target.Save, error) {
+	planned, err := materializationPlan(destination, current)
+	if err != nil {
+		return target.Save{}, err
+	}
+	save := target.Save{ID: destination.ID, TargetID: destination.TargetID, GameID: destination.GameID,
+		Kind: destination.Kind, Metadata: destination.Metadata, LocationAliases: destination.LocationAliases}
+	for _, file := range planned {
+		location, relative, _ := strings.Cut(file.revision.Path, "/")
+		save.Files = append(save.Files, target.File{Path: file.target, LocationID: location,
+			RelativePath: filepath.FromSlash(relative), Size: file.revision.Artifact.Size})
+	}
+	return save, nil
+}
+
 // CanMaterialize reports whether one current maps into one native destination.
 // It validates layout only and does not inspect or change the filesystem.
 func CanMaterialize(destination target.SaveDestination, current omnisave.Revision) error {

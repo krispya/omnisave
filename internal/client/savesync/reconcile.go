@@ -174,6 +174,9 @@ func saveCandidates(state *tracking.State, scans []client.TargetScan, confirmed 
 
 // failed counts and reports one save's failure; the pass moves on.
 func (r *reconciliation) failed(title string, err error) {
+	if errors.Is(err, errPlacementDeferred) {
+		return
+	}
 	r.outcome.Failed++
 	r.Report.SaveFailed(title, err)
 }
@@ -204,6 +207,10 @@ func (r *reconciliation) reconcileSave(ctx context.Context, c candidate) error {
 	c.readManifest = memoManifest(ctx, c.save)
 	c.loadHistory = r.historyLoader(ctx, c)
 	c.finish = finishPlacement(r.Adapters, c.discovered, c.game, c.local.GameTitle, r.Report)
+	if pending, ok := r.state.PlacementFor(c.local); ok {
+		r.retryPlacement(ctx, c, pending)
+		return nil
+	}
 	if bound, isBound := r.state.BindingFor(c.local); isBound {
 		if remoteSave, exists := r.lineages.save(bound.OmnisaveID); exists {
 			return r.syncBound(ctx, c, bound, remoteSave)
@@ -319,12 +326,7 @@ func (r *reconciliation) resolveStale(ctx context.Context, c candidate, match bi
 	}
 	switch choice {
 	case StaleJump:
-		if err := binding.ApplyCurrent(ctx, r.Server, c.save, matchedRevision, current); err != nil {
-			r.failed(title, err)
-			return nil
-		}
-		c.finish(ctx, appliedSave(c.save, current), removedPaths(c.save, current))
-		if err := r.bindSynced(c.local, match.Omnisave.ID, current.ID); err != nil {
+		if err := r.place(ctx, c, matchedRevision, current, match.Omnisave.ID); err != nil {
 			r.failed(title, err)
 			return nil
 		}
@@ -526,13 +528,7 @@ func (r *reconciliation) syncUnmatched(ctx context.Context, c candidate, selecte
 
 	// Past here the preservation exists; a failure records it so a later
 	// pass recognizes it as this save's own rather than starting over.
-	if err := binding.ApplyCurrent(ctx, r.Server, c.save, *preservedRevision, current); err != nil {
-		r.state.RecordPendingPreservation(c.local, preserved.ID)
-		r.failed(title, err)
-		return
-	}
-	c.finish(ctx, appliedSave(c.save, current), removedPaths(c.save, current))
-	if err := r.bindSynced(c.local, selected.ID, current.ID); err != nil {
+	if err := r.place(ctx, c, *preservedRevision, current, selected.ID); err != nil {
 		r.state.RecordPendingPreservation(c.local, preserved.ID)
 		r.failed(title, err)
 		return
