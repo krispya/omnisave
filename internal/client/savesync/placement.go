@@ -16,7 +16,7 @@ import (
 // already succeeded when this runs, so it reports rather than fails: a
 // registry that could not be settled is a warning the user must see, not a
 // reason to unwind a completed placement (FDR-005).
-type placementFinisher func(ctx context.Context, save target.Save)
+type placementFinisher func(ctx context.Context, save target.Save, removed []string)
 
 // finishPlacement builds the finisher for one game's placements. Adapters
 // with nothing to settle produce a finisher that does nothing.
@@ -27,7 +27,7 @@ func finishPlacement(
 	title string,
 	report Reporter,
 ) placementFinisher {
-	return func(ctx context.Context, save target.Save) {
+	return func(ctx context.Context, save target.Save, removed []string) {
 		if adapters == nil {
 			return
 		}
@@ -39,7 +39,7 @@ func finishPlacement(
 		if !finishes {
 			return
 		}
-		placement, err := finisher.FinishPlacement(ctx, discovered, game, save)
+		placement, err := finisher.FinishPlacement(ctx, discovered, game, save, removed)
 		if err != nil {
 			report.StoreRegistrationFailed(title, err)
 			return
@@ -50,10 +50,11 @@ func finishPlacement(
 		}
 		if len(placement.Failed) > 0 {
 			report.StoreRegistrationFailed(title,
-				fmt.Errorf("the store refused %d of the placed files", len(placement.Failed)))
+				fmt.Errorf("the store could not complete %d file operations", len(placement.Failed)))
 		}
 		report.StoreRegistered(title, len(placement.Registered))
 		report.StoreRegistrationIncomplete(title, len(placement.Unregistered)+placement.Outside)
+		report.StoreDeleted(title, len(placement.Deleted))
 		report.StoreExtras(title, len(placement.Extras))
 	}
 }
@@ -70,6 +71,17 @@ func appliedSave(save target.Save, current omnisave.Revision) target.Save {
 	applied := save
 	applied.Files = files
 	return applied
+}
+
+// removedPaths reports files removed by a successful ApplyCurrent. Those files
+// were preserved in a revision before placement; unrelated cloud entries are
+// not deletion candidates. Mapping failures leave the store untouched.
+func removedPaths(save target.Save, current omnisave.Revision) []string {
+	removed, err := binding.RemovedFiles(save, current)
+	if err != nil {
+		return nil
+	}
+	return removed
 }
 
 // syncToDevice offers a game's server saves to a Device with no local save
@@ -157,7 +169,7 @@ func (r *reconciliation) syncToDevice(ctx context.Context, empty emptyCandidate)
 		r.failed(title, err)
 		return nil
 	}
-	finishPlacement(r.Adapters, empty.scan.Target, discovered.Game, title, r.Report)(ctx, materialized)
+	finishPlacement(r.Adapters, empty.scan.Target, discovered.Game, title, r.Report)(ctx, materialized, nil)
 	local := LocalSaveFrom(empty.scan, discovered, materialized)
 	if err := r.bindSynced(local, selected.save.ID, selected.current.ID); err != nil {
 		r.failed(title, err)

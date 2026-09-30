@@ -323,7 +323,7 @@ func (r *reconciliation) resolveStale(ctx context.Context, c candidate, match bi
 			r.failed(title, err)
 			return nil
 		}
-		c.finish(ctx, appliedSave(c.save, current))
+		c.finish(ctx, appliedSave(c.save, current), removedPaths(c.save, current))
 		if err := r.bindSynced(c.local, match.Omnisave.ID, current.ID); err != nil {
 			r.failed(title, err)
 			return nil
@@ -531,7 +531,7 @@ func (r *reconciliation) syncUnmatched(ctx context.Context, c candidate, selecte
 		r.failed(title, err)
 		return
 	}
-	c.finish(ctx, appliedSave(c.save, current))
+	c.finish(ctx, appliedSave(c.save, current), removedPaths(c.save, current))
 	if err := r.bindSynced(c.local, selected.ID, current.ID); err != nil {
 		r.state.RecordPendingPreservation(c.local, preserved.ID)
 		r.failed(title, err)

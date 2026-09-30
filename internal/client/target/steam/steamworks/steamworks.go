@@ -26,6 +26,7 @@ type Client struct {
 	fileRead    func(uintptr, string, unsafe.Pointer, int32) int32
 	fileExists  func(uintptr, string) bool
 	getFileSize func(uintptr, string) int32
+	fileDelete  func(uintptr, string) bool
 }
 
 // Connect loads the game's Steamworks library and initializes it as the
@@ -73,6 +74,7 @@ func Connect(libraryPath, appID string) (*Client, error) {
 		{&client.fileRead, "SteamAPI_ISteamRemoteStorage_FileRead"},
 		{&client.fileExists, "SteamAPI_ISteamRemoteStorage_FileExists"},
 		{&client.getFileSize, "SteamAPI_ISteamRemoteStorage_GetFileSize"},
+		{&client.fileDelete, "SteamAPI_ISteamRemoteStorage_FileDelete"},
 	} {
 		if err := register(bind.target, handle, bind.name); err != nil {
 			client.shutdown()
@@ -157,6 +159,22 @@ func (c *Client) WriteFile(name string, content []byte) error {
 	}
 	if int(c.getFileSize(c.storage, name)) != len(content) {
 		return fmt.Errorf("steam recorded a different size than was written")
+	}
+	return nil
+}
+
+// DeleteFile removes name from the store's cloud and registry, exactly as
+// the game would when it retires a file. The store propagates the removal
+// to other machines itself, the same channel a write travels.
+func (c *Client) DeleteFile(name string) error {
+	if !c.fileExists(c.storage, name) {
+		return nil
+	}
+	if !c.fileDelete(c.storage, name) {
+		return fmt.Errorf("steam refused the delete")
+	}
+	if c.fileExists(c.storage, name) {
+		return fmt.Errorf("steam still lists the deleted file")
 	}
 	return nil
 }

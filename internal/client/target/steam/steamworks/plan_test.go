@@ -27,7 +27,7 @@ func TestPlanRegistersRestoredLiveState(t *testing.T) {
 		anchor + "/profile1/saves/current_run.save",
 		anchor + "/profile1/saves/history/1778353234.run",
 	}
-	plan, ok := PlanReconciliation(sts2Registry(), placed)
+	plan, ok := PlanReconciliation(sts2Registry(), placed, nil)
 	if !ok {
 		t.Fatal("expected an anchored plan")
 	}
@@ -68,7 +68,7 @@ func TestPlanRefusesFilesTheGameNeverRegisters(t *testing.T) {
 		anchor + "/profile1/replays/latest.mcr",
 		anchor + "/settings.save",
 	}
-	plan, ok := PlanReconciliation(sts2Registry(), placed)
+	plan, ok := PlanReconciliation(sts2Registry(), placed, nil)
 	if !ok {
 		t.Fatal("expected an anchored plan")
 	}
@@ -97,7 +97,7 @@ func TestPlanRefusesAKnownExtensionInTheWrongDirectory(t *testing.T) {
 		anchor + "/profile1/saves/history/notes.save",
 		anchor + "/profile1/saves/progress.save",
 	}
-	plan, ok := PlanReconciliation(sts2Registry(), placed)
+	plan, ok := PlanReconciliation(sts2Registry(), placed, nil)
 	if !ok {
 		t.Fatal("expected an anchored plan")
 	}
@@ -115,7 +115,7 @@ func TestPlanRefusesAKnownExtensionInTheWrongDirectory(t *testing.T) {
 
 func TestPlanReportsExtrasItLeavesAlone(t *testing.T) {
 	placed := []string{anchor + "/profile1/saves/progress.save"}
-	plan, ok := PlanReconciliation(sts2Registry(), placed)
+	plan, ok := PlanReconciliation(sts2Registry(), placed, nil)
 	if !ok {
 		t.Fatal("expected an anchored plan")
 	}
@@ -125,12 +125,60 @@ func TestPlanReportsExtrasItLeavesAlone(t *testing.T) {
 	}
 }
 
+// The measured resurrection (FDR-005, 2026-08-25): a rewound revision lacked
+// a history file the registry still listed, the store restored it at the
+// next launch, and the game's staleness check killed the restored run over
+// it. An extra whose local file the apply itself removed is deleted; extras
+// no removal vouches for stay reported and left.
+func TestPlanDeletesExtrasTheApplyRemoved(t *testing.T) {
+	placed := []string{
+		anchor + "/profile.save",
+		anchor + "/profile1/saves/prefs.save",
+		anchor + "/profile1/saves/progress.save",
+	}
+	removed := []string{
+		anchor + "/profile1/saves/history/1778353234.run",
+		anchor + "/profile1/saves/history/never-registered.run",
+		"/somewhere/else/outside.run",
+	}
+	plan, ok := PlanReconciliation(sts2Registry(), placed, removed)
+	if !ok {
+		t.Fatal("expected an anchored plan")
+	}
+	if !reflect.DeepEqual(plan.Deletes, []string{"profile1/saves/history/1778353234.run"}) {
+		t.Fatalf("deletes = %v", plan.Deletes)
+	}
+	if len(plan.Extras) != 0 {
+		t.Fatalf("extras = %v", plan.Extras)
+	}
+}
+
+// A registry entry whose file the placement still carries is a write, never
+// a delete, whatever the removed list claims — placed files are the later
+// word on what exists.
+func TestPlanNeverDeletesWhatThePlacementCarries(t *testing.T) {
+	placed := []string{
+		anchor + "/profile.save",
+		anchor + "/profile1/saves/prefs.save",
+		anchor + "/profile1/saves/progress.save",
+		anchor + "/profile1/saves/history/1778353234.run",
+	}
+	removed := []string{anchor + "/profile1/saves/history/1778353234.run"}
+	plan, ok := PlanReconciliation(sts2Registry(), placed, removed)
+	if !ok {
+		t.Fatal("expected an anchored plan")
+	}
+	if len(plan.Deletes) != 0 {
+		t.Fatalf("deletes = %v", plan.Deletes)
+	}
+}
+
 func TestPlanRefusesWithoutEvidence(t *testing.T) {
-	if _, ok := PlanReconciliation(nil, []string{anchor + "/profile.save"}); ok {
+	if _, ok := PlanReconciliation(nil, []string{anchor + "/profile.save"}, nil); ok {
 		t.Fatal("an empty registry proves no anchor")
 	}
 	registry := []RegistryFile{{Name: "save.dat"}}
-	if _, ok := PlanReconciliation(registry, []string{"/elsewhere/other.dat"}); ok {
+	if _, ok := PlanReconciliation(registry, []string{"/elsewhere/other.dat"}, nil); ok {
 		t.Fatal("a registry matching nothing proves no anchor")
 	}
 }
@@ -144,7 +192,7 @@ func TestPlanRefusesConflictingAnchors(t *testing.T) {
 		"/saves/a/profile.save",
 		"/saves/b/prefs.save",
 	}
-	if _, ok := PlanReconciliation(registry, placed); ok {
+	if _, ok := PlanReconciliation(registry, placed, nil); ok {
 		t.Fatal("names stripping to different directories prove no anchor")
 	}
 }
@@ -155,7 +203,7 @@ func TestPlanSkipsAmbiguousSuffixMatches(t *testing.T) {
 		"/saves/a/profile.save",
 		"/saves/b/profile.save",
 	}
-	if _, ok := PlanReconciliation(registry, placed); ok {
+	if _, ok := PlanReconciliation(registry, placed, nil); ok {
 		t.Fatal("a name matching two placed files nominates no anchor")
 	}
 }
@@ -163,7 +211,7 @@ func TestPlanSkipsAmbiguousSuffixMatches(t *testing.T) {
 func TestPlanKeepsRegistrySpelling(t *testing.T) {
 	registry := []RegistryFile{{Name: "Profile1/Saves/Progress.save"}}
 	placed := []string{anchor + "/profile1/saves/progress.save"}
-	plan, ok := PlanReconciliation(registry, placed)
+	plan, ok := PlanReconciliation(registry, placed, nil)
 	if !ok {
 		t.Fatal("expected an anchored plan")
 	}
@@ -178,7 +226,7 @@ func TestPlanReportsFilesOutsideTheAnchor(t *testing.T) {
 		anchor + "/profile.save",
 		"/somewhere/else/entirely.save",
 	}
-	plan, ok := PlanReconciliation(registry, placed)
+	plan, ok := PlanReconciliation(registry, placed, nil)
 	if !ok {
 		t.Fatal("expected an anchored plan")
 	}

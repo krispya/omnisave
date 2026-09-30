@@ -122,6 +122,7 @@ type Reporter interface {
 	StoreRegistrationSkipped(title, reason string)
 	StoreRegistrationFailed(title string, err error)
 	StoreRegistrationIncomplete(title string, count int)
+	StoreDeleted(title string, deleted int)
 	StoreExtras(title string, extras int)
 
 	// Unlocked names achievements the server recorded from this pass.

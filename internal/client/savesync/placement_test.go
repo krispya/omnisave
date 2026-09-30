@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -19,6 +21,7 @@ import (
 // a placement, standing in for Steam's cloud file registry.
 type finishingAdapter struct {
 	finished []target.Save
+	removed  [][]string
 }
 
 func (a *finishingAdapter) Name() string { return "finishing" }
@@ -37,8 +40,9 @@ func (a *finishingAdapter) DiscoverSaveDestinations(context.Context, target.Targ
 	return nil, nil
 }
 
-func (a *finishingAdapter) FinishPlacement(_ context.Context, _ target.Target, _ target.InstalledGame, save target.Save) (target.PlacementReport, error) {
+func (a *finishingAdapter) FinishPlacement(_ context.Context, _ target.Target, _ target.InstalledGame, save target.Save, removed []string) (target.PlacementReport, error) {
 	a.finished = append(a.finished, save)
+	a.removed = append(a.removed, removed)
 	return target.PlacementReport{Registered: []string{"file.save"}}, nil
 }
 
@@ -150,5 +154,52 @@ func TestAPullHandsTheFinisherFilesTheRevisionRestored(t *testing.T) {
 	}
 	if string(content) != "restored-run" {
 		t.Fatalf("restored file = %q", content)
+	}
+}
+
+// A native snapshot after a run ends carries its history file. Rewinding to
+// the active run removes that history locally and must tell the cloud to do
+// the same; otherwise the next launch resurrects it and rejects the run.
+func TestARewindHandsTheFinisherOnlyFilesThePlacementRemoved(t *testing.T) {
+	baseline := testRevision("finished-run", "omnisave-1", "old-progress")
+	baseline.Files = append(baseline.Files, omnisave.RevisionFile{
+		Path: "battery/history/finished.run", Artifact: artifactOf("finished"),
+	})
+	current := testRevision("active-run", "omnisave-1", "new-progress")
+	current.Files = append(current.Files, omnisave.RevisionFile{
+		Path: "battery/current_run.save", Artifact: artifactOf("active"),
+	})
+	fixture, server := pullOnFinishingTarget(t, baseline, current, map[string]string{
+		current.Files[0].Artifact.SHA256: "new-progress",
+		current.Files[1].Artifact.SHA256: "active",
+	})
+	root := filepath.Dir(fixture.LocalPath)
+	removed := filepath.Join(root, "history", "finished.run")
+	if err := os.MkdirAll(filepath.Dir(removed), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(removed, []byte("finished"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fixture.Save.Files = append(fixture.Save.Files, target.File{
+		Path: removed, LocationID: "battery", RelativePath: "history/finished.run", Size: 8,
+	})
+	fixture.Scans[0].Games[0].Saves[0] = fixture.Save
+	adapter := &finishingAdapter{}
+
+	outcome, _ := reconcileWith(t, server, client.NewScanner(nil, adapter), &fixture, savesync.Options{})
+
+	if outcome.Pulled != 1 || outcome.Failed != 0 {
+		t.Fatalf("expected a rewind, got %+v", outcome)
+	}
+	if _, err := os.Stat(removed); !os.IsNotExist(err) {
+		t.Fatalf("finished history remains on disk: %v", err)
+	}
+	if !reflect.DeepEqual(adapter.removed, [][]string{{removed}}) {
+		t.Fatalf("cloud removal evidence = %v", adapter.removed)
+	}
+	active, err := os.ReadFile(filepath.Join(root, "current_run.save"))
+	if err != nil || string(active) != "active" {
+		t.Fatalf("active run was not restored: %q, %v", active, err)
 	}
 }

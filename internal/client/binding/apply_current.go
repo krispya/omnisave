@@ -343,6 +343,36 @@ func AppliedFiles(save target.Save, current omnisave.Revision) ([]target.File, e
 	return files, nil
 }
 
+// RemovedFiles reports the native paths a successful ApplyCurrent of current
+// into save removed from disk: files the local save carried that the revision
+// places nothing at. The apply proved the local save equal to a committed
+// revision before touching it, so every removed file's content is recoverable
+// from history — which is what entitles anything acting on the placement to
+// also retire those files from a store's registry (FDR-005, decision 13).
+func RemovedFiles(save target.Save, current omnisave.Revision) ([]string, error) {
+	layout, err := describeLocalLayout(save)
+	if err != nil {
+		return nil, err
+	}
+	currentLocation := singleLocation(current.Files)
+	placed := make(map[string]bool, len(current.Files))
+	for _, file := range current.Files {
+		targetPath, _, err := layout.pathFor(file.Path, currentLocation, len(current.Files))
+		if err != nil {
+			return nil, err
+		}
+		placed[targetPath] = true
+	}
+	var removed []string
+	for path := range layout.currentPath {
+		if !placed[path] {
+			removed = append(removed, path)
+		}
+	}
+	sort.Strings(removed)
+	return removed, nil
+}
+
 // CanApply reports whether current maps into the local save's layout: every
 // canonical path must resolve under a location root this save carries. It
 // validates layout only and does not inspect or change the filesystem, so a

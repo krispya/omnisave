@@ -140,6 +140,10 @@ func (r *Recorder) StoreRegistrationIncomplete(title string, count int) {
 	r.add(Event{Kind: "StoreRegistrationIncomplete", Title: title, Count: count})
 }
 
+func (r *Recorder) StoreDeleted(title string, deleted int) {
+	r.add(Event{Kind: "StoreDeleted", Title: title, Count: deleted})
+}
+
 func (r *Recorder) StoreExtras(title string, extras int) {
 	r.add(Event{Kind: "StoreExtras", Title: title, Count: extras})
 }
