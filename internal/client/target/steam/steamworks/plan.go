@@ -45,21 +45,31 @@ type Plan struct {
 	Ineligible []string
 	// Outside are placed files that do not lie under the anchor.
 	Outside []string
-	// Extras are registry entries the placement carries no file for. They
-	// are left alone — whether a restore must also remove them is an open
-	// measurement (FDR-005) — and reported so their effect can be seen.
+	// Deletes are registry entries to remove: entries the placement carries
+	// no file for whose local file the placement itself removed. The removal
+	// is the evidence — the placing flow only removes content a committed
+	// revision holds, so the entry's bytes stay recoverable — and without
+	// the delete the store resurrects the file at the game's next launch,
+	// where the game may act on it (FDR-005, decision 13).
+	Deletes []string
+	// Extras are registry entries the placement carries no file for and no
+	// removal vouches for. They are left alone and reported so their effect
+	// can be seen.
 	Extras []string
 }
 
 // PlanReconciliation maps placed local files into the store's registry.
+// removed are local paths the placement removed from the save folder;
+// a registry entry anchored at one of them is planned for deletion.
 //
 // The anchor is never guessed: every registry name that matches exactly one
 // placed file by path suffix must strip to the same local directory. A
 // registry that matches nothing, or matches inconsistently, proves no
 // anchor, and the plan is empty — a wrong anchor would register files under
 // names the game has never used, which is worse than reporting that the
-// registry could not be reconciled.
-func PlanReconciliation(registry []RegistryFile, placed []string) (Plan, bool) {
+// registry could not be reconciled. Deletions hang from the same anchor,
+// so nothing is ever deleted on a guess either.
+func PlanReconciliation(registry []RegistryFile, placed, removed []string) (Plan, bool) {
 	anchor, anchored := deriveAnchor(registry, placed)
 	if !anchored {
 		return Plan{}, false
@@ -103,15 +113,28 @@ func PlanReconciliation(registry []RegistryFile, placed []string) (Plan, bool) {
 		}
 		plan.Ineligible = append(plan.Ineligible, name)
 	}
-	for _, entry := range registry {
-		if !carried[strings.ToLower(entry.Name)] {
-			plan.Extras = append(plan.Extras, entry.Name)
+	removedUnder := make(map[string]bool, len(removed))
+	for _, file := range removed {
+		slashed := strings.ToLower(toSlash(file))
+		if strings.HasPrefix(slashed, prefix) {
+			removedUnder[slashed[len(prefix):]] = true
 		}
+	}
+	for _, entry := range registry {
+		if carried[strings.ToLower(entry.Name)] {
+			continue
+		}
+		if removedUnder[strings.ToLower(entry.Name)] {
+			plan.Deletes = append(plan.Deletes, entry.Name)
+			continue
+		}
+		plan.Extras = append(plan.Extras, entry.Name)
 	}
 	sort.Slice(plan.Writes, func(left, right int) bool {
 		return plan.Writes[left].Name < plan.Writes[right].Name
 	})
 	sort.Strings(plan.Ineligible)
+	sort.Strings(plan.Deletes)
 	sort.Strings(plan.Extras)
 	return plan, true
 }

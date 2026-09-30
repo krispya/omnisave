@@ -19,14 +19,15 @@ import (
 // game's own save folder. A game that moves its saves through the store's
 // API trusts that registry — not the folder — for whether live state
 // exists, so a restored file the registry no longer lists would be deleted
-// at the next launch (FDR-005). Folder-replicated games are Steam's own job
-// to notice and are left alone.
+// at the next launch, and a registry entry whose file the placement removed
+// would be resurrected by the store and acted on (FDR-005). Folder-replicated
+// games are Steam's own job to notice and are left alone.
 //
 // The work runs in a helper process because a Steamworks library speaks as
 // one game per process, and while connected the account shows as playing
 // the game — the helper holds the connection only as long as the writes
 // take.
-func (a *Adapter) FinishPlacement(ctx context.Context, discovered target.Target, game target.InstalledGame, save target.Save) (target.PlacementReport, error) {
+func (a *Adapter) FinishPlacement(ctx context.Context, discovered target.Target, game target.InstalledGame, save target.Save, removed []string) (target.PlacementReport, error) {
 	if err := validateGame(discovered, game); err != nil {
 		return target.PlacementReport{}, err
 	}
@@ -46,7 +47,7 @@ func (a *Adapter) FinishPlacement(ctx context.Context, discovered target.Target,
 	if run == nil {
 		run = execHelper
 	}
-	result, err := run(ctx, steamworks.Request{Library: library, AppID: appID, Files: files})
+	result, err := run(ctx, steamworks.Request{Library: library, AppID: appID, Files: files, Removed: removed})
 	if err != nil {
 		return target.PlacementReport{}, err
 	}
@@ -58,6 +59,7 @@ func (a *Adapter) FinishPlacement(ctx context.Context, discovered target.Target,
 		Registered:   result.Written,
 		Unregistered: result.Ineligible,
 		Outside:      result.Outside,
+		Deleted:      result.Deleted,
 		Extras:       result.Extras,
 		Skipped:      result.Skipped,
 	}

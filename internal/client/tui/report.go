@@ -287,6 +287,15 @@ func (r *TrackReport) StoreRegistrationIncomplete(title string, count int) {
 	r.event(title, sentence)
 }
 
+// StoreDeleted reports cloud files retired by a restore, so the store cannot
+// bring them back at the next launch.
+func (r *TrackReport) StoreDeleted(title string, deleted int) {
+	if deleted == 0 {
+		return
+	}
+	r.event(title, fmt.Sprintf("removed %s this restore does not carry from Steam Cloud", count(deleted, "file")))
+}
+
 // StoreExtras records registry entries the restore placed no file for,
 // which stay registered and may resurface through the store.
 func (r *TrackReport) StoreExtras(title string, extras int) {

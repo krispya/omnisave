@@ -157,8 +157,15 @@ type Adapter interface {
 // settling that bookkeeping leaves a restore the game may discard on
 // launch. Placement flows call this after files land; an adapter with
 // nothing to settle is simply not a PlacementFinisher.
+//
+// removed are absolute native paths the placement removed from the save
+// folder. A placing flow only removes content a committed revision holds,
+// so the adapter may retire the store's matching entries without losing
+// anything unrecoverable; the store otherwise resurrects them at the
+// game's next launch (FDR-005, decision 13). A placement that removed
+// nothing passes nil.
 type PlacementFinisher interface {
-	FinishPlacement(ctx context.Context, discovered Target, game InstalledGame, save Save) (PlacementReport, error)
+	FinishPlacement(ctx context.Context, discovered Target, game InstalledGame, save Save, removed []string) (PlacementReport, error)
 }
 
 // PlacementReport is what finishing a placement did, in the store's own
@@ -175,12 +182,16 @@ type PlacementReport struct {
 	// Outside counts placed files that lie outside the store's proven
 	// anchor and so could not be given store names at all.
 	Outside int
-	// Extras are store entries the placement carried no file for, left in
-	// place and surfaced so their effect on the game can be seen.
+	// Deleted are store entries retired because the placement removed
+	// their local files, so the store does not resurrect them.
+	Deleted []string
+	// Extras are store entries the placement carried no file for and no
+	// removal vouched for, left in place and surfaced so their effect on
+	// the game can be seen.
 	Extras []string
 	// Skipped is why nothing was attempted; empty when work ran.
 	Skipped string
-	// Failed are store writes that did not take, as name → cause.
+	// Failed are store writes or deletions that did not take, as name → cause.
 	Failed map[string]string
 }
 

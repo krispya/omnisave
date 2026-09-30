@@ -3,6 +3,7 @@ package steamworks
 import (
 	"fmt"
 	"os"
+	"sort"
 )
 
 // HelperCommand names the client's hidden subcommand that runs one
@@ -20,11 +21,16 @@ type Request struct {
 	AppID string `json:"app_id"`
 	// Files are the placed files' absolute native paths.
 	Files []string `json:"files"`
+	// Removed are absolute native paths the placement removed from the
+	// save folder. Only content a committed revision holds is ever removed
+	// by a placing flow, which is what entitles the reconciliation to also
+	// delete the matching registry entries (FDR-005, decision 13).
+	Removed []string `json:"removed,omitempty"`
 	// DryRun computes and reports the plan without writing anything.
 	DryRun bool `json:"dry_run,omitempty"`
 }
 
-// Failure is one registry write that did not take.
+// Failure is one registry write or deletion that did not take.
 type Failure struct {
 	Name  string `json:"name"`
 	Cause string `json:"cause"`
@@ -43,12 +49,15 @@ type Result struct {
 	Unchanged []string `json:"unchanged,omitempty"`
 	// Ineligible are placed files the registry gives no precedent for.
 	Ineligible []string `json:"ineligible,omitempty"`
-	// Extras are registry entries the placement carries no file for,
-	// left in place and reported (FDR-005).
+	// Deleted are entries removed from the store because the placement
+	// removed their local files (planned ones on a dry run).
+	Deleted []string `json:"deleted,omitempty"`
+	// Extras are registry entries the placement carries no file for and no
+	// removal vouches for, left in place and reported (FDR-005).
 	Extras []string `json:"extras,omitempty"`
 	// Outside counts placed files that lie outside the anchor.
 	Outside int `json:"outside,omitempty"`
-	// Failed are writes Steam refused.
+	// Failed are writes or deletions that could not complete.
 	Failed []Failure `json:"failed,omitempty"`
 }
 
@@ -58,14 +67,18 @@ type registry interface {
 	Registry() []RegistryFile
 	Holds(name string, content []byte) bool
 	WriteFile(name string, content []byte) error
+	DeleteFile(name string) error
 }
 
 // Reconcile makes the store's registry match the placed files, to the
-// extent the registry's own evidence allows (see PlanReconciliation). It
-// never deletes: entries the placement does not carry are reported as
-// extras, since whether a restore must remove them is an open measurement.
+// extent the registry's own evidence allows (see PlanReconciliation).
+// Deletion is bounded by the same evidence as writes: only entries whose
+// local files the placement itself removed are deleted — measured (FDR-005,
+// 2026-08-25): the store resurrects an undeleted extra at the game's next
+// launch, and the game may act on it. Entries no removal vouches for are
+// reported as extras and left.
 func Reconcile(store registry, request Request) Result {
-	plan, anchored := PlanReconciliation(store.Registry(), request.Files)
+	plan, anchored := PlanReconciliation(store.Registry(), request.Files, request.Removed)
 	if !anchored {
 		return Result{Skipped: "the registry's names prove no anchor among the placed files"}
 	}
@@ -94,6 +107,24 @@ func Reconcile(store registry, request Request) Result {
 			continue
 		}
 		result.Written = append(result.Written, write.Name)
+	}
+	// Never retire cloud state until every planned replacement succeeded.
+	// Deferred deletions remain visible and can be retried with the request.
+	if len(result.Failed) > 0 {
+		result.Extras = append(result.Extras, plan.Deletes...)
+		sort.Strings(result.Extras)
+		return result
+	}
+	for _, name := range plan.Deletes {
+		if request.DryRun {
+			result.Deleted = append(result.Deleted, name)
+			continue
+		}
+		if err := store.DeleteFile(name); err != nil {
+			result.Failed = append(result.Failed, Failure{Name: name, Cause: err.Error()})
+			continue
+		}
+		result.Deleted = append(result.Deleted, name)
 	}
 	return result
 }

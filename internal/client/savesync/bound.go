@@ -112,7 +112,7 @@ func (r *reconciliation) syncBound(ctx context.Context, c candidate, bound track
 			r.failed(title, err)
 			return nil
 		}
-		c.finish(ctx, appliedSave(c.save, current))
+		c.finish(ctx, appliedSave(c.save, current), removedPaths(c.save, current))
 		if err := r.state.RecordSynced(c.local, remoteSave.ID, current.ID); err != nil {
 			r.failed(title, err)
 			return nil
@@ -383,7 +383,7 @@ func (r *reconciliation) jumpDiverged(ctx context.Context, c candidate, d diverg
 		r.failed(title, err)
 		return
 	}
-	c.finish(ctx, appliedSave(c.save, d.current))
+	c.finish(ctx, appliedSave(c.save, d.current), removedPaths(c.save, d.current))
 	if err := r.bindSynced(c.local, d.remoteSave.ID, d.current.ID); err != nil {
 		r.state.RecordPendingPreservation(c.local, preservedID)
 		r.failed(title, err)
