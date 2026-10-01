@@ -150,6 +150,15 @@ type Adapter interface {
 	DiscoverSaveDestinations(context.Context, Target, InstalledGame) ([]SaveDestination, error)
 }
 
+// PlacementEvidence describes the preserved local state replaced by a restore.
+// Before maps absolute native paths to their committed SHA-256 digests. Removed
+// is the subset absent from the restored revision. Stores must refuse mutations
+// when their current content differs from both the baseline and restored bytes.
+type PlacementEvidence struct {
+	Before  map[string]string
+	Removed []string
+}
+
 // PlacementFinisher is an Adapter that has more to do after files reach a
 // game's own save folder. A store can keep bookkeeping the game trusts over
 // the folder itself — Steam's cloud file registry decides whether an API
@@ -157,8 +166,12 @@ type Adapter interface {
 // settling that bookkeeping leaves a restore the game may discard on
 // launch. Placement flows call this after files land; an adapter with
 // nothing to settle is simply not a PlacementFinisher.
+//
+// Evidence retains the preserved baseline and removals across retries. An
+// adapter may delete only matching preserved cloud content; local absence
+// alone never authorizes deleting unknown cloud progress.
 type PlacementFinisher interface {
-	FinishPlacement(ctx context.Context, discovered Target, game InstalledGame, save Save) (PlacementReport, error)
+	FinishPlacement(ctx context.Context, discovered Target, game InstalledGame, save Save, evidence PlacementEvidence) (PlacementReport, error)
 }
 
 // PlacementReport is what finishing a placement did, in the store's own
@@ -175,12 +188,16 @@ type PlacementReport struct {
 	// Outside counts placed files that lie outside the store's proven
 	// anchor and so could not be given store names at all.
 	Outside int
-	// Extras are store entries the placement carried no file for, left in
-	// place and surfaced so their effect on the game can be seen.
+	// Deleted are store entries retired because the placement removed
+	// their local files, so the store does not resurrect them.
+	Deleted []string
+	// Extras are store entries the placement carried no file for and no
+	// removal vouched for, left in place and surfaced so their effect on
+	// the game can be seen.
 	Extras []string
 	// Skipped is why nothing was attempted; empty when work ran.
 	Skipped string
-	// Failed are store writes that did not take, as name → cause.
+	// Failed are store writes or deletions that did not take, as name → cause.
 	Failed map[string]string
 }
 

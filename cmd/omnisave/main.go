@@ -638,7 +638,7 @@ func runSession(ctx context.Context, scanner *client.Scanner, name string, mode 
 		if playing, sweepErr := presence.Sweep(taskCtx, detector); sweepErr == nil {
 			gate = savesync.NewPullGate(playing)
 		}
-		ports := savesync.Ports{Server: server, Adapters: scanner, Report: report}
+		ports := savesync.Ports{Server: server, Adapters: scanner, Report: report, Checkpoint: store.Save}
 		bindingErr = savesync.Reconcile(taskCtx, ports, &state, scans, confirmed, &outcome,
 			savesync.Options{Prompts: sessionPrompts(session), Gate: gate})
 		deferredPulls = gate.Waiting()

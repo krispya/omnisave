@@ -108,12 +108,7 @@ func (r *reconciliation) syncBound(ctx context.Context, c candidate, bound track
 		}
 		// Pull. Lossless: the replaced content is the baseline revision,
 		// which the server keeps; placement re-verifies local is unchanged.
-		if err := binding.ApplyCurrent(ctx, r.Server, c.save, baseline, current); err != nil {
-			r.failed(title, err)
-			return nil
-		}
-		c.finish(ctx, appliedSave(c.save, current))
-		if err := r.state.RecordSynced(c.local, remoteSave.ID, current.ID); err != nil {
+		if err := r.place(ctx, c, baseline, current, remoteSave.ID); err != nil {
 			r.failed(title, err)
 			return nil
 		}
@@ -378,13 +373,7 @@ func (r *reconciliation) jumpDiverged(ctx context.Context, c candidate, d diverg
 		r.Report.BranchKept(title, name)
 		verifyAgainst = *branch
 	}
-	if err := binding.ApplyCurrent(ctx, r.Server, c.save, verifyAgainst, d.current); err != nil {
-		r.state.RecordPendingPreservation(c.local, preservedID)
-		r.failed(title, err)
-		return
-	}
-	c.finish(ctx, appliedSave(c.save, d.current))
-	if err := r.bindSynced(c.local, d.remoteSave.ID, d.current.ID); err != nil {
+	if err := r.place(ctx, c, verifyAgainst, d.current, d.remoteSave.ID); err != nil {
 		r.state.RecordPendingPreservation(c.local, preservedID)
 		r.failed(title, err)
 		return

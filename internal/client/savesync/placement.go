@@ -8,53 +8,46 @@ import (
 
 	"github.com/krisbaumgartner/omnisave/internal/client/binding"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
+	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
-// placementFinisher settles whatever a game's store must be told after
-// files land in the game's own save folder. The placement itself has
-// already succeeded when this runs, so it reports rather than fails: a
-// registry that could not be settled is a warning the user must see, not a
-// reason to unwind a completed placement (FDR-005).
-type placementFinisher func(ctx context.Context, save target.Save)
+// placementFinisher completes the store half of a restore. A failure leaves
+// the placement journal pending and must never be reported as synced.
+type placementFinisher func(context.Context, target.Save, target.PlacementEvidence) error
 
-// finishPlacement builds the finisher for one game's placements. Adapters
-// with nothing to settle produce a finisher that does nothing.
-func finishPlacement(
-	adapters Adapters,
-	discovered target.Target,
-	game target.InstalledGame,
-	title string,
-	report Reporter,
-) placementFinisher {
-	return func(ctx context.Context, save target.Save) {
+func finishPlacement(adapters Adapters, discovered target.Target, game target.InstalledGame, title string, report Reporter) placementFinisher {
+	return func(ctx context.Context, save target.Save, evidence target.PlacementEvidence) error {
 		if adapters == nil {
-			return
+			return nil
 		}
 		adapter, exists := adapters.Adapter(discovered.Adapter)
 		if !exists {
-			return
+			return fmt.Errorf("placement adapter unavailable")
 		}
 		finisher, finishes := adapter.(target.PlacementFinisher)
 		if !finishes {
-			return
+			return nil
 		}
-		placement, err := finisher.FinishPlacement(ctx, discovered, game, save)
+		placement, err := finisher.FinishPlacement(ctx, discovered, game, save, evidence)
 		if err != nil {
 			report.StoreRegistrationFailed(title, err)
-			return
+			return err
 		}
 		if placement.Skipped != "" {
 			report.StoreRegistrationSkipped(title, placement.Skipped)
-			return
-		}
-		if len(placement.Failed) > 0 {
-			report.StoreRegistrationFailed(title,
-				fmt.Errorf("the store refused %d of the placed files", len(placement.Failed)))
+			return errors.New("store reconciliation is pending")
 		}
 		report.StoreRegistered(title, len(placement.Registered))
+		report.StoreDeleted(title, len(placement.Deleted))
 		report.StoreRegistrationIncomplete(title, len(placement.Unregistered)+placement.Outside)
 		report.StoreExtras(title, len(placement.Extras))
+		if len(placement.Failed) > 0 || placement.Outside > 0 || len(placement.Extras) > 0 {
+			err := errors.New("store reconciliation is incomplete; restore remains pending")
+			report.StoreRegistrationFailed(title, err)
+			return err
+		}
+		return nil
 	}
 }
 
@@ -72,6 +65,17 @@ func appliedSave(save target.Save, current omnisave.Revision) target.Save {
 	return applied
 }
 
+// removedPaths reports files removed by a successful ApplyCurrent. Those files
+// were preserved in a revision before placement; unrelated cloud entries are
+// not deletion candidates. Mapping failures leave the store untouched.
+func removedPaths(save target.Save, current omnisave.Revision) []string {
+	removed, err := binding.RemovedFiles(save, current)
+	if err != nil {
+		return nil
+	}
+	return removed
+}
+
 // syncToDevice offers a game's server saves to a Device with no local save
 // for it, and places the one a person picks at the game's only compatible
 // destination (FDR-003). A pass without the prompt reports the offer and
@@ -79,6 +83,18 @@ func appliedSave(save target.Save, current omnisave.Revision) target.Save {
 func (r *reconciliation) syncToDevice(ctx context.Context, empty emptyCandidate) error {
 	discovered := empty.discovered
 	title := discovered.Game.Identity.DisplayTitle(discovered.Game.ID)
+	// Resume a journaled first placement even if no files landed before exit.
+	for _, pending := range r.state.PendingPlacements {
+		if pending.Save.GameID == discovered.Game.ID && pending.Save.TargetID == empty.scan.Target.ID {
+			save := pending.Save
+			save.Files = nil
+			c := candidate{local: LocalSaveFrom(empty.scan, discovered, save), save: save,
+				discovered: empty.scan.Target, game: discovered.Game, serverGameID: empty.serverGameID,
+				finish: finishPlacement(r.Adapters, empty.scan.Target, discovered.Game, title, r.Report)}
+			r.retryPlacement(ctx, c, pending)
+			return nil
+		}
+	}
 	if len(r.lineages.byGame[empty.serverGameID]) == 0 {
 		// A game with nothing local and nothing on the server is one line
 		// in the report and no work at all.
@@ -152,14 +168,19 @@ func (r *reconciliation) syncToDevice(ctx context.Context, empty emptyCandidate)
 	if !exists {
 		return fmt.Errorf("unknown sync-to-device choice %q", choice.OmnisaveID)
 	}
-	materialized, err := binding.Materialize(ctx, r.Server, selected.destination, selected.current)
+	materialized, err := binding.PlannedMaterialization(selected.destination, selected.current)
 	if err != nil {
 		r.failed(title, err)
 		return nil
 	}
-	finishPlacement(r.Adapters, empty.scan.Target, discovered.Game, title, r.Report)(ctx, materialized)
 	local := LocalSaveFrom(empty.scan, discovered, materialized)
-	if err := r.bindSynced(local, selected.save.ID, selected.current.ID); err != nil {
+	pending := tracking.PendingPlacement{OmnisaveID: selected.save.ID, Save: materialized, Current: selected.current, Destination: &selected.destination}
+	r.state.RecordPlacement(local, pending)
+	emptySave := materialized
+	emptySave.Files = nil
+	c := candidate{local: local, save: emptySave, discovered: empty.scan.Target, game: discovered.Game,
+		finish: finishPlacement(r.Adapters, empty.scan.Target, discovered.Game, title, r.Report)}
+	if err := r.completePlacement(ctx, c, pending); err != nil {
 		r.failed(title, err)
 		return nil
 	}

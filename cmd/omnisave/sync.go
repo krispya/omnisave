@@ -46,7 +46,7 @@ func runSync(ctx context.Context, scanner *client.Scanner, arguments []string) e
 		return err
 	}
 	report := &tui.TrackReport{}
-	ports := savesync.Ports{Server: server, Adapters: scanner, Report: report}
+	ports := savesync.Ports{Server: server, Adapters: scanner, Report: report, Checkpoint: store.Save}
 	pass, err := savesync.Pass(ctx, ports, &state, savesync.PassOptions{Detector: running.PlatformDetector()})
 	if err != nil {
 		return err
