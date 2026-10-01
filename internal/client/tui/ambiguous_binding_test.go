@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/krisbaumgartner/omnisave/internal/client/savesync"
 )
 
 func TestUnmatchedLocalSaveOffersSyncOrCreateWithoutIgnore(t *testing.T) {
@@ -31,7 +33,7 @@ func TestUnmatchedLocalSaveOffersSyncOrCreateWithoutIgnore(t *testing.T) {
 }
 
 func TestSyncWithSaveListsExistingSaves(t *testing.T) {
-	options := []AmbiguousBindingOption{
+	options := []savesync.AmbiguousOption{
 		{OmnisaveID: "omnisave-1", Name: "Save 1"},
 		{OmnisaveID: "omnisave-2", Name: "New Game+"},
 	}
@@ -48,7 +50,7 @@ func TestSyncWithSaveListsExistingSaves(t *testing.T) {
 }
 
 func TestMultipleMatchesOfferEachSaveOrANewSave(t *testing.T) {
-	options := []AmbiguousBindingOption{
+	options := []savesync.AmbiguousOption{
 		{OmnisaveID: "omnisave-1", Name: "Save 1", MatchedRevisionID: "revision-3"},
 		{OmnisaveID: "omnisave-2", Name: "Save 1 (fork)", MatchedRevisionID: "revision-3"},
 	}

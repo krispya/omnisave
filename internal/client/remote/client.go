@@ -16,6 +16,8 @@ import (
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client/activity"
+	"github.com/krisbaumgartner/omnisave/internal/device"
+	"github.com/krisbaumgartner/omnisave/internal/httpapi/contract"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
@@ -37,7 +39,7 @@ type Client struct {
 }
 
 // ResolveGame maps local identity evidence to a server-owned catalog Game.
-func (c *Client) ResolveGame(ctx context.Context, input catalog.ResolveGame) (*catalog.GameResolution, error) {
+func (c *Client) ResolveGame(ctx context.Context, input catalog.Evidence) (*catalog.Resolution, error) {
 	body, err := json.Marshal(input)
 	if err != nil {
 		return nil, err
@@ -54,10 +56,9 @@ func (c *Client) ResolveGame(ctx context.Context, input catalog.ResolveGame) (*c
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
-		return nil, &ResponseError{StatusCode: response.StatusCode}
+		return nil, decodeErrorResponse(response)
 	}
-	var resolution catalog.GameResolution
+	var resolution catalog.Resolution
 	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBody)).Decode(&resolution); err != nil {
 		return nil, fmt.Errorf("decode game resolution: %w", err)
 	}
@@ -73,13 +74,11 @@ func (e *ResponseError) Error() string {
 	return fmt.Sprintf("Omnisave server returned %s", http.StatusText(e.StatusCode))
 }
 
-// CurrentRevisionConflict carries the actual pointer after a stale commit or restore.
-type CurrentRevisionConflict struct {
-	ActualCurrentRevisionID *string
-}
-
-func (e *CurrentRevisionConflict) Error() string {
-	return "Omnisave current revision moved on the server"
+// Is lets callers recognize a missing record by its domain error rather than
+// by HTTP status: a 404 matches omnisave.ErrNotFound and catalog.ErrNotFound.
+func (e *ResponseError) Is(target error) bool {
+	return e.StatusCode == http.StatusNotFound &&
+		(target == omnisave.ErrNotFound || target == catalog.ErrNotFound)
 }
 
 // NormalizeServerURL trims a server URL to the form the client talks to and
@@ -115,7 +114,7 @@ func New(baseURL, token string, httpClient *http.Client) (*Client, error) {
 }
 
 // RegisterDevice reports this installation's self-minted identity to the server.
-func (c *Client) RegisterDevice(ctx context.Context, id string, input catalog.RegisterDevice) error {
+func (c *Client) RegisterDevice(ctx context.Context, id string, input device.Registration) error {
 	return c.send(ctx, http.MethodPut, "/api/v1/devices/"+url.PathEscape(id), input)
 }
 
@@ -170,10 +169,10 @@ func (c *Client) send(ctx context.Context, method, path string, payload any) err
 		return fmt.Errorf("contact Omnisave server: %w", err)
 	}
 	defer response.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return &ResponseError{StatusCode: response.StatusCode}
+		return decodeErrorResponse(response)
 	}
+	io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
 	return nil
 }
 
@@ -316,10 +315,10 @@ func (c *Client) UploadArtifact(ctx context.Context, artifact omnisave.Artifact,
 		return fmt.Errorf("contact Omnisave server: %w", err)
 	}
 	defer response.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return &ResponseError{StatusCode: response.StatusCode}
+		return decodeErrorResponse(response)
 	}
+	io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
 	return nil
 }
 
@@ -339,8 +338,7 @@ func (c *Client) OpenArtifact(ctx context.Context, sha256 string) (io.ReadCloser
 	}
 	if response.StatusCode != http.StatusOK {
 		defer response.Body.Close()
-		io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
-		return nil, &ResponseError{StatusCode: response.StatusCode}
+		return nil, decodeErrorResponse(response)
 	}
 	return response.Body, nil
 }
@@ -380,34 +378,15 @@ func postJSON(ctx context.Context, httpClient *http.Client, url, token string, p
 	return nil
 }
 
-// decodeErrorResponse surfaces structured API errors the client acts on —
-// a commit rejected for missing artifacts carries exactly which content to
-// upload, a stale commit carries where the Current Revision actually is, a
-// refused migration carries the reason the hold report must show, and a
-// write refused because the lineage is not native says so as itself rather
-// than as a bare conflict — and reports everything else by status.
+// decodeErrorResponse turns a failed response into the error the server
+// wrote: a coded refusal comes back as its domain error through the wire
+// contract (a stale commit's *omnisave.CurrentRevisionConflict, a refused
+// migration, the artifacts a commit is missing, ...), and anything else as a
+// ResponseError carrying the status.
 func decodeErrorResponse(response *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(response.Body, maxResponseBody))
-	var details struct {
-		Error                   string   `json:"error"`
-		Reason                  string   `json:"reason"`
-		MissingSHA256           []string `json:"missing_sha256"`
-		ActualCurrentRevisionID *string  `json:"actual_current_revision_id"`
-	}
-	if json.Unmarshal(body, &details) == nil {
-		switch details.Error {
-		case "artifact_missing":
-			return &omnisave.MissingArtifacts{SHA256: details.MissingSHA256}
-		case "current_revision_conflict":
-			return &CurrentRevisionConflict{ActualCurrentRevisionID: details.ActualCurrentRevisionID}
-		case "migration_refused":
-			return &omnisave.MigrationRefused{Reason: details.Reason}
-		case "path_format_migration_required":
-			// The lineage went legacy between this pass's listing and the
-			// write — a recovery reclassified it. Naming the error keeps the
-			// caller reporting a hold instead of a generic conflict.
-			return omnisave.ErrPathFormatMigrationRequired
-		}
+	if err := contract.DecodeError(body); err != nil {
+		return err
 	}
 	return &ResponseError{StatusCode: response.StatusCode}
 }
@@ -424,8 +403,7 @@ func (c *Client) getJSON(ctx context.Context, path string, result any) error {
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
-		return &ResponseError{StatusCode: response.StatusCode}
+		return decodeErrorResponse(response)
 	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBody)).Decode(result); err != nil {
 		return fmt.Errorf("decode Omnisave server response: %w", err)

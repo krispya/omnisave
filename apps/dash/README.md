@@ -6,7 +6,8 @@ This project was generated with create-krispya
 
 This project uses [Vite](https://vitejs.dev/) as the bundler for fast development and optimized production builds.
 
-- `src/app.tsx` defines the main application component
+- `src/app/app.tsx` is the composition root: routing and top-level wiring between features
+- `src/features/` holds one folder per glossary term (`library`, `game`, `omnisave`, `connection`)
 - `src/main.tsx` renders the React app into the DOM
 - `tests/` contains your test files
 - Static assets can be placed in the `public` folder

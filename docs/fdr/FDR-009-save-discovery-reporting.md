@@ -1,127 +1,37 @@
 # FDR-009: Save Discovery Reporting
 
-**Status:** Experimental
-**Last reviewed:** 2026-08-20
+**Status:** Experimental **Last reviewed:** 2026-09-30
 
 ## Overview
 
-Save Discovery Reporting explains where a scan looked for a game's saves and
-what it found there. Discovery keeps only the files it locates, so a game whose
-community save-location rules are missing, excluded, or pointing at the wrong
-place all read the same: no save available. `omnisave scan --verbose` names
-every location a rule reached and what was there, so a person can check the
-path themselves and file a report that says which of those actually happened.
+Discovery keeps only the files it locates, so a game whose save profile is missing, excluded here, or pointing at the wrong place reads the same way: no save. `omnisave scan --verbose` names every location a rule reached and what was there, so a person can check the path and file a report that says which of those happened.
 
 ## Behavior
 
-- A verbose scan reports every installed game, whether or not it has saves, and
-  names the build and platform that produced the report.
-- Each game reports the identity discovery matched it by, where it is installed,
-  and — inside a Proton prefix — the prefix its user-relative rules expanded
-  into.
-- A game no source of save-location rules knows says so and names the store
-  identity it was looked up by. This is distinct from a game whose rules were
-  followed and found nothing.
-- Each of a game's save-location rules reports one outcome: files found, a
-  location that exists but holds no files, a location that does not exist, a
-  location that could not be read, a location skipped as a symlink, a location
-  with several case-insensitive spellings and no exact one, a template holding a
-  placeholder this environment cannot fill, or a rule excluded by its platform
-  or store constraint.
-- A rule that reached a location reports the absolute path it searched, written
-  against the home directory. Nothing is elided.
-- Rules that met the same outcome are counted in one sentence and their
-  locations listed beneath it.
-- A manifest entry spells one location once per platform it supports. A location
-  another rule already searched is not also reported as skipped, and a location
-  excluded under several constraints is reported once with all of them.
-- Files the rules found are listed under the rule that found them, capped so one
-  large save does not bury the games below it.
-- The report names the source whose rules answered, so community knowledge is
-  distinguishable from a store's own configuration
-  ([ADR-018](../adr/ADR-018-embedded-save-profiles.md)).
-- A game a source can explain but not place — Steam seeing its cloud saves
-  stored through the API, which its folder configuration cannot describe — is
-  reported with that explanation, not as a game no rule covers. The save
-  folder stays unknown rather than declared absent: such a game may keep an
-  ordinary local folder that better rules can still place
-  ([FDR-003](FDR-003-automatic-save-binding.md), decision 10).
-- A scan configured with no save profile provider says the rules were not
-  consulted rather than implying they were and found nothing.
+- A verbose scan reports every installed game, with or without saves, and names the build and platform that produced it.
+- Each game reports the identity it was matched by, where it is installed, and, inside a Proton prefix, the prefix its user-relative rules expanded into.
+- A game no save profile covers says so and names the store identity it was looked up by, distinct from a game whose rules were followed and found nothing.
+- The report names the source whose rules answered, so community knowledge is distinguishable from a store's own configuration ([ADR-018](../adr/ADR-018-embedded-save-profiles.md)).
+- Each rule reports one outcome: files found, empty, missing, unreadable, skipped (a symlink, or several case-insensitive spellings with no exact one), holding a placeholder this environment cannot fill, or excluded by its platform or store constraint. A rule that reached a location names the absolute path it searched, and found files are listed under it.
+- A game a source knows but cannot place — Steam seeing its cloud saves written through the API — reports that reason rather than reading as a game no rule covers. Its save folder stays unknown, not absent, for better rules to place.
+- Locations a source offered inside a store's cloud mirror are counted as refused, since a mirror is never a save ([FDR-003](FDR-003-automatic-save-binding.md)).
 
 ## Design Decisions
 
-### 1. The trace is recorded by the resolve that produced the saves
+### 1. The report is recorded by the discovery it explains
 
-**Decision:** Resolving a profile returns both its saves and what each rule did,
-from one pass. Nothing re-derives the explanation afterwards.
-**Why:** An explanation produced by a second walk can disagree with the
-discovery it explains — different moment, different filesystem, drifting logic —
-and a diagnostic that lies is worse than none.
-**Tradeoff:** Every scan records outcomes whether or not anything reads them.
+**Decision:** Resolving a save profile returns its saves and what each rule did from one pass, and reporting changes nothing that pass finds. **Why:** An explanation from a second walk can disagree with the discovery it explains — a different moment, filesystem, or logic — and a diagnostic that lies is worse than none. The reported paths are only useful if they are the paths discovery actually used. **Tradeoff:** Every scan records outcomes whether or not anything reads them, and filesystem trouble is reported only as completely as the pass observed it.
 
-### 2. Discovery keeps its behavior; only its reporting changes
+### 2. The report is for debugging and prefers the specific fact
 
-**Decision:** Rules still find what they found. Outcomes name what was already
-happening silently — exclusions, unexpandable templates, symlink and ambiguous
-casing skips — without changing which files a scan locates.
-**Why:** The reported paths are only useful if they are the paths discovery
-actually used ([ADR-018](../adr/ADR-018-embedded-save-profiles.md)).
-**Tradeoff:** Outcomes describing filesystem trouble are as complete as the
-resolve could observe, not an independent audit of the path.
-
-### 3. The report is for debugging and prefers the specific fact
-
-**Decision:** The verbose scan names store identities, manifest entry titles,
-rule templates, absolute paths, and file sizes.
-**Why:** Its output is meant to be pasted into an issue. A maintainer needs the
-template to compare against the manifest and the expanded path to see a
-substitution going wrong.
-**Tradeoff:** It is denser than the default scan and unsuitable as the ordinary
-view.
-
-### 4. A template is shown only when it adds to its expanded path
-
-**Decision:** A rule template is printed beside its path unless substituting the
-home directory makes the two identical.
-**Why:** Most rules read `<home>/…`, so printing both doubles every line with no
-information. A template naming an account directory or a Windows known folder
-still earns its place.
-**Tradeoff:** The exact template text is absent for the rules where it matched
-the path, and has to be read from the manifest if ever needed.
-
-### 5. Paths are written against home and never elided
-
-**Decision:** A path under the home directory is written with `~`. No path is
-shortened by removing its middle.
-**Why:** It is shorter to read and keeps the account name out of a pasted
-report. A path a person is meant to go and check has to stay exact.
-**Tradeoff:** Deeply nested paths are long, and long lines wrap.
-
-### 6. Verbose replaces the file tree rather than extending it
-
-**Decision:** `--verbose` renders the discovery report. The previous tree of
-targets, saves, and files is gone.
-**Why:** The tree could only show what was found, which is the case that needed
-no explaining. Two verbose modes would leave a person guessing which one answers
-their question.
-**Tradeoff:** Output shapes that read the tree have to read the report instead.
+**Decision:** The verbose scan names store identities, entry titles, rule templates, absolute paths, and file sizes. Paths under home are written with `~` and never shortened by eliding their middle. **Why:** The output is meant to be pasted into an issue. A maintainer needs the template to compare against the manifest and the expanded path to see a substitution going wrong. `~` keeps the account name out of the paste, while a path someone must go and check stays exact. **Tradeoff:** It is denser than the default scan, unsuitable as the ordinary view, and long paths wrap.
 
 ## Related
 
-- **FDRs:** [FDR-002](FDR-002-game-lifecycle.md) — scanning detects games
-  offline and without configuration;
-  [FDR-003](FDR-003-automatic-save-binding.md) — a store's cloud mirror is a
-  transport and never a save, which is why a game may report none.
-- **ADRs:** [ADR-018](../adr/ADR-018-embedded-save-profiles.md) — the embedded
-  community manifest whose rules the report explains, including the patch
-  directory a wrong path eventually becomes an entry in.
+- **FDRs:** [FDR-003](FDR-003-automatic-save-binding.md) — a store's cloud mirror is a transport and never a save, which is why a game may report none.
+- **ADRs:** [ADR-018](../adr/ADR-018-embedded-save-profiles.md) — the save profile sources the report explains, why scanning is offline, and the patch directory a wrong path eventually becomes an entry in.
 
 ## Open Questions
 
-- Whether a game the manifest does not know should name the upstream project a
-  correction belongs to, rather than leaving the routing to the reader.
-- Whether the report should be filterable to one game, which matters once a
-  library is large enough that the whole scan is unwieldy to read or paste.
-- Whether unreadable locations should be reported as precisely inside glob
-  recursion as they are at a rule's own path.
+- Whether a game the manifest does not know should name the upstream project a correction belongs to, rather than leaving the routing to the reader.
+- Whether the report should be filterable to one game, once a library is large enough that the whole scan is unwieldy to read or paste.

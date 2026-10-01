@@ -15,11 +15,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/krisbaumgartner/omnisave/internal/omnisave"
-	"github.com/krisbaumgartner/omnisave/internal/storage"
-	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 	sqlitedriver "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
+
+	"github.com/krisbaumgartner/omnisave/internal/access"
+	"github.com/krisbaumgartner/omnisave/internal/artifact"
+	"github.com/krisbaumgartner/omnisave/internal/catalog"
+	"github.com/krisbaumgartner/omnisave/internal/device"
+	"github.com/krisbaumgartner/omnisave/internal/omnisave"
+	"github.com/krisbaumgartner/omnisave/internal/settings"
+	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
 type Repository struct {
@@ -154,7 +159,7 @@ func (r *Repository) InsertOmnisave(ctx context.Context, save omnisave.Omnisave)
 		return err
 	}
 	if r.store.HasDeletion(store.DeletionOmnisave, save.ID) {
-		return storage.ErrConflict
+		return errIdentifierTaken
 	}
 	if save.PathFormatVersion == 0 {
 		save.PathFormatVersion = omnisave.PathFormatNative
@@ -168,6 +173,17 @@ func (r *Repository) InsertOmnisave(ctx context.Context, save omnisave.Omnisave)
 		return err
 	}
 	defer tx.Rollback()
+	// A save belongs to a Library game. The check runs inside the insert's
+	// write transaction, which holds SQLite's writer order (sqliteDSN), so a
+	// game deletion cannot land between the check and the insert.
+	var gameExists bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM games WHERE id = ?)`, save.GameID).Scan(&gameExists); err != nil {
+		return err
+	}
+	if !gameExists {
+		return omnisave.ErrInvalid
+	}
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO omnisaves(
 			id, game_id, display_name, path_format_version, current_revision_id,
@@ -178,7 +194,7 @@ func (r *Repository) InsertOmnisave(ctx context.Context, save omnisave.Omnisave)
 		save.CreatedAt.Format(time.RFC3339Nano), string(metadata),
 	)
 	if err != nil {
-		return translateUniqueViolation(err)
+		return translateUniqueViolation(err, errIdentifierTaken)
 	}
 	if err := r.enqueueOmnisaveProjection(ctx, tx, save.ID); err != nil {
 		return err
@@ -241,7 +257,7 @@ func (r *Repository) GetOmnisave(ctx context.Context, id string) (*omnisave.Omni
 			metadata
 		FROM omnisaves WHERE id = ?`, id,
 	))
-	return save, translateNotFound(err)
+	return save, translateNotFound(err, omnisave.ErrNotFound)
 }
 
 func (r *Repository) UpdateOmnisaveDisplayName(ctx context.Context, id, displayName string) error {
@@ -266,7 +282,7 @@ func (r *Repository) UpdateOmnisaveDisplayName(ctx context.Context, id, displayN
 		return err
 	}
 	if count == 0 {
-		return storage.ErrNotFound
+		return omnisave.ErrNotFound
 	}
 	if err := r.enqueueOmnisaveProjection(ctx, tx, id); err != nil {
 		return err
@@ -307,7 +323,7 @@ func (r *Repository) DeleteOmnisave(ctx context.Context, id string) error {
 		if committed || r.store.HasDeletion(store.DeletionOmnisave, id) {
 			return nil
 		}
-		return storage.ErrNotFound
+		return omnisave.ErrNotFound
 	}
 
 	// A deleted Omnisave stops owning its nodes, but a surviving fork may
@@ -379,7 +395,7 @@ func (r *Repository) ForkOmnisave(ctx context.Context, save omnisave.Omnisave) e
 		return err
 	}
 	if r.store.HasDeletion(store.DeletionOmnisave, save.ID) {
-		return storage.ErrConflict
+		return errIdentifierTaken
 	}
 	saveMetadata, err := json.Marshal(save.Metadata)
 	if err != nil {
@@ -387,7 +403,7 @@ func (r *Repository) ForkOmnisave(ctx context.Context, save omnisave.Omnisave) e
 	}
 	if save.ForkedFrom == nil || save.CurrentRevisionID == nil ||
 		*save.CurrentRevisionID != save.ForkedFrom.RevisionID {
-		return storage.ErrNotFound
+		return omnisave.ErrNotFound
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -398,7 +414,7 @@ func (r *Repository) ForkOmnisave(ctx context.Context, save omnisave.Omnisave) e
 	var sourcePathFormat int
 	if err := tx.QueryRowContext(ctx, `SELECT game_id, path_format_version FROM omnisaves WHERE id = ?`,
 		save.ForkedFrom.OmnisaveID).Scan(&sourceGameID, &sourcePathFormat); err != nil {
-		return translateNotFound(err)
+		return translateNotFound(err, omnisave.ErrNotFound)
 	}
 	if sourcePathFormat != omnisave.PathFormatNative {
 		return omnisave.ErrPathFormatMigrationRequired
@@ -408,7 +424,7 @@ func (r *Repository) ForkOmnisave(ctx context.Context, save omnisave.Omnisave) e
 		return err
 	}
 	if !member || sourceGameID != save.GameID {
-		return storage.ErrNotFound
+		return omnisave.ErrNotFound
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO omnisaves(
 		id, game_id, display_name, path_format_version, current_revision_id,
@@ -416,7 +432,7 @@ func (r *Repository) ForkOmnisave(ctx context.Context, save omnisave.Omnisave) e
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, save.ID, save.GameID, save.DisplayName,
 		sourcePathFormat, save.CurrentRevisionID, forkOmnisaveID(save.ForkedFrom), forkRevisionID(save.ForkedFrom),
 		save.CreatedAt.Format(time.RFC3339Nano), string(saveMetadata)); err != nil {
-		return translateUniqueViolation(err)
+		return translateUniqueViolation(err, errIdentifierTaken)
 	}
 	if err := r.enqueueOmnisaveProjection(ctx, tx, save.ID); err != nil {
 		return err
@@ -440,10 +456,10 @@ func (r *Repository) RestoreOmnisave(ctx context.Context, id, revisionID string,
 	defer tx.Rollback()
 	actual, err := currentRevision(ctx, tx, id)
 	if err != nil {
-		return translateNotFound(err)
+		return translateNotFound(err, omnisave.ErrNotFound)
 	}
 	if !sameNullableString(actual, expectedCurrentRevisionID) {
-		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: nullableStringPointer(actual)}
+		return revisionConflict(expectedCurrentRevisionID, actual)
 	}
 	if err := requireNativePathFormat(ctx, tx, id); err != nil {
 		return err
@@ -453,7 +469,7 @@ func (r *Repository) RestoreOmnisave(ctx context.Context, id, revisionID string,
 		return err
 	}
 	if !member {
-		return storage.ErrNotFound
+		return omnisave.ErrNotFound
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE omnisaves SET current_revision_id = ?
 		WHERE id = ? AND ((current_revision_id IS NULL AND ? IS NULL) OR current_revision_id = ?)`,
@@ -466,9 +482,9 @@ func (r *Repository) RestoreOmnisave(ctx context.Context, id, revisionID string,
 	} else if count == 0 {
 		latest, lookupErr := currentRevision(ctx, tx, id)
 		if lookupErr != nil {
-			return translateNotFound(lookupErr)
+			return translateNotFound(lookupErr, omnisave.ErrNotFound)
 		}
-		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: nullableStringPointer(latest)}
+		return revisionConflict(expectedCurrentRevisionID, latest)
 	}
 	if err := r.enqueueOmnisaveProjection(ctx, tx, id); err != nil {
 		return err
@@ -498,10 +514,10 @@ func (r *Repository) CommitRevision(ctx context.Context, expectedCurrentRevision
 
 	actualCurrentRevisionID, err := currentRevision(ctx, tx, revision.OmnisaveID)
 	if err != nil {
-		return translateNotFound(err)
+		return translateNotFound(err, omnisave.ErrNotFound)
 	}
 	if !sameNullableString(actualCurrentRevisionID, expectedCurrentRevisionID) {
-		return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: nullableStringPointer(actualCurrentRevisionID)}
+		return revisionConflict(expectedCurrentRevisionID, actualCurrentRevisionID)
 	}
 	if err := requireNativePathFormat(ctx, tx, revision.OmnisaveID); err != nil {
 		return err
@@ -521,7 +537,7 @@ func (r *Repository) CommitRevision(ctx context.Context, expectedCurrentRevision
 		revision.CreatedAt.Format(time.RFC3339Nano), formatNullableTime(revision.SavedAt),
 		string(metadata), revision.OmnisaveID)
 	if err != nil {
-		return translateUniqueViolation(err)
+		return translateUniqueViolation(err, errIdentifierTaken)
 	}
 	if err := insertRevisionFiles(ctx, tx, revision); err != nil {
 		return err
@@ -542,9 +558,9 @@ func (r *Repository) CommitRevision(ctx context.Context, expectedCurrentRevision
 		if count == 0 {
 			actual, lookupErr := currentRevision(ctx, tx, revision.OmnisaveID)
 			if lookupErr != nil {
-				return translateNotFound(lookupErr)
+				return translateNotFound(lookupErr, omnisave.ErrNotFound)
 			}
-			return &storage.CurrentRevisionConflict{ActualCurrentRevisionID: nullableStringPointer(actual)}
+			return revisionConflict(expectedCurrentRevisionID, actual)
 		}
 	}
 	// Marks waiting on this save now have the snapshot they were waiting for.
@@ -579,7 +595,7 @@ func (r *Repository) GetRevision(ctx context.Context, saveID, revisionID string)
 		id, omnisave_id, display_name, name_source, parent_id, created_at, saved_at, metadata
 		FROM revisions WHERE id = ? AND id IN (SELECT id FROM members)`, saveID, saveID, saveID, revisionID))
 	if err != nil {
-		return nil, translateNotFound(err)
+		return nil, translateNotFound(err, omnisave.ErrNotFound)
 	}
 	revision.Files, err = r.listRevisionFiles(ctx, revision.ID)
 	return revision, err
@@ -668,7 +684,7 @@ func (r *Repository) updateRevisionDisplayName(
 		return err
 	}
 	if count == 0 {
-		return storage.ErrNotFound
+		return omnisave.ErrNotFound
 	}
 	// Revision labels are denormalized into lineage records. Snapshot every
 	// live lineage in this transaction: it is deliberately broader than a
@@ -732,7 +748,7 @@ func (r *Repository) MigrateRevisionPaths(ctx context.Context, saveID string, fr
 	if err := tx.QueryRowContext(ctx,
 		`SELECT path_format_version, path_migrations FROM omnisaves WHERE id = ?`, saveID,
 	).Scan(&pathFormatVersion, &recorded); err != nil {
-		return none, translateNotFound(err)
+		return none, translateNotFound(err, omnisave.ErrNotFound)
 	}
 	if pathFormatVersion != fromVersion {
 		return none, &omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedVersion}
@@ -871,7 +887,7 @@ func (r *Repository) RecordAchievements(ctx context.Context, saveID string, achi
 		return nil, err
 	}
 	if !saveExists {
-		return nil, storage.ErrNotFound
+		return nil, omnisave.ErrNotFound
 	}
 
 	recorded := make([]omnisave.Achievement, 0, len(achievements))
@@ -971,7 +987,7 @@ func (r *Repository) DeleteRevision(ctx context.Context, saveID, revisionID stri
 		return err
 	}
 	if !saveExists {
-		return storage.ErrNotFound
+		return omnisave.ErrNotFound
 	}
 	// Idempotent only through a live save: the marker check sits behind the
 	// existence check so a deleted save's URLs answer not-found, not success.
@@ -989,22 +1005,22 @@ func (r *Repository) DeleteRevision(ctx context.Context, saveID, revisionID stri
 		return err
 	}
 	if !member {
-		return storage.ErrNotFound
+		return omnisave.ErrNotFound
 	}
 	var ownerID string
 	if err := tx.QueryRowContext(ctx,
 		`SELECT omnisave_id FROM revisions WHERE id = ?`, revisionID,
 	).Scan(&ownerID); err != nil {
-		return translateNotFound(err)
+		return translateNotFound(err, omnisave.ErrNotFound)
 	}
 
 	refusals := []struct {
 		query  string
 		reason string
 	}{
-		{`SELECT EXISTS(SELECT 1 FROM omnisaves WHERE current_revision_id = ?)`, storage.RevisionInUseCurrent},
-		{`SELECT EXISTS(SELECT 1 FROM revisions WHERE parent_id = ?)`, storage.RevisionInUseChildren},
-		{`SELECT EXISTS(SELECT 1 FROM omnisaves WHERE forked_from_revision_id = ?)`, storage.RevisionInUseForkOrigin},
+		{`SELECT EXISTS(SELECT 1 FROM omnisaves WHERE current_revision_id = ?)`, omnisave.RevisionInUseCurrent},
+		{`SELECT EXISTS(SELECT 1 FROM revisions WHERE parent_id = ?)`, omnisave.RevisionInUseChildren},
+		{`SELECT EXISTS(SELECT 1 FROM omnisaves WHERE forked_from_revision_id = ?)`, omnisave.RevisionInUseForkOrigin},
 	}
 	for _, refusal := range refusals {
 		var used bool
@@ -1012,7 +1028,7 @@ func (r *Repository) DeleteRevision(ctx context.Context, saveID, revisionID stri
 			return err
 		}
 		if used {
-			return &storage.RevisionInUse{Reason: refusal.reason}
+			return &omnisave.RevisionInUse{Reason: refusal.reason}
 		}
 	}
 
@@ -1110,8 +1126,8 @@ func (r *Repository) OpenArtifact(_ context.Context, hash string) (io.ReadCloser
 	return r.openArtifact(hash)
 }
 
-func (r *Repository) StoreArtifact(_ context.Context, artifact storage.Artifact, payload io.Reader) error {
-	return r.storeArtifact(artifact, payload)
+func (r *Repository) StoreArtifact(_ context.Context, descriptor artifact.Artifact, payload io.Reader) error {
+	return r.storeArtifact(descriptor, payload)
 }
 
 func (r *Repository) StatArtifact(_ context.Context, hash string) (int64, error) {
@@ -1165,7 +1181,7 @@ func requireNativePathFormat(ctx context.Context, tx *sql.Tx, saveID string) err
 	if err := tx.QueryRowContext(ctx,
 		`SELECT path_format_version FROM omnisaves WHERE id = ?`, saveID,
 	).Scan(&version); err != nil {
-		return translateNotFound(err)
+		return translateNotFound(err, omnisave.ErrNotFound)
 	}
 	if version != omnisave.PathFormatNative {
 		return omnisave.ErrPathFormatMigrationRequired
@@ -1296,26 +1312,49 @@ func scanRevision(row scanner) (*omnisave.Revision, error) {
 	return &revision, nil
 }
 
-func translateNotFound(err error) error {
+// translateNotFound reports a missing row as the calling domain's notFound.
+func translateNotFound(err, notFound error) error {
 	if errors.Is(err, sql.ErrNoRows) {
-		return storage.ErrNotFound
+		return notFound
 	}
 	return err
 }
 
+// errIdentifierTaken reports a write that reused an identifier already in use
+// or already deleted. Services mint fresh identifiers, so it signals a bug
+// rather than anything a caller can act on.
+var errIdentifierTaken = errors.New("sqlite: identifier already used")
+
 // translateUniqueViolation turns the driver's constraint error on a duplicate
-// identifier into the conflict the storage contract names, matching the memory
-// repository.
-func translateUniqueViolation(err error) error {
+// identifier into the calling domain's conflict.
+func translateUniqueViolation(err, conflict error) error {
 	var driverError *sqlitedriver.Error
 	if errors.As(err, &driverError) {
 		switch driverError.Code() {
 		case sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY, sqlite3.SQLITE_CONSTRAINT_UNIQUE,
 			sqlite3.SQLITE_CONSTRAINT_TRIGGER:
-			return storage.ErrConflict
+			return conflict
 		}
 	}
 	return err
 }
 
-var _ storage.Repository = (*Repository)(nil)
+// revisionConflict reports a stale write with the Current Revision it expected
+// and the one it found.
+func revisionConflict(expected *string, actual sql.NullString) error {
+	conflict := &omnisave.CurrentRevisionConflict{ActualCurrentRevisionID: nullableStringPointer(actual)}
+	if expected != nil {
+		value := *expected
+		conflict.ExpectedCurrentRevisionID = &value
+	}
+	return conflict
+}
+
+// Repository is the one persistence adapter behind every domain's contract.
+var (
+	_ omnisave.Repository = (*Repository)(nil)
+	_ catalog.Repository  = (*Repository)(nil)
+	_ device.Repository   = (*Repository)(nil)
+	_ access.Repository   = (*Repository)(nil)
+	_ settings.Repository = (*Repository)(nil)
+)

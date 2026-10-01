@@ -336,7 +336,7 @@ func withoutAliases(aliases []string, refused map[string]bool) []string {
 // the locations it refused. Where a save may be placed does not wait for
 // one to exist, so the same refusal covers destinations: a Device that has
 // never played a game is offered the game's own folder and never the
-// mirror (FDR-004).
+// mirror (FDR-003).
 func refuseMirrorPaths(saves []target.Save, roots []string) ([]target.Save, map[string]bool) {
 	refused := make(map[string]bool)
 	kept := make([]target.Save, 0, len(saves))

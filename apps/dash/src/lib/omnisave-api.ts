@@ -69,6 +69,10 @@ export class CurrentRevisionConflictError extends Error {
   }
 }
 
+/**
+ * An error response body. The codes and fields mirror the server's wire
+ * contract in internal/httpapi/contract, which is their source of truth.
+ */
 type ErrorResponse = {
   error?: string;
   reason?: string;
@@ -137,8 +141,8 @@ export type GameProvenance = {
   first_tracked_at: string;
   last_seen_at: string;
   untracked_at?: string;
+  /** The Device is playing this game now; only the server ages the report out (ADR-013). */
   playing?: boolean;
-  playing_reported_at?: string;
 };
 
 export type GameIdentifier = {
@@ -330,7 +334,6 @@ export function listGames(token: string, signal?: AbortSignal) {
 export type DevicePresence = {
   device_id: string;
   playing_game_ids: string[];
-  reported_at: string;
 };
 
 export function listPresence(token: string, signal?: AbortSignal) {

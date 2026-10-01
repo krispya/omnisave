@@ -14,12 +14,12 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/krisbaumgartner/omnisave/internal/artifact"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
-	"github.com/krisbaumgartner/omnisave/internal/storage"
 )
 
 type service struct {
-	repository storage.OmnisaveRepository
+	repository omnisave.Repository
 	namer      RevisionNamer
 }
 
@@ -46,13 +46,13 @@ type RevisionNamer interface {
 
 // New creates an Omnisave service backed by repository, committing revisions
 // unnamed.
-func New(repository storage.OmnisaveRepository) omnisave.Service {
+func New(repository omnisave.Repository) omnisave.Service {
 	return NewWithNamer(repository, nil)
 }
 
 // NewWithNamer creates an Omnisave service that asks namer to name each
 // committed revision from its content. A nil namer commits unnamed.
-func NewWithNamer(repository storage.OmnisaveRepository, namer RevisionNamer) omnisave.Service {
+func NewWithNamer(repository omnisave.Repository, namer RevisionNamer) omnisave.Service {
 	return &service{repository: repository, namer: namer}
 }
 
@@ -178,13 +178,6 @@ func (s *service) Restore(ctx context.Context, saveID string, input omnisave.Res
 	if err := s.repository.RestoreOmnisave(
 		ctx, saveID, input.RevisionID, input.ExpectedCurrentRevisionID,
 	); err != nil {
-		var conflict *storage.CurrentRevisionConflict
-		if errors.As(err, &conflict) {
-			return nil, &omnisave.CurrentRevisionConflict{
-				ExpectedCurrentRevisionID: cloneString(input.ExpectedCurrentRevisionID),
-				ActualCurrentRevisionID:   cloneString(conflict.ActualCurrentRevisionID),
-			}
-		}
 		return nil, translateError(err)
 	}
 	return s.Get(ctx, saveID)
@@ -259,7 +252,7 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 	// The parent is where the new node attaches; the expected current revision
 	// is only the concurrency check. They are the same node for an ordinary
 	// commit and differ for a branch commit, whose content continues a node a
-	// restore moved current away from (FDR-005, decision 15).
+	// restore moved current away from (FDR-005, decision 10).
 	parentRevisionID := input.ExpectedCurrentRevisionID
 	if input.ParentRevisionID != nil {
 		parentRevisionID = input.ParentRevisionID
@@ -291,7 +284,7 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 		}
 		changedPaths[file.Path] = struct{}{}
 		size, err := s.repository.StatArtifact(ctx, file.Artifact.SHA256)
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, artifact.ErrNotFound) {
 			if _, alreadyMissing := seenMissing[file.Artifact.SHA256]; !alreadyMissing {
 				missing = append(missing, file.Artifact.SHA256)
 				seenMissing[file.Artifact.SHA256] = struct{}{}
@@ -354,17 +347,6 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 		}
 	}
 	if err := s.repository.CommitRevision(ctx, input.ExpectedCurrentRevisionID, revision, input.KeepCurrent); err != nil {
-		var conflict *storage.CurrentRevisionConflict
-		if errors.As(err, &conflict) {
-			return nil, &omnisave.CurrentRevisionConflict{
-				ExpectedCurrentRevisionID: cloneString(input.ExpectedCurrentRevisionID),
-				ActualCurrentRevisionID:   cloneString(conflict.ActualCurrentRevisionID),
-			}
-		}
-		var unavailable *storage.ArtifactsUnavailable
-		if errors.As(err, &unavailable) {
-			return nil, &omnisave.MissingArtifacts{SHA256: unavailable.SHA256}
-		}
 		return nil, translateError(err)
 	}
 	return &revision, nil
@@ -511,23 +493,14 @@ func (s *service) DeleteRevision(ctx context.Context, saveID, revisionID string)
 	if revisionID == "" {
 		return omnisave.ErrInvalid
 	}
-	err := s.repository.DeleteRevision(ctx, saveID, revisionID)
-	var inUse *storage.RevisionInUse
-	if errors.As(err, &inUse) {
-		return &omnisave.RevisionInUse{Reason: inUse.Reason}
-	}
-	return translateError(err)
+	return translateError(s.repository.DeleteRevision(ctx, saveID, revisionID))
 }
 
-func (s *service) StoreArtifact(ctx context.Context, artifact omnisave.Artifact, payload io.Reader) error {
-	if payload == nil || artifact.Format == "" || !validSHA256(artifact.SHA256) || artifact.Size < 0 {
+func (s *service) StoreArtifact(ctx context.Context, descriptor omnisave.Artifact, payload io.Reader) error {
+	if payload == nil || descriptor.Format == "" || !validSHA256(descriptor.SHA256) || descriptor.Size < 0 {
 		return omnisave.ErrInvalid
 	}
-	return translateError(s.repository.StoreArtifact(ctx, storage.Artifact{
-		Format: artifact.Format,
-		SHA256: artifact.SHA256,
-		Size:   artifact.Size,
-	}, payload))
+	return translateError(s.repository.StoreArtifact(ctx, descriptor, payload))
 }
 
 func (s *service) StatArtifact(ctx context.Context, hash string) (int64, error) {
@@ -540,11 +513,16 @@ func (s *service) OpenArtifact(ctx context.Context, hash string) (io.ReadCloser,
 	return payload, translateError(err)
 }
 
+// translateError maps the artifact store's answers onto this package's
+// errors. The Repository already reports save history in omnisave terms.
 func translateError(err error) error {
-	if errors.Is(err, storage.ErrNotFound) {
+	var unavailable *artifact.Unavailable
+	switch {
+	case errors.As(err, &unavailable):
+		return &omnisave.MissingArtifacts{SHA256: unavailable.SHA256}
+	case errors.Is(err, artifact.ErrNotFound):
 		return omnisave.ErrNotFound
-	}
-	if errors.Is(err, storage.ErrArtifactMismatch) {
+	case errors.Is(err, artifact.ErrMismatch):
 		return omnisave.ErrInvalid
 	}
 	return err

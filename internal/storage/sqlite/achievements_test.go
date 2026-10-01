@@ -10,6 +10,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
 	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
+	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite/sqlitetest"
 	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
@@ -27,6 +28,7 @@ func TestAchievementMarksSurviveLosingTheDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-firewatch")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-firewatch", DisplayName: "Summer 1989"})
 	if err != nil {
@@ -98,6 +100,7 @@ func TestDeletingARevisionLeavesItsMarksWaitingForTheNextCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-firewatch")
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-firewatch"})

@@ -132,7 +132,7 @@ func TestClientDecodesACurrentRevisionConflictFromARefusedCommit(t *testing.T) {
 	_, err = client.CommitRevision(context.Background(), "save-a", omnisave.CreateRevision{
 		ExpectedCurrentRevisionID: &expected,
 	})
-	var conflict *remote.CurrentRevisionConflict
+	var conflict *omnisave.CurrentRevisionConflict
 	if !errors.As(err, &conflict) {
 		t.Fatalf("expected the conflict payload to decode to its typed error, got %v", err)
 	}
@@ -141,15 +141,14 @@ func TestClientDecodesACurrentRevisionConflictFromARefusedCommit(t *testing.T) {
 	}
 }
 
-func TestClientLeavesOtherConflictBodiesAsPlainResponseErrors(t *testing.T) {
+func TestClientLeavesUncodedFailuresAsPlainResponseErrors(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusConflict,
 			Header:     make(http.Header),
 			Body: io.NopCloser(strings.NewReader(`{
-				"error":"identity_conflict",
-				"status":409,
-				"game_ids":["game-a","game-b"]
+				"error":"Conflict",
+				"status":409
 			}`)),
 		}, nil
 	})}
@@ -159,9 +158,9 @@ func TestClientLeavesOtherConflictBodiesAsPlainResponseErrors(t *testing.T) {
 	}
 
 	_, err = client.CommitRevision(context.Background(), "save-a", omnisave.CreateRevision{})
-	var conflict *remote.CurrentRevisionConflict
+	var conflict *omnisave.CurrentRevisionConflict
 	if errors.As(err, &conflict) {
-		t.Fatalf("expected a different 409 body to stay generic, got %+v", conflict)
+		t.Fatalf("expected a 409 that names no refusal to stay generic, got %+v", conflict)
 	}
 	var response *remote.ResponseError
 	if !errors.As(err, &response) || response.StatusCode != http.StatusConflict {
@@ -254,7 +253,7 @@ func TestClientResolvesLocalGameEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolution, err := client.ResolveGame(context.Background(), catalog.ResolveGame{
+	resolution, err := client.ResolveGame(context.Background(), catalog.Evidence{
 		Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "413150"}},
 		TitleHint:   "Stardew Valley",
 	})

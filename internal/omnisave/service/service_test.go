@@ -11,12 +11,12 @@ import (
 
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
-	"github.com/krisbaumgartner/omnisave/internal/storage/storagetest"
+	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite/sqlitetest"
 )
 
 func TestOmnisaveRecordCanBeCreatedListedAndRenamed(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	saves := omnisaveservice.New(sqlitetest.Open(t, "pokemon-emerald-usa"))
 	created, err := saves.Create(ctx, omnisave.CreateOmnisave{
 		GameID:   "pokemon-emerald-usa",
 		Metadata: map[string]string{"label": "My Pokémon save"},
@@ -41,7 +41,7 @@ func TestOmnisaveRecordCanBeCreatedListedAndRenamed(t *testing.T) {
 
 func TestPartialUpdatesMaterializeCompleteSnapshots(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	saves := omnisaveservice.New(sqlitetest.Open(t, "pokemon-emerald-usa"))
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestPartialUpdatesMaterializeCompleteSnapshots(t *testing.T) {
 
 func TestRevisionCanBeNamedWithoutChangingItsSnapshot(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	saves := omnisaveservice.New(sqlitetest.Open(t, "chrono-trigger"))
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "chrono-trigger"})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestRevisionCanBeNamedWithoutChangingItsSnapshot(t *testing.T) {
 
 func TestStaleWriterCannotMoveTheCurrentRevision(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	saves := omnisaveservice.New(sqlitetest.Open(t, "pokemon-emerald-usa"))
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func TestStaleWriterCannotMoveTheCurrentRevision(t *testing.T) {
 
 func TestUnnamedSavesAlwaysReceiveNumberedDefaultNames(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	saves := omnisaveservice.New(sqlitetest.Open(t, "pokemon-emerald-usa", "chrono-trigger-usa"))
 	first, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
 	if err != nil {
 		t.Fatal(err)
@@ -185,9 +185,23 @@ func TestUnnamedSavesAlwaysReceiveNumberedDefaultNames(t *testing.T) {
 	}
 }
 
+// A save belongs to a Game in the Library, so one naming any other game is
+// refused rather than left behind where nothing would ever delete it.
+func TestASaveMustBelongToALibraryGame(t *testing.T) {
+	ctx := context.Background()
+	saves := omnisaveservice.New(sqlitetest.Open(t, "pokemon-emerald-usa"))
+	if _, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "never-resolved"}); !errors.Is(err, omnisave.ErrInvalid) {
+		t.Fatalf("expected a save for an unknown game to be invalid, got %v", err)
+	}
+	listed, err := saves.List(ctx)
+	if err != nil || len(listed) != 0 {
+		t.Fatalf("a refused save left something behind: %+v (%v)", listed, err)
+	}
+}
+
 func TestASaveNameCanNeverBeCleared(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	saves := omnisaveservice.New(sqlitetest.Open(t, "pokemon-emerald-usa"))
 	created, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
 	if err != nil {
 		t.Fatal(err)
@@ -200,7 +214,7 @@ func TestASaveNameCanNeverBeCleared(t *testing.T) {
 
 func TestUnnamedForksInheritTheSourceNameWithAForkSuffix(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	saves := omnisaveservice.New(sqlitetest.Open(t, "pokemon-emerald-usa"))
 	source, err := saves.Create(ctx, omnisave.CreateOmnisave{
 		GameID: "pokemon-emerald-usa", DisplayName: "New Game+",
 	})
@@ -227,7 +241,7 @@ func TestUnnamedForksInheritTheSourceNameWithAForkSuffix(t *testing.T) {
 // the server numbers the newcomers so the poster wall can tell them apart.
 func TestARequestedNameTheGameAlreadyCarriesIsNumbered(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	saves := omnisaveservice.New(sqlitetest.Open(t, "pokemon-emerald-usa", "chrono-trigger-usa"))
 	source, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
 	if err != nil {
 		t.Fatal(err)
@@ -274,7 +288,7 @@ func TestARequestedNameTheGameAlreadyCarriesIsNumbered(t *testing.T) {
 
 func TestForkCreatesAnotherSelectableSaveWithItsOwnHistory(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	saves := omnisaveservice.New(sqlitetest.Open(t, "pokemon-emerald-usa"))
 	source, err := saves.Create(ctx, omnisave.CreateOmnisave{
 		GameID: "pokemon-emerald-usa", Metadata: map[string]string{"platform": "gba"},
 	})
@@ -323,7 +337,7 @@ func TestForkCreatesAnotherSelectableSaveWithItsOwnHistory(t *testing.T) {
 
 func TestRestoreMovesCurrentAndTheNextCommitCreatesABranch(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	saves := omnisaveservice.New(sqlitetest.Open(t, "chrono-trigger"))
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "chrono-trigger"})
 	if err != nil {
 		t.Fatal(err)
@@ -395,10 +409,10 @@ func TestRestoreMovesCurrentAndTheNextCommitCreatesABranch(t *testing.T) {
 // A branch commit names its parent separately from the current revision it
 // expects, so a Device whose content continues a node a restore moved away
 // from attaches there instead of pretending to continue current. The
-// concurrency check still guards the pointer (FDR-005, decision 15).
+// concurrency check still guards the pointer (FDR-005, decision 10).
 func TestABranchCommitAttachesToItsParentAndStillGuardsCurrent(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	saves := omnisaveservice.New(sqlitetest.Open(t, "chrono-trigger"))
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "chrono-trigger"})
 	if err != nil {
 		t.Fatal(err)
@@ -495,7 +509,7 @@ func TestABranchCommitAttachesToItsParentAndStillGuardsCurrent(t *testing.T) {
 
 func TestAForkKeepsItsForkPointAfterRewindingBelowIt(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	saves := omnisaveservice.New(sqlitetest.Open(t, "pokemon-emerald-usa"))
 	source, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
 	if err != nil {
 		t.Fatal(err)
@@ -556,7 +570,7 @@ func TestAForkKeepsItsForkPointAfterRewindingBelowIt(t *testing.T) {
 
 func TestRejectInvalidChangesAndReportMissingArtifacts(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	saves := omnisaveservice.New(sqlitetest.Open(t, "pokemon-emerald-usa"))
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
 	if err != nil {
 		t.Fatal(err)
@@ -622,7 +636,7 @@ func (n *notingNamer) NameRevision(_ context.Context, gameID string, _ []omnisav
 func TestCommittedRevisionsAreNamedByTheGamesLabeler(t *testing.T) {
 	ctx := context.Background()
 	namer := &notingNamer{name: "Necro A5, Underdocks flr 12"}
-	saves := omnisaveservice.NewWithNamer(storagetest.NewMemoryRepository(), namer)
+	saves := omnisaveservice.NewWithNamer(sqlitetest.Open(t, "game-spire2"), namer)
 	if !saves.HasLabeler(ctx, "game-spire2") {
 		t.Fatal("configured labeler was not reported")
 	}
@@ -673,7 +687,7 @@ func TestCommittedRevisionsAreNamedByTheGamesLabeler(t *testing.T) {
 
 func TestAnExistingRevisionCanRunItsGamesLabeler(t *testing.T) {
 	ctx := context.Background()
-	repository := storagetest.NewMemoryRepository()
+	repository := sqlitetest.Open(t, "game-spire2")
 	beforeLabeler := omnisaveservice.New(repository)
 	if beforeLabeler.HasLabeler(ctx, "game-spire2") {
 		t.Fatal("service without a labeler reported one")
@@ -733,7 +747,7 @@ func TestAnExistingRevisionCanRunItsGamesLabeler(t *testing.T) {
 func TestAKeepCurrentCommitAttachesABranchWithoutMovingCurrent(t *testing.T) {
 	ctx := context.Background()
 	namer := &notingNamer{name: "labeler name"}
-	saves := omnisaveservice.NewWithNamer(storagetest.NewMemoryRepository(), namer)
+	saves := omnisaveservice.NewWithNamer(sqlitetest.Open(t, "game-1", "game-2"), namer)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1"})
 	if err != nil {
 		t.Fatal(err)
@@ -808,7 +822,8 @@ func TestAKeepCurrentCommitAttachesABranchWithoutMovingCurrent(t *testing.T) {
 
 func TestDeleteRevisionPrunesOnlyUnneededTips(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	repository := sqlitetest.Open(t, "game-1")
+	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1"})
 	if err != nil {
 		t.Fatal(err)
@@ -862,6 +877,8 @@ func TestDeleteRevisionPrunesOnlyUnneededTips(t *testing.T) {
 	if err != nil || len(history) != 1 || history[0].ID != first.ID {
 		t.Fatalf("expected only the kept revision: history=%+v err=%v", history, err)
 	}
+	// Reclaiming bytes finishes after the delete answers.
+	repository.WaitForCleanup()
 	if _, err := saves.StatArtifact(ctx, pruned.SHA256); !errors.Is(err, omnisave.ErrNotFound) {
 		t.Fatalf("content only the deleted tip referenced should be gone, got %v", err)
 	}
@@ -872,7 +889,7 @@ func TestDeleteRevisionPrunesOnlyUnneededTips(t *testing.T) {
 
 func TestDeleteRevisionRefusesAForkOrigin(t *testing.T) {
 	ctx := context.Background()
-	saves := omnisaveservice.New(storagetest.NewMemoryRepository())
+	saves := omnisaveservice.New(sqlitetest.Open(t, "game-1"))
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1"})
 	if err != nil {
 		t.Fatal(err)

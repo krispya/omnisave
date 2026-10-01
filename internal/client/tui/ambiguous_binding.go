@@ -4,22 +4,9 @@ import (
 	"errors"
 
 	"github.com/charmbracelet/huh"
+
+	"github.com/krisbaumgartner/omnisave/internal/client/savesync"
 )
-
-// AmbiguousBindingOption describes one existing save a Local Save could sync
-// with, and whether its history contains the Local Save's exact content.
-type AmbiguousBindingOption struct {
-	OmnisaveID        string
-	Name              string
-	MatchedRevisionID string
-}
-
-// AmbiguousBindingChoice resolves a Local Save that matches zero or several
-// saves. Create makes the Local Save a new save instead of choosing one.
-type AmbiguousBindingChoice struct {
-	OmnisaveID string
-	Create     bool
-}
 
 type unmatchedBindingAction string
 
@@ -31,15 +18,15 @@ const (
 
 // PromptAmbiguousBinding asks where a Local Save belongs when content
 // matching cannot decide alone.
-func PromptAmbiguousBinding(gameTitle string, options []AmbiguousBindingOption) (AmbiguousBindingChoice, error) {
+func PromptAmbiguousBinding(gameTitle string, options []savesync.AmbiguousOption) (savesync.AmbiguousChoice, error) {
 	if len(options) == 0 {
-		return AmbiguousBindingChoice{}, ErrNoOmnisaves
+		return savesync.AmbiguousChoice{}, ErrNoOmnisaves
 	}
 	if matchCount(options) == 0 {
 		return promptUnmatchedBinding(gameTitle, options)
 	}
 
-	matchedOptions := make([]AmbiguousBindingOption, 0, len(options))
+	matchedOptions := make([]savesync.AmbiguousOption, 0, len(options))
 	for _, option := range options {
 		if option.MatchedRevisionID != "" {
 			matchedOptions = append(matchedOptions, option)
@@ -47,28 +34,28 @@ func PromptAmbiguousBinding(gameTitle string, options []AmbiguousBindingOption) 
 	}
 	selected := matchedOptions[0].OmnisaveID
 	if err := multipleMatchesForm(gameTitle, matchedOptions, &selected).Run(); err != nil {
-		return AmbiguousBindingChoice{}, bindingPromptError(err)
+		return savesync.AmbiguousChoice{}, bindingPromptError(err)
 	}
 	if selected == ambiguousChoiceCreate {
-		return AmbiguousBindingChoice{Create: true}, nil
+		return savesync.AmbiguousChoice{Create: true}, nil
 	}
-	return AmbiguousBindingChoice{OmnisaveID: selected}, nil
+	return savesync.AmbiguousChoice{OmnisaveID: selected}, nil
 }
 
-func promptUnmatchedBinding(gameTitle string, options []AmbiguousBindingOption) (AmbiguousBindingChoice, error) {
+func promptUnmatchedBinding(gameTitle string, options []savesync.AmbiguousOption) (savesync.AmbiguousChoice, error) {
 	action := unmatchedBindingSync
 	if err := unmatchedBindingActionForm(gameTitle, &action).Run(); err != nil {
-		return AmbiguousBindingChoice{}, bindingPromptError(err)
+		return savesync.AmbiguousChoice{}, bindingPromptError(err)
 	}
 	if action == unmatchedBindingCreate {
-		return AmbiguousBindingChoice{Create: true}, nil
+		return savesync.AmbiguousChoice{Create: true}, nil
 	}
 
 	selected := options[0].OmnisaveID
 	if err := unmatchedBindingSaveForm(gameTitle, options, &selected).Run(); err != nil {
-		return AmbiguousBindingChoice{}, bindingPromptError(err)
+		return savesync.AmbiguousChoice{}, bindingPromptError(err)
 	}
-	return AmbiguousBindingChoice{OmnisaveID: selected}, nil
+	return savesync.AmbiguousChoice{OmnisaveID: selected}, nil
 }
 
 // PromptHeldLineageSeed asks before starting a new save for a game whose
@@ -103,7 +90,7 @@ func bindingPromptError(err error) error {
 	return err
 }
 
-func matchCount(options []AmbiguousBindingOption) int {
+func matchCount(options []savesync.AmbiguousOption) int {
 	matched := 0
 	for _, option := range options {
 		if option.MatchedRevisionID != "" {
@@ -124,7 +111,7 @@ func unmatchedBindingActionForm(gameTitle string, action *unmatchedBindingAction
 	return huh.NewForm(huh.NewGroup(prompt).Title(gameTitle)).WithTheme(trackingTheme())
 }
 
-func unmatchedBindingSaveForm(gameTitle string, options []AmbiguousBindingOption, selected *string) *huh.Form {
+func unmatchedBindingSaveForm(gameTitle string, options []savesync.AmbiguousOption, selected *string) *huh.Form {
 	selections := make([]huh.Option[string], 0, len(options))
 	for _, option := range options {
 		selections = append(selections, huh.NewOption(option.Name, option.OmnisaveID))
@@ -136,7 +123,7 @@ func unmatchedBindingSaveForm(gameTitle string, options []AmbiguousBindingOption
 	return huh.NewForm(huh.NewGroup(prompt).Title(gameTitle)).WithTheme(trackingTheme())
 }
 
-func multipleMatchesForm(gameTitle string, options []AmbiguousBindingOption, selected *string) *huh.Form {
+func multipleMatchesForm(gameTitle string, options []savesync.AmbiguousOption, selected *string) *huh.Form {
 	selections := make([]huh.Option[string], 0, len(options)+1)
 	for _, option := range options {
 		selections = append(selections, huh.NewOption(option.Name, option.OmnisaveID))

@@ -1,20 +1,20 @@
 # Recovering saves from a store directory
 
-An Omnisave save store is one directory holding everything needed to recover the game saves in it — no server, no database, and no network are required.
+An Omnisave Portable Store is one directory holding everything needed to recover the game saves in it. You don't need a server, a database, or a network connection.
 
 The easiest recovery is no recovery: point an Omnisave server at the directory and it rebuilds its own index from what it finds there, so every save appears again on its own. The server arrives unclaimed — credentials never travel in the store — and devices pair with it afresh. The steps below are for when there is no server to point, or no wish to run one: they take a terminal and ordinary text and gzip tools, and no version of Omnisave has to run.
 
 ## Layout
 
     VERSION           the format marker for the directory
-    objects/          save file content, gzip-compressed, named by SHA-256
+    objects/          file content, gzip-compressed, named by SHA-256
     revisions/        one JSON manifest per saved snapshot
-    omnisaves/        one JSON record per save lineage
+    omnisaves/        one JSON record per save
     games/            one JSON record per game
     deletions/        one JSON marker per committed deletion, by kind
-    reclaiming/       objects staged for removal; treat as already deleted
+    reclaiming/       objects being removed; check here if an object is missing from objects/
 
-The JSON files are plain text on purpose. Open them in any editor.
+Every record is named `<id>.json`, so a record whose identifier you know can be found with `find`. The JSON files are plain text on purpose. Open them in any editor.
 
 ## Recovering one save by hand
 
@@ -28,26 +28,30 @@ The JSON files are plain text on purpose. Open them in any editor.
 
        grep -rl '"game_id": "<game id>"' omnisaves/
 
-   Each match is one save lineage. Its "display_name" is what it was called. A deletion leaves a marker rather than erasing what it deleted, so check `deletions/` before recovering:
+   Each match is one save. Its "display_name" is what it was called. A deletion leaves a marker rather than erasing what it deleted, so check `deletions/` before recovering:
 
-       grep -rl '"target_id": "<omnisave id>"' deletions/omnisave/
+       find deletions/omnisave -name '<omnisave id>.json'
 
-   A match means that save was deliberately deleted. Markers under `deletions/revision/` name single snapshots deleted on their own — a manifest for one of those is a leftover, not a save to recover. A store from an older server may instead carry "deleted_at" or "deleted_revisions" fields on the lineage record itself; they mean the same thing.
+   A match means that save was deliberately deleted. A store from an older server may instead carry "deleted_at" or "deleted_revisions" fields on the save's record itself; they mean the same thing.
 
-3. Find the newest snapshot of that lineage. Search `revisions/` for the lineage's identifier:
+3. Find the snapshot the save is at. The save's record names it in "current_revision_id". That is the save, whatever the timestamps say: restoring can make any older snapshot current, and a fork starts at a snapshot another save made. Open its manifest:
 
-       grep -rl '"id": "<omnisave id>"' revisions/
+       find revisions -name '<current revision id>.json'
 
-   Each match is one snapshot with a "created_at" timestamp. The newest one is almost always the latest save. Every snapshot is complete on its own — you do not need to assemble it from the ones before it.
+   Every snapshot is complete on its own. You don't need to assemble it from the ones before it. Any other snapshot can be recovered the same way, by its "id"; each names its predecessor in "parent". A manifest named by a marker under `deletions/revision/` was deliberately deleted and is a leftover, not a snapshot to recover.
 
-   The exact rule, if the timestamps disagree or look wrong: each snapshot names its predecessor in "parent", and the latest is the one no other snapshot names. That is what the server uses, and it holds even when clocks do not.
+4. Write the files out. The manifest's "files" array gives each file's "path" and the "sha256" of its content.
 
-4. Write the files out. The manifest's "files" array gives each file's "path" inside the save and the "sha256" of its content. For each entry:
+   A path starts with the location the file belongs to: `battery` for RetroArch, a short hex identifier for one of a Steam game's save folders. Drop that first part; the rest is relative to that location's folder. `battery/Chrono Trigger.srm` becomes `Chrono Trigger.srm`, which goes next to the ROM unless RetroArch is set to keep saves elsewhere. For a Steam game, `omnisave scan --verbose` lists each of the game's save folders and the files found in them; most games have one.
 
-       mkdir -p "$(dirname <path>)"
-       gunzip -c objects/<first 2 characters of sha256>/<sha256>.gz > <path>
+   If the save's record lists "path_migrations", snapshots made before a migration may still start with its "from" value, such as `remote`. Replace that with its "to" value first, then drop the location as above: with a "to" of `aaaa1111/76561198027955092`, `remote/profile1/run.save` becomes `76561198027955092/profile1/run.save` inside the `aaaa1111` location's folder.
 
-   The result is exactly the bytes the game wrote. The paths are relative to wherever the game keeps its saves — next to the ROM for most emulators, and for a Steam game the folder the game itself reads and writes, which `omnisave scan --verbose` names for that game. Do not write them into Steam's `userdata/<account>/<app>/remote/`: that is Steam Cloud's staging area, not a save the game reads, and content placed there can be replaced or ignored at the next launch ([FDR-003](fdr/FDR-003-automatic-save-binding.md), decision 10). Put the files where the game expects them and it will load the save.
+   For each file, with `<rest>` the path after the location:
+
+       mkdir -p "<save folder>/$(dirname "<rest>")"
+       gunzip -c objects/<first 2 characters of sha256>/<sha256>.gz > "<save folder>/<rest>"
+
+   The result is exactly the bytes the game wrote. Never write them into Steam's `userdata/<account>/<app>/remote/`: that is Steam Cloud's staging area, not a save the game reads, and content placed there can be replaced or ignored at the next launch ([FDR-003](fdr/FDR-003-automatic-save-binding.md)). Put the files where the game expects them and it will load the save.
 
 ## Checking a copy is intact
 
@@ -55,8 +59,8 @@ Every object's file name is the SHA-256 of its uncompressed content, so a copy c
 
     gunzip -c objects/ab/abcd....gz | shasum -a 256
 
-The output must equal the name of the file. A mismatch means that object was damaged in transit or on the medium; other objects are unaffected, and the snapshots that do not reference the damaged one are still complete.
+The output must equal the name of the file. A mismatch means that object was damaged in transit or on the medium. Other objects are unaffected, and the snapshots that don't reference the damaged one are still complete.
 
 ## What is not in a store
 
-Server credentials, device pairings, the owner token, and the owner PIN are deliberately excluded. A store holds save data only, so that it is safe to copy and to hand to somebody else.
+Server credentials, device pairings, the owner token, the owner PIN, owner settings, the list of Devices, and each game's Provenance are deliberately excluded, so a store is safe to copy and to hand to somebody else. Cover art may sit in `objects/` without any record naming it; the server fetches it again rather than recovering it.

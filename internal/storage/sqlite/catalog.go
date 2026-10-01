@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
-	"github.com/krisbaumgartner/omnisave/internal/storage"
 	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
@@ -19,7 +18,7 @@ func (r *Repository) FindGameByIdentifier(ctx context.Context, identifier catalo
 		SELECT game_id FROM game_identifiers WHERE namespace = ? AND value = ?
 	)`, identifier.Namespace, identifier.Value))
 	if err != nil {
-		return nil, translateNotFound(err)
+		return nil, translateNotFound(err, catalog.ErrNotFound)
 	}
 	return r.withGameDetails(ctx, game)
 }
@@ -29,7 +28,7 @@ func (r *Repository) FindGameByFingerprint(ctx context.Context, fingerprint cata
 		SELECT game_id FROM game_fingerprints WHERE platform = ? AND algorithm = ? AND value = ?
 	)`, fingerprint.Platform, fingerprint.Algorithm, fingerprint.Value))
 	if err != nil {
-		return nil, translateNotFound(err)
+		return nil, translateNotFound(err, catalog.ErrNotFound)
 	}
 	return r.withGameDetails(ctx, game)
 }
@@ -37,7 +36,7 @@ func (r *Repository) FindGameByFingerprint(ctx context.Context, fingerprint cata
 func (r *Repository) GetGame(ctx context.Context, id string) (*catalog.Game, error) {
 	game, err := scanGame(r.db.QueryRowContext(ctx, selectGame+` WHERE id = ?`, id))
 	if err != nil {
-		return nil, translateNotFound(err)
+		return nil, translateNotFound(err, catalog.ErrNotFound)
 	}
 	return r.withGameDetails(ctx, game)
 }
@@ -72,14 +71,14 @@ func (r *Repository) ListGames(ctx context.Context) ([]catalog.Game, error) {
 	return games, nil
 }
 
-func (r *Repository) SaveGame(ctx context.Context, game catalog.Game, rom *catalog.GameROM) error {
+func (r *Repository) SaveGame(ctx context.Context, game catalog.Game) error {
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
 	if err := r.requireStoreReady(); err != nil {
 		return err
 	}
 	if r.store.HasDeletion(store.DeletionGame, game.ID) {
-		return storage.ErrConflict
+		return catalog.ErrConflict
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -87,7 +86,7 @@ func (r *Repository) SaveGame(ctx context.Context, game catalog.Game, rom *catal
 	}
 	defer tx.Rollback()
 	if err := saveGameMetadata(ctx, tx, game); err != nil {
-		return translateUniqueViolation(err)
+		return translateUniqueViolation(err, catalog.ErrConflict)
 	}
 	for _, identifier := range game.Identifiers {
 		if err := claimIdentity(ctx, tx, "game_identifiers", game.ID,
@@ -98,11 +97,6 @@ func (r *Repository) SaveGame(ctx context.Context, game catalog.Game, rom *catal
 	for _, fingerprint := range game.Fingerprints {
 		if err := claimIdentity(ctx, tx, "game_fingerprints", game.ID,
 			[]string{"platform", "algorithm", "value"}, []any{fingerprint.Platform, fingerprint.Algorithm, fingerprint.Value}); err != nil {
-			return err
-		}
-	}
-	if rom != nil {
-		if err := saveGameROM(ctx, tx, *rom); err != nil {
 			return err
 		}
 	}
@@ -139,33 +133,9 @@ func claimIdentity(ctx context.Context, tx *sql.Tx, table, gameID string, column
 		return err
 	}
 	if owner != gameID {
-		return storage.ErrConflict
+		return catalog.ErrConflict
 	}
 	return nil
-}
-
-func saveGameROM(ctx context.Context, tx *sql.Tx, rom catalog.GameROM) error {
-	languages, err := json.Marshal(rom.Languages)
-	if err != nil {
-		return err
-	}
-	attributes, err := json.Marshal(rom.Attributes)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO game_roms(
-		id, game_id, system, name, region, languages, size, crc32, md5, sha1, sha256, source, source_id, attributes
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(id) DO UPDATE SET
-		game_id = excluded.game_id, system = excluded.system, name = excluded.name,
-		region = excluded.region, languages = excluded.languages, size = excluded.size,
-		crc32 = excluded.crc32, md5 = excluded.md5, sha1 = excluded.sha1,
-		sha256 = excluded.sha256, source = excluded.source, source_id = excluded.source_id,
-		attributes = excluded.attributes`,
-		rom.ID, rom.GameID, rom.System, rom.Name, rom.Region, string(languages), rom.Size,
-		rom.CRC32, rom.MD5, rom.SHA1, rom.SHA256, rom.Source, rom.SourceID, string(attributes),
-	)
-	return err
 }
 
 type contextExecutor interface {
@@ -269,7 +239,7 @@ func (r *Repository) DeleteGame(ctx context.Context, id string) error {
 		if committed || r.store.HasDeletion(store.DeletionGame, id) {
 			return nil
 		}
-		return storage.ErrNotFound
+		return catalog.ErrNotFound
 	}
 
 	deletedAt := time.Now().UTC()
@@ -364,7 +334,7 @@ func (r *Repository) GetGameMedia(ctx context.Context, gameID, mediaID string) (
 	media, err := scanGameMedia(r.db.QueryRowContext(ctx, `SELECT
 		id, game_id, kind, position, format, sha256, size, provider, provider_id, attribution
 		FROM game_media WHERE game_id = ? AND id = ?`, gameID, mediaID))
-	return media, translateNotFound(err)
+	return media, translateNotFound(err, catalog.ErrNotFound)
 }
 
 func (r *Repository) withGameDetails(ctx context.Context, game *catalog.Game) (*catalog.Game, error) {
@@ -472,5 +442,3 @@ func scanGameMedia(row scanner) (*catalog.GameMedia, error) {
 	)
 	return &media, err
 }
-
-var _ storage.CatalogRepository = (*Repository)(nil)

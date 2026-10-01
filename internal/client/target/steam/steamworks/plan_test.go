@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// The fixture mirrors Slay the Spire 2, the measured case (FDR-005): the
+// The fixture mirrors Slay the Spire 2, the measured case (FDR-005, decision 13): the
 // registry anchors at the account folder, live state was deregistered by an
 // abandon, and the native folder carries files the game never registers.
 const anchor = "/home/user/Library/Application Support/SlayTheSpire2/steam/76561198027955092"

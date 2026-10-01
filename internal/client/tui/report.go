@@ -1,16 +1,21 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/krisbaumgartner/omnisave/internal/client/savesync"
+	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
 // Track reports render one standing line per game with pass events beneath it.
 
-// TrackReport buffers tracking results and renders them grouped by game.
+// TrackReport buffers tracking results and renders them grouped by game. It
+// is how the client presents a Save Sync pass.
 type TrackReport struct {
 	general []string
 	order   []string
@@ -26,6 +31,8 @@ type TrackReport struct {
 	// in progress never replaces what is true with what is half-finished.
 	OnWorking func(title string)
 }
+
+var _ savesync.Reporter = (*TrackReport)(nil)
 
 // Working names the game the pass has moved on to. A pass works one game at
 // a time, so a later call replaces the mark rather than adding to it.
@@ -74,7 +81,7 @@ const PendingDiverged PendingKind = "diverged"
 // the view can key an answer back to the save that asked. The game's title
 // is the row it rides, so only the Omnisave has to be named here. ForkName
 // lets the raised question name the save forking would create (see
-// DivergedQuestion).
+// savesync.DivergedQuestion).
 type PendingDecision struct {
 	Kind         PendingKind
 	OmnisaveName string
@@ -207,8 +214,33 @@ func (r *TrackReport) Migrated(title, omnisaveName string) {
 // MigrationHeld records a mirror-vocabulary lineage this pass could not
 // migrate, and why — its history cannot be restored until a device proves
 // the mapping, which must not look like a lineage in good standing.
-func (r *TrackReport) MigrationHeld(title, omnisaveName, cause string) {
-	r.event(title, omnisaveName+" not migrated — "+cause)
+func (r *TrackReport) MigrationHeld(title, omnisaveName string, reason error) {
+	r.event(title, omnisaveName+" not migrated — "+heldCause(reason))
+}
+
+// heldCause spells why a lineage is held. A server's refusal names its
+// reason, so the user can tell a permanent hold from one that heals; every
+// other reason reads as its cause.
+func heldCause(reason error) string {
+	var refused *omnisave.MigrationRefused
+	if !errors.As(reason, &refused) {
+		return Cause(reason)
+	}
+	switch refused.Reason {
+	case omnisave.MigrationRefusedForkFamily:
+		return "the lineage shares history with a fork"
+	case omnisave.MigrationRefusedMixed:
+		return "the lineage's history mixes location vocabularies"
+	case omnisave.MigrationRefusedEmpty:
+		return "the lineage has nothing left to rename"
+	case omnisave.MigrationRefusedUnknownVersion:
+		return "the server knows no migration for this lineage's path format"
+	case omnisave.MigrationRefusedVersion:
+		return "the server sees a different path format"
+	case omnisave.MigrationRefusedPathLength:
+		return "the renamed paths would be too long"
+	}
+	return Cause(reason)
 }
 
 // StoreRegistered records placed files registered with Steam Cloud, which
@@ -582,58 +614,13 @@ func standingState(game GameStatus, now time.Time) string {
 	}
 }
 
-// TrackOutcome tallies one track run for the summary line.
-type TrackOutcome struct {
-	Tracked   int
-	Added     int
-	Linked    int
-	Untracked int
-	Pending   int
-	Seeded    int
-	Rebound   int
-	Jumped    int
-	Forked    int
-	Bound     int
-	Unbound   int
-	Pushed    int
-	Pulled    int
-	Diverged  int
-	// Branched counts local progress committed as a new branch because a
-	// restore moved current off this Device's baseline.
-	Branched int
-	// Deferred counts pulls held back because the game is being played;
-	// the pass after the game closes applies them.
-	Deferred int
-	// Conflicted counts commits the server refused because the Current
-	// Revision moved mid-pass; the next pass reconciles them.
-	Conflicted int
-	// Held counts lineages this pass could not work because their paths
-	// still use a retired format and no migration proved out (FDR-005,
-	// decision 14). A held lineage is neither a failure nor a no-op, so it
-	// gets its own tally rather than disappearing from the summary.
-	Held   int
-	Failed int
-	Synced bool
-}
-
-// Changed reports whether the run did anything worth showing.
-func (o TrackOutcome) Changed() bool {
-	return o.changes() > 0
-}
-
-func (o TrackOutcome) changes() int {
-	return o.Added + o.Linked + o.Untracked + o.Pending + o.Seeded + o.Rebound + o.Jumped +
-		o.Forked + o.Bound + o.Unbound + o.Pushed + o.Pulled + o.Branched + o.Diverged + o.Deferred +
-		o.Conflicted + o.Held + o.Failed
-}
-
 // TrackSummary prints the closing dim tally.
-func TrackSummary(outcome TrackOutcome) {
+func TrackSummary(outcome savesync.Outcome) {
 	fmt.Println(SummaryLine(outcome))
 }
 
 // SummaryLine renders the closing dim tally as one line.
-func SummaryLine(outcome TrackOutcome) string {
+func SummaryLine(outcome savesync.Outcome) string {
 	var segments []string
 	if outcome.Added > 0 {
 		segments = append(segments, mutedStyle.Render(fmt.Sprintf("%d added", outcome.Added)))

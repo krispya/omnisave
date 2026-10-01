@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -38,7 +37,7 @@ func New(baseURL string, client *http.Client) *Provider {
 
 func (p *Provider) Name() string { return "hasheous" }
 
-func (p *Provider) Resolve(ctx context.Context, evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
+func (p *Provider) Resolve(ctx context.Context, evidence catalog.Evidence) (*catalog.Claim, error) {
 	hashes := make(map[string]string)
 	for _, fingerprint := range evidence.Fingerprints {
 		name := fingerprint.Algorithm
@@ -99,7 +98,7 @@ func (p *Provider) Resolve(ctx context.Context, evidence catalog.ResolveGame) (*
 	delete(attributes, "description")
 	attributes["external_references"] = result.Metadata
 	platformCompany, platformName := catalog.SplitPlatform(result.Platform.Name)
-	return &catalog.ProviderMatch{
+	return &catalog.Claim{
 		Source:          "hasheous",
 		Identifiers:     resultIdentifiers(result),
 		Fingerprints:    signatureFingerprints(platformName, signature),
@@ -110,21 +109,7 @@ func (p *Provider) Resolve(ctx context.Context, evidence catalog.ResolveGame) (*
 		Publisher:       result.Publisher.Name,
 		Description:     description,
 		Metadata:        attributes,
-		ROM: catalog.ROMMatch{
-			ProviderID: signature.ROM.ID,
-			System:     signature.Game.System,
-			Name:       signature.ROM.Name,
-			Region:     joinValues(signature.ROM.Country),
-			Languages:  sortedValues(signature.ROM.Language),
-			Size:       signature.ROM.Size,
-			CRC32:      signature.ROM.CRC,
-			MD5:        signature.ROM.MD5,
-			SHA1:       signature.ROM.SHA1,
-			SHA256:     signature.ROM.SHA256,
-			Source:     "no-intro",
-			Attributes: signature.ROM.Attributes,
-		},
-		Media: media,
+		Media:           media,
 	}, nil
 }
 
@@ -196,20 +181,20 @@ func compileCandidates(games []mcpGame) ([]catalog.GameCandidate, error) {
 	return candidates, nil
 }
 
-func (p *Provider) Match(ctx context.Context, selectionToken string) (*catalog.ProviderMatch, error) {
+func (p *Provider) Match(ctx context.Context, selectionToken string) (*catalog.Claim, error) {
 	selection, err := decodeSelection(selectionToken)
 	if err != nil {
 		return nil, catalog.ErrInvalid
 	}
-	match, err := p.Resolve(ctx, catalog.ResolveGame{Fingerprints: selectionFingerprints(selection)})
+	claim, err := p.Resolve(ctx, catalog.Evidence{Fingerprints: selectionFingerprints(selection)})
 	if err != nil {
 		return nil, err
 	}
-	if match.Metadata == nil {
-		match.Metadata = make(map[string]any)
+	if claim.Metadata == nil {
+		claim.Metadata = make(map[string]any)
 	}
-	match.Metadata["signature_game_id"] = selection.GameID
-	return match, nil
+	claim.Metadata["signature_game_id"] = selection.GameID
+	return claim, nil
 }
 
 func (p *Provider) callMCP(ctx context.Context, tool string, arguments any, destination any) error {
@@ -312,19 +297,12 @@ type metadataItem struct {
 type signatureResult struct {
 	Game struct {
 		SortingName string `json:"sortingName"`
-		System      string `json:"system"`
 	} `json:"game"`
 	ROM struct {
-		ID         string            `json:"id"`
-		Name       string            `json:"name"`
-		Size       int64             `json:"size"`
-		CRC        string            `json:"crc"`
-		MD5        string            `json:"md5"`
-		SHA1       string            `json:"sha1"`
-		SHA256     string            `json:"sha256"`
-		Country    map[string]string `json:"country"`
-		Language   map[string]string `json:"language"`
-		Attributes map[string]string `json:"attributes"`
+		CRC    string `json:"crc"`
+		MD5    string `json:"md5"`
+		SHA1   string `json:"sha1"`
+		SHA256 string `json:"sha256"`
 	} `json:"rom"`
 }
 
@@ -587,21 +565,6 @@ func compileAttributes(items []attributeItem) (map[string]any, []catalog.MediaRe
 		}
 	}
 	return metadata, media
-}
-
-func sortedValues(values map[string]string) []string {
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if value != "" && !slices.Contains(result, value) {
-			result = append(result, value)
-		}
-	}
-	slices.Sort(result)
-	return result
-}
-
-func joinValues(values map[string]string) string {
-	return strings.Join(sortedValues(values), ", ")
 }
 
 var _ catalog.Provider = (*Provider)(nil)

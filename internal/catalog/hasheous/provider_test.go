@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
@@ -44,14 +45,20 @@ func TestProviderIdentifiesNoIntroGameAndOpensArtwork(t *testing.T) {
 	defer server.Close()
 	provider := hasheous.New(server.URL, server.Client())
 
-	match, err := provider.Resolve(context.Background(), catalog.ResolveGame{Fingerprints: []catalog.GameFingerprint{{
+	match, err := provider.Resolve(context.Background(), catalog.Evidence{Fingerprints: []catalog.GameFingerprint{{
 		Platform: "snes", Algorithm: "sha1", Value: "6b47bb75d16514b6a476aa0c73a683a2a4c18765",
 	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if match.Title != "Super Mario World" || match.ROM.Region != "United States" {
+	if match.Title != "Super Mario World" {
 		t.Fatalf("unexpected match: %v", match)
+	}
+	// The matched ROM's hashes become the claim's fingerprints.
+	if !slices.ContainsFunc(match.Fingerprints, func(fingerprint catalog.GameFingerprint) bool {
+		return fingerprint.Algorithm == "sha1" && fingerprint.Value == "6b47bb75d16514b6a476aa0c73a683a2a4c18765"
+	}) {
+		t.Fatalf("expected the ROM's sha1 among the claim's fingerprints: %v", match.Fingerprints)
 	}
 	if len(match.Identifiers) != 2 || match.Identifiers[1].Namespace != "igdb.game" {
 		t.Fatalf("expected Hasheous and IGDB identities: %v", match.Identifiers)

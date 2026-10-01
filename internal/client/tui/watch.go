@@ -8,6 +8,8 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/krisbaumgartner/omnisave/internal/client/savesync"
 )
 
 // WatchConfig describes the static parts of the watch view's footer.
@@ -49,7 +51,7 @@ type WatchRequest struct {
 	// the question showed, which is how the pass finds it again.
 	Title    string
 	Omnisave string
-	Diverged DivergedBindingChoice
+	Diverged savesync.DivergedChoice
 }
 
 // PassResult is one completed pass as its sink shows it: what is true
@@ -205,7 +207,7 @@ func firstPending(snapshot ReportSnapshot) *watchQuestion {
 		if game.Pending == nil || game.Pending.Kind != PendingDiverged {
 			continue
 		}
-		options := DivergedOptions(DivergedQuestion{
+		options := DivergedOptions(savesync.DivergedQuestion{
 			GameTitle:    game.Title,
 			OmnisaveName: game.Pending.OmnisaveName,
 			ForkName:     game.Pending.ForkName,

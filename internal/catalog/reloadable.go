@@ -40,7 +40,7 @@ func (r *Reloadable) current() Provider {
 
 func (r *Reloadable) Name() string { return r.name }
 
-func (r *Reloadable) Resolve(ctx context.Context, evidence ResolveGame) (*ProviderMatch, error) {
+func (r *Reloadable) Resolve(ctx context.Context, evidence Evidence) (*Claim, error) {
 	delegate := r.current()
 	if delegate == nil {
 		return nil, ErrUnavailable
@@ -56,7 +56,7 @@ func (r *Reloadable) Search(ctx context.Context, input SearchGames) ([]GameCandi
 	return delegate.Search(ctx, input)
 }
 
-func (r *Reloadable) Match(ctx context.Context, selectionToken string) (*ProviderMatch, error) {
+func (r *Reloadable) Match(ctx context.Context, selectionToken string) (*Claim, error) {
 	delegate := r.current()
 	if delegate == nil {
 		return nil, ErrUnavailable
