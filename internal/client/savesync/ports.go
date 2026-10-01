@@ -96,7 +96,6 @@ type Reporter interface {
 	NoSave(title string)
 	SaveAvailable(title string)
 	SaveLocationUnavailable(title string)
-	PreservedAs(title, omnisaveName string)
 	Stale(title, omnisaveName string)
 	Unbound(title string)
 

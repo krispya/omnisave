@@ -4,30 +4,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/x/ansi"
-
 	"github.com/krisbaumgartner/omnisave/internal/client/savesync"
 )
 
-func TestStaleBindingPromptUsesGameEventOptionHierarchy(t *testing.T) {
-	choice := savesync.StaleJump
-	question := savesync.StaleQuestion{
-		GameTitle:    "Slay the Spire 2",
-		OmnisaveName: "Save 1",
-		ForkName:     "Save 1 (Steam Deck)",
-	}
-	form := staleBindingForm(question, &choice).WithWidth(80)
-	form.Update(form.Init())
+// A stale save is asked exactly what a diverged one is: sync and choose
+// which save becomes current, or fork.
+func TestTheStalePromptAsksTheDivergenceSteps(t *testing.T) {
+	question := savesync.StaleQuestion{GameTitle: "Slay the Spire 2", OmnisaveName: "Main", ForkName: "Main (Steam Deck)"}
 
-	view := ansi.Strip(form.View())
-	for _, text := range []string{
-		"Slay the Spire 2",
-		"Save 1 diverges between this device and the server",
-		"› Jump to current",
-		"Fork as Save 1 (Steam Deck)",
-	} {
+	view := divergedStepView(t, staleSteps(question))
+
+	for _, text := range []string{"Main diverges between this device and the server", "› Sync with Main", "Fork as Main (Steam Deck)"} {
 		if !strings.Contains(view, text) {
-			t.Fatalf("expected the stale binding prompt to contain %q, got:\n%s", text, view)
+			t.Fatalf("expected the stale prompt to contain %q, got:\n%s", text, view)
 		}
 	}
 }

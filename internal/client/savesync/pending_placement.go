@@ -89,8 +89,9 @@ func (r *reconciliation) completePlacement(ctx context.Context, c candidate, p t
 		}
 		if err := binding.ApplyCurrent(ctx, r.Server, c.save, p.Before, p.Current); err != nil {
 			// An unbound adoption that never replaced local progress remains
-			// an open answer, reusing its preservation (FDR-005, decision 4).
-			// Once files land, store failures must keep the restore journal.
+			// an open answer: its branch holds the content, so the next pass
+			// asks again as a stale match (FDR-003, decision 9). Once files
+			// land, store failures must keep the restore journal.
 			if p.BindingID == "" {
 				unchanged, checkErr := binding.ManifestContext(ctx, c.save)
 				if checkErr == nil && binding.MatchesManifest(unchanged, c.save.LocationAliases, p.Before) {

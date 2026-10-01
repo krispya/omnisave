@@ -74,10 +74,6 @@ func (r *Recorder) SaveLocationUnavailable(title string) {
 	r.add(Event{Kind: "SaveLocationUnavailable", Title: title})
 }
 
-func (r *Recorder) PreservedAs(title, omnisaveName string) {
-	r.add(Event{Kind: "PreservedAs", Title: title, Omnisave: omnisaveName})
-}
-
 func (r *Recorder) Stale(title, omnisaveName string) {
 	r.add(Event{Kind: "Stale", Title: title, Omnisave: omnisaveName})
 }

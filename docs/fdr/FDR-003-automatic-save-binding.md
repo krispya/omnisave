@@ -1,6 +1,6 @@
 # FDR-003: Automatic Save Binding
 
-**Status:** Experimental **Last reviewed:** 2026-09-30
+**Status:** Experimental **Last reviewed:** 2026-10-01
 
 ## Overview
 
@@ -14,8 +14,8 @@ Binding connects a Device's saves to omnisaves during tracking and every sync pa
 - A Device binds the folder the game itself reads and writes, never a store's cloud mirror of it (decision 10).
 - If the game has no omnisaves, the local content seeds one and that revision becomes the sync baseline.
 - Otherwise the content is matched exactly against the full history of every omnisave for the game, across the per-OS spellings of its save location (decision 11).
-- One match at a Current Revision rebinds automatically. One match at any other revision asks whether to adopt the Current Revision or fork from the match.
-- A save matching no omnisave, or several, asks whether to bind a match, adopt another omnisave after the local content is preserved, or create a new omnisave. Omnisaves whose Current Revision cannot land in this save's layout are not offered. When nothing is left to offer, a new omnisave is created without asking, attended or not, unless one of the game's omnisaves is held for migration ([FDR-005](FDR-005-save-sync.md), decision 14): splitting its history waits for a person.
+- One match at a Current Revision rebinds automatically. One match at any other revision asks whether to sync with that omnisave, choosing which save becomes current, or fork from the match.
+- A save matching no omnisave, or several, asks whether to bind a match, sync with another omnisave, or create a new omnisave. Syncing with an unmatched omnisave asks which save becomes current: keeping its Current Revision first keeps the local content as a branch of it, and using the local save commits it as the new Current Revision. Omnisaves whose Current Revision cannot land in this save's layout are not offered. When nothing is left to offer, a new omnisave is created without asking, attended or not, unless one of the game's omnisaves is held for migration ([FDR-005](FDR-005-save-sync.md), decision 14): splitting its history waits for a person.
 - Unattended passes never ask; the save waits, reported, for an interactive run. There is no ignore answer, since tracking is the intent to synchronize, and leaving a question changes nothing.
 - Each Local Save binds independently, so one game may seed or bind several omnisaves.
 - Manual rebinding offers only omnisaves of the save's own Game and records no baseline.
@@ -46,13 +46,13 @@ Binding connects a Device's saves to omnisaves during tracking and every sync pa
 
 **Decision:** A Local Save matches only a revision with the same file set and content, and historical revisions count as well as the Current Revision. **Why:** Exact matching recovers a binding after a Device was offline or lost its local state without risking a false attachment. **Tradeoff:** Near-matches require a decision, and matching work grows with history.
 
-### 5. A match at a non-current revision requires adopting current or forking
+### 5. A match at a non-current revision requires choosing current or forking
 
-**Decision:** A save matching a revision other than the Current Revision, behind it or ahead of it after a restore, is never moved silently. The user adopts the Current Revision or forks from the matched revision. **Why:** Continuing both on one omnisave would immediately conflict. Both outcomes are lossless because the matched revision already exists on the server. **Tradeoff:** A safe but meaningful choice interrupts an otherwise automatic flow.
+**Decision:** A save matching a revision other than the Current Revision, behind it or ahead of it after a restore, is never moved silently. The user syncs, keeping the Current Revision or making the local save current on top of it, or forks from the matched revision. **Why:** Continuing both on one omnisave would immediately conflict. Every outcome is lossless: the matched revision already exists on the server, and a local save made current stacks on the revision it replaces. **Tradeoff:** A safe but meaningful choice interrupts an otherwise automatic flow.
 
 ### 6. Unmatched and ambiguous saves are never guessed
 
-**Decision:** Automatic binding requires exactly one proven omnisave. Otherwise a person binds a match, adopts another omnisave, or creates a new one, unless creating one is the only safe outcome left (decision 1). **Why:** A wrong guess would extend the wrong playthrough, and an ignore state would contradict tracking. **Tradeoff:** Some saves need interaction before synchronization can begin.
+**Decision:** Automatic binding requires exactly one proven omnisave. Otherwise a person binds a match, syncs with another omnisave, or creates a new one, unless creating one is the only safe outcome left (decision 1). **Why:** A wrong guess would extend the wrong playthrough, and an ignore state would contradict tracking. **Tradeoff:** Some saves need interaction before synchronization can begin.
 
 ### 7. No local content means no seed; any local content means matching
 
@@ -62,9 +62,9 @@ Binding connects a Device's saves to omnisaves during tracking and every sync pa
 
 **Decision:** The server assigns a non-empty, game-unique display name when an omnisave is created or forked. Fork names retain enough source and Device context to distinguish independent playthroughs. **Why:** A name assigned once by the authority remains consistent everywhere the save appears. **Tradeoff:** Generated names are descriptive labels, not stable identifiers, and may be reused after deletion.
 
-### 9. Adopting an omnisave preserves first and finishes in the same run
+### 9. Syncing with an unmatched omnisave settles current in the same run
 
-**Decision:** Unmatched local content adopting an existing omnisave is first preserved as its own omnisave; the selected Current Revision is then applied and bound in the same run. An adoption whose Current Revision cannot land in the save's layout is refused before anything is preserved, and one that fails afterwards follows [FDR-005](FDR-005-save-sync.md), decision 4. **Why:** The conflict is already known, so deferring it to a divergence question would ask twice. **Tradeoff:** Preservation leaves another omnisave the user may later delete.
+**Decision:** Unmatched local content syncing with an existing omnisave settles which save is current in the same run. Keeping the Current Revision first keeps the local content as a branch of it, named for the Device, then applies and binds it. Using the local save commits it on top of the Current Revision and binds there, leaving local files alone. Either is refused before anything is committed when the Current Revision cannot land in the save's layout. A placement that fails after the branch leaves the content in the omnisave's history, so the next pass asks it as a match at a non-current revision (decision 5), whose jump finishes the answer. **Why:** The conflict is already known, so deferring it to a divergence question would ask twice. A branch keeps the playthrough in the omnisave the person chose; a separate preservation omnisave hid that choice behind a copy of their own progress on the next run. **Tradeoff:** Branches remain until pruned, and using the local save moves current for every bound Device ([FDR-005](FDR-005-save-sync.md), decision 4).
 
 ### 10. A store's cloud mirror is a transport, never a save
 

@@ -373,8 +373,8 @@ func TestTheQuestionTakesOverTheBlock(t *testing.T) {
 		"▲ Omnisave · watching",
 		"Project Zomboid",
 		"Save 2 diverges between this device and the server",
+		"› Sync with Save 2",
 		"Fork as Save 2 (Steam Deck)",
-		"› Jump to current",
 		"↑↓ choose · enter confirm · esc dismiss",
 	} {
 		if !strings.Contains(view, text) {
@@ -418,9 +418,10 @@ func TestAnsweringSendsTheChoiceAndTheSaveItBelongsTo(t *testing.T) {
 	asked, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	<-requests
 
-	// The question opens on taking current, so confirming without moving
-	// answers that.
-	answered, _ := asked.(watchModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// Each step opens on its first option, so confirming twice without
+	// moving syncs and takes the omnisave's current save.
+	opened, _ := asked.(watchModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	answered, _ := opened.(watchModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	if answered.(watchModel).question != nil {
 		t.Fatal("expected answering to close the question")
@@ -436,7 +437,7 @@ func TestAnsweringSendsTheChoiceAndTheSaveItBelongsTo(t *testing.T) {
 		t.Fatalf("expected the default answer to take current, got %q", request.Diverged)
 	}
 
-	// Moving down from the default reaches the other answer.
+	// Moving down on the first step reaches the fork, which answers there.
 	reasked, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	<-requests
 	moved, _ := reasked.(watchModel).Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -446,6 +447,37 @@ func TestAnsweringSendsTheChoiceAndTheSaveItBelongsTo(t *testing.T) {
 	}
 	if request := <-requests; request.Diverged != savesync.DivergedFork {
 		t.Fatalf("expected moving down to answer fork, got %q", request.Diverged)
+	}
+}
+
+// Syncing opens the second step in place. Nothing is sent until it is
+// answered, and moving down there uses this device's save.
+func TestSyncingAsksWhichSaveBecomesCurrentBeforeAnswering(t *testing.T) {
+	requests := make(chan WatchRequest, 4)
+	model := settledWatchModel(requests, divergedSnapshot())
+	asked, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	<-requests
+
+	opened, _ := asked.(watchModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := ansi.Strip(opened.(watchModel).View())
+	for _, text := range []string{"Project Zomboid", "Which save becomes current on Save 2?", "› Keep the current save", "Use this device's save"} {
+		if !strings.Contains(view, text) {
+			t.Fatalf("expected the second step to contain %q, got:\n%s", text, view)
+		}
+	}
+	select {
+	case request := <-requests:
+		t.Fatalf("expected no answer before the second step, got %v", request)
+	default:
+	}
+	moved, _ := opened.(watchModel).Update(tea.KeyMsg{Type: tea.KeyDown})
+	kept, _ := moved.(watchModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if kept.(watchModel).question != nil {
+		t.Fatal("expected answering to close the question")
+	}
+	if request := <-requests; request.Diverged != savesync.DivergedUseLocal {
+		t.Fatalf("expected moving down to use this device's save, got %q", request.Diverged)
 	}
 }
 

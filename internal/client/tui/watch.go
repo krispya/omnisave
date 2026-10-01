@@ -191,11 +191,12 @@ type watchModel struct {
 }
 
 // watchQuestion is one waiting decision, taken off the settled table and
-// raised as a modal. It carries the pair the answer is keyed by.
+// raised as a modal. It carries the pair the answer is keyed by, and the
+// step of DivergedSteps it is showing.
 type watchQuestion struct {
 	title    string
 	omnisave string
-	options  []DivergedOption
+	step     DivergedStep
 	cursor   int
 }
 
@@ -207,16 +208,14 @@ func firstPending(snapshot ReportSnapshot) *watchQuestion {
 		if game.Pending == nil || game.Pending.Kind != PendingDiverged {
 			continue
 		}
-		options := DivergedOptions(savesync.DivergedQuestion{
-			GameTitle:    game.Title,
-			OmnisaveName: game.Pending.OmnisaveName,
-			ForkName:     game.Pending.ForkName,
-		})
 		return &watchQuestion{
 			title:    game.Title,
 			omnisave: game.Pending.OmnisaveName,
-			options:  options,
-			cursor:   DivergedDefaultIndex(options),
+			step: DivergedSteps(savesync.DivergedQuestion{
+				GameTitle:    game.Title,
+				OmnisaveName: game.Pending.OmnisaveName,
+				ForkName:     game.Pending.ForkName,
+			}),
 		}
 	}
 	return nil
@@ -230,9 +229,10 @@ func (m watchModel) ask(request WatchRequest) {
 	}
 }
 
-// updateQuestion owns the keyboard while the modal is open. Escape decides
-// nothing: no answer is recorded and no pass runs, so the row stays exactly
-// as it was and the question can be asked again.
+// updateQuestion owns the keyboard while the modal is open. Enter on an
+// option that opens a step shows that step in place. Escape decides nothing,
+// from either step: no answer is recorded and no pass runs, so the row stays
+// exactly as it was and the question can be asked again.
 func (m watchModel) updateQuestion(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch message.String() {
 	case "ctrl+c":
@@ -247,17 +247,24 @@ func (m watchModel) updateQuestion(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.question = &moved
 		}
 	case "down", "j":
-		if m.question.cursor < len(m.question.options)-1 {
+		if m.question.cursor < len(m.question.step.Options)-1 {
 			moved := *m.question
 			moved.cursor++
 			m.question = &moved
 		}
 	case "enter":
+		option := m.question.step.Options[m.question.cursor]
+		if option.Next != nil {
+			opened := *m.question
+			opened.step, opened.cursor = *option.Next, 0
+			m.question = &opened
+			return m, nil
+		}
 		answer := WatchRequest{
 			Kind:     WatchAnswered,
 			Title:    m.question.title,
 			Omnisave: m.question.omnisave,
-			Diverged: m.question.options[m.question.cursor].Choice,
+			Diverged: option.Choice,
 		}
 		m.question = nil
 		m.ask(answer)
@@ -389,8 +396,8 @@ var questionStyle = lipgloss.NewStyle().
 func (q watchQuestion) view() string {
 	var body strings.Builder
 	body.WriteString(nameStyle.Render(q.title) + "\n")
-	body.WriteString(mutedStyle.Render(DivergenceTitle(q.omnisave)) + "\n\n")
-	for index, option := range q.options {
+	body.WriteString(mutedStyle.Render(q.step.Title) + "\n\n")
+	for index, option := range q.step.Options {
 		if index > 0 {
 			body.WriteString("\n")
 		}

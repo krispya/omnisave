@@ -42,20 +42,36 @@ func PromptAmbiguousBinding(gameTitle string, options []savesync.AmbiguousOption
 	return savesync.AmbiguousChoice{OmnisaveID: selected}, nil
 }
 
+// promptUnmatchedBinding asks whether an unmatched save syncs with an
+// existing save or starts its own, then which save it picks when there is
+// more than one, then which save becomes current. A lone existing save is
+// named in the first step, so it needs no picker.
 func promptUnmatchedBinding(gameTitle string, options []savesync.AmbiguousOption) (savesync.AmbiguousChoice, error) {
 	action := unmatchedBindingSync
-	if err := unmatchedBindingActionForm(gameTitle, &action).Run(); err != nil {
+	if err := unmatchedBindingActionForm(gameTitle, options, &action).Run(); err != nil {
 		return savesync.AmbiguousChoice{}, bindingPromptError(err)
 	}
 	if action == unmatchedBindingCreate {
 		return savesync.AmbiguousChoice{Create: true}, nil
 	}
 
-	selected := options[0].OmnisaveID
-	if err := unmatchedBindingSaveForm(gameTitle, options, &selected).Run(); err != nil {
-		return savesync.AmbiguousChoice{}, bindingPromptError(err)
+	selected := options[0]
+	if len(options) > 1 {
+		selectedID := selected.OmnisaveID
+		if err := unmatchedBindingSaveForm(gameTitle, options, &selectedID).Run(); err != nil {
+			return savesync.AmbiguousChoice{}, bindingPromptError(err)
+		}
+		for _, option := range options {
+			if option.OmnisaveID == selectedID {
+				selected = option
+			}
+		}
 	}
-	return savesync.AmbiguousChoice{OmnisaveID: selected}, nil
+	choice, err := askSteps(gameTitle, *currentStep(selected.Name))
+	if err != nil {
+		return savesync.AmbiguousChoice{}, err
+	}
+	return savesync.AmbiguousChoice{OmnisaveID: selected.OmnisaveID, UseLocal: choice == savesync.DivergedUseLocal}, nil
 }
 
 // PromptHeldLineageSeed asks before starting a new save for a game whose
@@ -100,11 +116,15 @@ func matchCount(options []savesync.AmbiguousOption) int {
 	return matched
 }
 
-func unmatchedBindingActionForm(gameTitle string, action *unmatchedBindingAction) *huh.Form {
+func unmatchedBindingActionForm(gameTitle string, options []savesync.AmbiguousOption, action *unmatchedBindingAction) *huh.Form {
+	syncLabel := "Sync with save"
+	if len(options) == 1 {
+		syncLabel = "Sync with " + options[0].Name
+	}
 	prompt := huh.NewSelect[unmatchedBindingAction]().
 		Title("Unmatched local save").
 		Options(
-			huh.NewOption("Sync with save", unmatchedBindingSync),
+			huh.NewOption(syncLabel, unmatchedBindingSync),
 			huh.NewOption("Create a new save", unmatchedBindingCreate),
 		).
 		Value(action)

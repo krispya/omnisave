@@ -220,21 +220,25 @@ func (r *reconciliation) resolveDivergence(ctx context.Context, c candidate, d d
 	if err != nil {
 		return err
 	}
-	// Unsynced content preserves into its own Omnisave, and an answer that
-	// failed partway recorded the preservation it created. Resolving that
-	// record now keeps a repeated answer from minting another.
+	// A fork answer that failed partway recorded the Omnisave it created.
+	// Resolving that record now lets a repeated answer continue it instead
+	// of minting another. Using this Device's save needs the record only to
+	// clean up after itself, so a failed lookup must not block that answer.
 	if !d.contentKnown {
 		d.earlier, d.resumable, err = r.recordedPreservation(c, d)
-		if err != nil {
+		if err != nil && choice != DivergedUseLocal {
 			r.failed(title, err)
 			return nil
 		}
 	}
-	if choice == DivergedFork {
+	switch choice {
+	case DivergedFork:
 		r.forkDiverged(ctx, c, d)
-		return nil
+	case DivergedUseLocal:
+		r.useLocalDiverged(ctx, c, d)
+	default:
+		r.jumpDiverged(ctx, c, d)
 	}
-	r.jumpDiverged(ctx, c, d)
 	return nil
 }
 
@@ -324,13 +328,64 @@ func (r *reconciliation) forkLocalProgress(ctx context.Context, c candidate, d d
 	return &fork.omnisave, revision, nil
 }
 
+// useLocalDiverged makes this Device's content the Current Revision. A fork
+// a failed earlier answer recorded never received its push, so the answer
+// cleans it up once the local content is current.
+func (r *reconciliation) useLocalDiverged(ctx context.Context, c candidate, d divergence) {
+	if !r.makeLocalCurrent(ctx, c, d.remoteSave, d.current) {
+		return
+	}
+	if d.resumable != nil {
+		_ = r.Server.DeleteOmnisave(context.WithoutCancel(ctx), d.resumable.omnisave.ID)
+	}
+}
+
+// makeLocalCurrent commits this save's content on top of current and binds
+// the save there, making it the Omnisave's Current Revision without touching
+// local files; a running game is no obstacle. It stacks on current rather
+// than any baseline, so the replaced revision stays in history as its parent
+// and other Devices adopt it as an ordinary pull; one holding unsynced
+// progress of its own diverges and is asked, instead of branching past it
+// (FDR-005, decisions 4 and 10). It settles any preservation a failed
+// earlier answer recorded, and reports false when it failed and said so.
+func (r *reconciliation) makeLocalCurrent(ctx context.Context, c candidate, remoteSave omnisave.Omnisave, current omnisave.Revision) bool {
+	title, name := c.local.GameTitle, omnisaveDisplayName(remoteSave)
+	// A save that cannot take this lineage's current cannot speak its
+	// layout either, and its commit would mix two vocabularies in one tree.
+	if err := binding.CanApply(c.save, current); err != nil {
+		r.failed(title, err)
+		return false
+	}
+	revision, err := binding.Push(ctx, r.Server, remoteSave.ID, c.save, current.ID, current.Files)
+	if err != nil {
+		r.commitFailed(title, name, err)
+		return false
+	}
+	// A save already bound here keeps its binding, and with it the
+	// achievement watermark; only a save new to this lineage binds afresh.
+	if bound, ok := r.state.BindingFor(c.local); ok && bound.OmnisaveID == remoteSave.ID {
+		err = r.state.RecordSynced(c.local, remoteSave.ID, revision.ID)
+		r.state.ClearPendingPreservation(c.local)
+	} else {
+		err = r.bindSynced(c.local, remoteSave.ID, revision.ID)
+	}
+	if err != nil {
+		r.failed(title, err)
+		return false
+	}
+	r.outcome.Pushed++
+	r.Report.SyncedWith(title, name, time.Now())
+	return true
+}
+
 // jumpDiverged adopts the Current Revision after making sure the local
 // progress survives. Content the history already holds needs nothing.
-// Unsynced content is kept as a branch of the baseline, named for the Device
-// and left behind the current pointer — no new Omnisave. Without a baseline
-// there is no node to branch from, so the progress seeds a new Omnisave
-// instead (FDR-005, decision 4). A preservation a failed earlier answer
-// recorded stands in for either, so a repeated answer creates nothing new.
+// Unsynced content is kept as a branch named for the Device and left behind
+// the current pointer, so the answer never creates an Omnisave. The branch
+// grows from the baseline, or from current when the binding never recorded
+// one and no shared node exists (FDR-005, decision 4). A preservation a
+// failed earlier answer recorded stands in for the branch, so a repeated
+// answer creates nothing new.
 func (r *reconciliation) jumpDiverged(ctx context.Context, c candidate, d divergence) {
 	title, name := c.local.GameTitle, omnisaveDisplayName(d.remoteSave)
 	// The jump ends by applying the Current Revision over this save's files,
@@ -341,30 +396,23 @@ func (r *reconciliation) jumpDiverged(ctx context.Context, c candidate, d diverg
 		return
 	}
 	// The revision proved equal to the local content, so the staged placement
-	// can verify against it (and stage unchanged files locally). A failure
-	// past a preservation this answer created records it, so the next answer
-	// continues from it instead of preserving again.
+	// can verify against it (and stage unchanged files locally). A branch
+	// lives in this Omnisave's history, so a failed placement needs no
+	// record: the retry finds the local content there and preserves nothing
+	// twice.
 	verifyAgainst := d.matched
-	preservedID := ""
 	switch {
 	case d.contentKnown:
 	case d.earlier != nil:
 		// The recorded preservation already holds this exact content, so
 		// nothing new is created and the placement verifies against it.
 		verifyAgainst = d.earlier.revision
-	case d.baseline == nil:
-		preserved, preservedRevision, err := binding.Seed(ctx, r.Server, d.remoteSave.GameID, c.save,
-			deconflictName(d.remoteSave, d.deviceName))
-		if err != nil {
-			r.failed(title, err)
-			return
-		}
-		r.outcome.Forked++
-		r.Report.Forked(title, omnisaveDisplayName(*preserved))
-		verifyAgainst = *preservedRevision
-		preservedID = preserved.ID
 	default:
-		branch, err := binding.PushBranchAside(ctx, r.Server, d.remoteSave.ID, c.save, d.current.ID, *d.baseline, d.deviceName)
+		parent := d.current
+		if d.baseline != nil {
+			parent = *d.baseline
+		}
+		branch, err := binding.PushBranchAside(ctx, r.Server, d.remoteSave.ID, c.save, d.current.ID, parent, d.deviceName)
 		if err != nil {
 			r.commitFailed(title, name, err)
 			return
@@ -374,7 +422,6 @@ func (r *reconciliation) jumpDiverged(ctx context.Context, c candidate, d diverg
 		verifyAgainst = *branch
 	}
 	if err := r.place(ctx, c, verifyAgainst, d.current, d.remoteSave.ID); err != nil {
-		r.state.RecordPendingPreservation(c.local, preservedID)
 		r.failed(title, err)
 		return
 	}
