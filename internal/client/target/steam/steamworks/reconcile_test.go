@@ -314,3 +314,32 @@ func TestReconcileResumesAfterACloudDeleteFails(t *testing.T) {
 		t.Fatalf("completed restore was not idempotent: %+v", third)
 	}
 }
+
+// Steam's spelling selects the cloud entry; the matched native spelling
+// selects both the preserved digest and the local absence check.
+func TestReconcileDeletesWithDifferentCloudAndLocalCasing(t *testing.T) {
+	for _, reappeared := range []bool{false, true} {
+		t.Run(fmt.Sprintf("local_reappeared=%t", reappeared), func(t *testing.T) {
+			root := t.TempDir()
+			files := placeFiles(t, root, map[string]string{"saves/progress.save": "progress"})
+			store := &fakeRegistry{files: map[string][]byte{
+				"saves/progress.save": []byte("progress"), "saves/Finished.run": []byte("finished"),
+			}}
+			digest, _ := store.Digest("saves/Finished.run")
+			removed := filepath.Join(root, "saves/finished.run")
+			if reappeared {
+				if err := os.WriteFile(removed, []byte("new progress"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result := Reconcile(store, Request{Files: files, Removed: []string{removed}, Before: map[string]string{removed: digest}})
+			if reappeared {
+				if len(result.Failed) != 1 || result.Failed[0].Cause != "removed local file reappeared or cannot be checked" || !store.Exists("saves/Finished.run") {
+					t.Fatalf("did not protect reappeared native file: %+v", result)
+				}
+			} else if len(result.Failed) != 0 || !reflect.DeepEqual(result.Deleted, []string{"saves/Finished.run"}) || store.Exists("saves/Finished.run") {
+				t.Fatalf("case-insensitive removal was refused: %+v", result)
+			}
+		})
+	}
+}

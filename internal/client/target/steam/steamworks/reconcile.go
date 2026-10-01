@@ -3,7 +3,6 @@ package steamworks
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -123,11 +122,13 @@ func Reconcile(store registry, request Request) Result {
 			checkBefore(write.Name, write.Path)
 		}
 	}
-	for _, name := range plan.Deletes {
-		checkBefore(name, filepath.Join(plan.Anchor, filepath.FromSlash(name)))
+	for _, deletion := range plan.Deletes {
+		checkBefore(deletion.Name, deletion.Path)
 	}
 	if len(result.Failed) > 0 {
-		result.Extras = append(result.Extras, plan.Deletes...)
+		for _, deletion := range plan.Deletes {
+			result.Extras = append(result.Extras, deletion.Name)
+		}
 		sort.Strings(result.Extras)
 		return result
 	}
@@ -151,16 +152,18 @@ func Reconcile(store registry, request Request) Result {
 	// Never retire cloud state until every planned replacement succeeded.
 	// Deferred deletions remain visible and can be retried with the request.
 	if len(result.Failed) > 0 {
-		result.Extras = append(result.Extras, plan.Deletes...)
+		for _, deletion := range plan.Deletes {
+			result.Extras = append(result.Extras, deletion.Name)
+		}
 		sort.Strings(result.Extras)
 		return result
 	}
-	for _, name := range plan.Deletes {
+	for _, deletion := range plan.Deletes {
+		name, localPath := deletion.Name, deletion.Path
 		if request.DryRun {
 			result.Deleted = append(result.Deleted, name)
 			continue
 		}
-		localPath := filepath.Join(plan.Anchor, filepath.FromSlash(name))
 		if _, err := os.Lstat(localPath); !os.IsNotExist(err) {
 			result.Failed = append(result.Failed, Failure{Name: name, Cause: "removed local file reappeared or cannot be checked"})
 			continue

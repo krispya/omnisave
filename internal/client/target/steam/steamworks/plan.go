@@ -29,6 +29,13 @@ type Write struct {
 	Listed bool
 }
 
+// Deletion pairs a registry entry with the native path the placement removed.
+// Keep both spellings: Steam names can differ in case from local paths.
+type Deletion struct {
+	Name string
+	Path string
+}
+
 // Plan is what a placement asks the registry to become. It is derived
 // entirely from evidence: the registry's own names prove where the placed
 // folder anchors in the store's namespace, and files are only registered
@@ -51,7 +58,7 @@ type Plan struct {
 	// revision holds, so the entry's bytes stay recoverable — and without
 	// the delete the store resurrects the file at the game's next launch,
 	// where the game may act on it (FDR-005, decision 13).
-	Deletes []string
+	Deletes []Deletion
 	// Extras are registry entries the placement carries no file for and no
 	// removal vouches for. They are left alone and reported so their effect
 	// can be seen.
@@ -113,19 +120,19 @@ func PlanReconciliation(registry []RegistryFile, placed, removed []string) (Plan
 		}
 		plan.Ineligible = append(plan.Ineligible, name)
 	}
-	removedUnder := make(map[string]bool, len(removed))
+	removedUnder := make(map[string]string, len(removed))
 	for _, file := range removed {
 		slashed := strings.ToLower(toSlash(file))
 		if strings.HasPrefix(slashed, prefix) {
-			removedUnder[slashed[len(prefix):]] = true
+			removedUnder[slashed[len(prefix):]] = file
 		}
 	}
 	for _, entry := range registry {
 		if carried[strings.ToLower(entry.Name)] {
 			continue
 		}
-		if removedUnder[strings.ToLower(entry.Name)] {
-			plan.Deletes = append(plan.Deletes, entry.Name)
+		if nativePath, exists := removedUnder[strings.ToLower(entry.Name)]; exists {
+			plan.Deletes = append(plan.Deletes, Deletion{Name: entry.Name, Path: nativePath})
 			continue
 		}
 		plan.Extras = append(plan.Extras, entry.Name)
@@ -134,7 +141,9 @@ func PlanReconciliation(registry []RegistryFile, placed, removed []string) (Plan
 		return plan.Writes[left].Name < plan.Writes[right].Name
 	})
 	sort.Strings(plan.Ineligible)
-	sort.Strings(plan.Deletes)
+	sort.Slice(plan.Deletes, func(left, right int) bool {
+		return plan.Deletes[left].Name < plan.Deletes[right].Name
+	})
 	sort.Strings(plan.Extras)
 	return plan, true
 }

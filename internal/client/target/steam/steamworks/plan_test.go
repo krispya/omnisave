@@ -145,7 +145,7 @@ func TestPlanDeletesExtrasTheApplyRemoved(t *testing.T) {
 	if !ok {
 		t.Fatal("expected an anchored plan")
 	}
-	if !reflect.DeepEqual(plan.Deletes, []string{"profile1/saves/history/1778353234.run"}) {
+	if !reflect.DeepEqual(plan.Deletes, []Deletion{{Name: "profile1/saves/history/1778353234.run", Path: removed[0]}}) {
 		t.Fatalf("deletes = %v", plan.Deletes)
 	}
 	if len(plan.Extras) != 0 {
