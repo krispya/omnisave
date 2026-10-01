@@ -9,7 +9,7 @@ Discovery keeps only the files it locates, so a game whose save profile is missi
 ## Behavior
 
 - A verbose scan reports every installed game, with or without saves, and names the build and platform that produced it.
-- Each game reports the identity it was matched by, where it is installed, and, inside a Proton prefix, the prefix its user-relative rules expanded into.
+- Each game reports the identity it was matched by, where it is installed, and, inside a Wine prefix (Proton's or GameHub's), the prefix its user-relative rules expanded into.
 - A game no save profile covers says so and names the store identity it was looked up by, distinct from a game whose rules were followed and found nothing.
 - The report names the source whose rules answered, so community knowledge is distinguishable from a store's own configuration ([ADR-018](../adr/ADR-018-embedded-save-profiles.md)).
 - Each rule reports one outcome: files found, empty, missing, unreadable, skipped (a symlink, or several case-insensitive spellings with no exact one), holding a placeholder this environment cannot fill, or excluded by its platform or store constraint. A rule that reached a location names the absolute path it searched, and found files are listed under it.

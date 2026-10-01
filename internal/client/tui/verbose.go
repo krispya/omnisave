@@ -133,8 +133,8 @@ func verboseLines(game client.GameScan) []string {
 	if identity := identityLine(game.Game); identity != "" {
 		sentence(identity)
 	}
-	if game.Game.Environment.Runtime == target.RuntimeProton && game.Game.Environment.PrefixRoot != "" {
-		sentence("Proton prefix " + shorten(game.Game.Environment.PrefixRoot))
+	if game.Game.Environment.Runtime == target.RuntimeWine && game.Game.Environment.PrefixRoot != "" {
+		sentence("Wine prefix " + shorten(game.Game.Environment.PrefixRoot))
 	}
 
 	// A profile save's files belong to the rules that found them, so they are
@@ -424,12 +424,12 @@ func quoted(text string) string {
 	return `"` + text + `"`
 }
 
-// relativeTo shortens a discovered file for reading. Inside a Proton prefix
+// relativeTo shortens a discovered file for reading. Inside a Wine prefix
 // the prefix is already named once above, so the path beneath it is what
 // distinguishes one location from another.
 func relativeTo(path string, game target.InstalledGame) string {
 	prefix := game.Environment.PrefixRoot
-	if game.Environment.Runtime == target.RuntimeProton && prefix != "" {
+	if game.Environment.Runtime == target.RuntimeWine && prefix != "" {
 		if relative, err := filepath.Rel(prefix, path); err == nil && !strings.HasPrefix(relative, "..") {
 			return relative
 		}

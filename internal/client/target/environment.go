@@ -7,7 +7,10 @@ import (
 
 const (
 	RuntimeNative = "native"
-	RuntimeProton = "proton"
+	// RuntimeWine is a Windows build running in a Wine prefix, as Proton and
+	// GameHub run them. Its user folders live inside Environment.PrefixRoot;
+	// with no prefix yet, it has none anywhere.
+	RuntimeWine = "wine"
 )
 
 // CurrentEnvironment describes the native process environment for one store root.

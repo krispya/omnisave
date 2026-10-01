@@ -577,6 +577,8 @@ func displayName(name string) string {
 		return "RetroArch"
 	case "steam":
 		return "Steam"
+	case "gamehub":
+		return "GameHub"
 	default:
 		return name
 	}
