@@ -118,24 +118,26 @@ func (api *API) guardedRoutes() *http.ServeMux {
 		mux.HandleFunc("PUT /api/v1/games/{id}/tracking/{deviceID}", api.trackGame)
 		mux.HandleFunc("DELETE /api/v1/games/{id}/tracking/{deviceID}", api.untrackGame)
 	}
-	mux.HandleFunc("GET /api/v1/pairing/requests", api.listPairingRequests)
-	// Approving admits another client, and the PIN is how the owner gets back
-	// in. Neither is a Device's to do, however valid its credential.
-	mux.Handle("POST /api/v1/pairing/requests/{id}/approve",
-		RequireOwner(http.HandlerFunc(api.approvePairingRequest)))
-	mux.Handle("POST /api/v1/pairing/requests/{id}/deny",
-		RequireOwner(http.HandlerFunc(api.denyPairingRequest)))
-	mux.Handle("PUT /api/v1/pin", RequireOwner(http.HandlerFunc(api.setPIN)))
-	mux.HandleFunc("GET /api/v1/credentials", api.listCredentials)
-	mux.HandleFunc("DELETE /api/v1/credentials/{id}", api.revokeCredential)
+	// Deciding who may reach the server, and how the owner gets back in, is
+	// the owner's alone: a Device credential syncs and uses the Library, and
+	// cannot admit, revoke, or reconfigure anything, however valid it is.
+	owner := func(pattern string, handler http.HandlerFunc) {
+		mux.Handle(pattern, RequireOwner(handler))
+	}
+	owner("GET /api/v1/pairing/requests", api.listPairingRequests)
+	owner("POST /api/v1/pairing/requests/{id}/approve", api.approvePairingRequest)
+	owner("POST /api/v1/pairing/requests/{id}/deny", api.denyPairingRequest)
+	owner("PUT /api/v1/pin", api.setPIN)
+	owner("GET /api/v1/credentials", api.listCredentials)
+	owner("DELETE /api/v1/credentials/{id}", api.revokeCredential)
+	if api.settings != nil {
+		owner("GET /api/v1/settings", api.listSettings)
+		owner("PATCH /api/v1/settings/{key}", api.updateSetting)
+	}
 	// Only the owner token mints a credential out of nothing; an issued one
 	// cannot use this to grow another.
 	mux.Handle("POST /api/v1/credentials/exchange",
 		RequireOwnerToken(http.HandlerFunc(api.exchangeOwnerToken)))
-	if api.settings != nil {
-		mux.HandleFunc("GET /api/v1/settings", api.listSettings)
-		mux.HandleFunc("PATCH /api/v1/settings/{key}", api.updateSetting)
-	}
 	return mux
 }
 

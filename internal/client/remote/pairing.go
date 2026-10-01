@@ -8,10 +8,12 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/access"
 )
 
-// Pairing is how a client with no credential asks for one. These two calls are
-// the only ones that reach a server unauthenticated, because a Device with no
-// credential is exactly who makes them (ADR-007). Everything after them
-// carries the credential this flow collects, through a Client.
+// Pairing is how a Device with no credential asks for one. These two calls
+// reach the server unauthenticated, because a Device with no credential is
+// exactly who makes them (ADR-007). Everything after them
+// carries the credential this flow collects, through a Client. The owner token
+// is the other way in: ExchangeOwnerToken trades it for the same kind of
+// credential, so the owner token itself is never kept.
 
 // RequestPairing asks a server to pair, naming the Device identity this
 // installation already self-identifies with. The answer carries a code to
@@ -39,6 +41,25 @@ func CollectPairing(
 		return nil, err
 	}
 	return &collection, nil
+}
+
+// ExchangeOwnerToken trades the owner token for this Device's own credential,
+// bound to the identity input names.
+func ExchangeOwnerToken(
+	ctx context.Context, serverURL, ownerToken string, input access.TokenExchange, httpClient *http.Client,
+) (*access.IssuedCredential, error) {
+	baseURL, err := NormalizeServerURL(serverURL)
+	if err != nil {
+		return nil, err
+	}
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 15 * time.Second}
+	}
+	var issued access.IssuedCredential
+	if err := postJSON(ctx, httpClient, baseURL+"/api/v1/credentials/exchange", ownerToken, input, &issued); err != nil {
+		return nil, err
+	}
+	return &issued, nil
 }
 
 // pair sends one unauthenticated call to a server this client has no Client

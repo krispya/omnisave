@@ -35,7 +35,7 @@ func TestIssuedCredentialsSurviveRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	issued, err := accessservice.New(repository, "owner").ExchangeOwnerToken(ctx, "Dash")
+	issued, err := accessservice.New(repository, "owner").ExchangeOwnerToken(ctx, access.TokenExchange{Name: "Dash"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestRevokingIsRecordedAndIdempotent(t *testing.T) {
 	ctx := context.Background()
 	repository := openRepository(t)
 	credentials := accessservice.New(repository, "owner")
-	issued, err := credentials.ExchangeOwnerToken(ctx, "Dash")
+	issued, err := credentials.ExchangeOwnerToken(ctx, access.TokenExchange{Name: "Dash"})
 	if err != nil {
 		t.Fatal(err)
 	}

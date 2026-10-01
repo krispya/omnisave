@@ -14,7 +14,7 @@ type principalContextKey struct{}
 // Authenticate resolves the bearer token on a request to the principal behind
 // it. Authentication is a lookup against credentials this server issued rather
 // than a comparison with one configured string (ADR-007); the owner token
-// still works, as the bootstrap and as the way back in.
+// still works, for recovery and automation (ADR-010).
 func Authenticate(service access.Service, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, ok := bearerToken(r)

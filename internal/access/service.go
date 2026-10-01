@@ -53,8 +53,9 @@ type Service interface {
 	Deny(ctx context.Context, id string) error
 
 	// ExchangeOwnerToken trades the owner token for a credential of the
-	// caller's own, so a browser never stores the owner's secret.
-	ExchangeOwnerToken(ctx context.Context, name string) (*IssuedCredential, error)
+	// caller's own — a browser's, or a Device's when the exchange names one —
+	// so nothing that keeps a credential ever stores the owner's secret.
+	ExchangeOwnerToken(ctx context.Context, input TokenExchange) (*IssuedCredential, error)
 
 	// Claimable reports a server that has issued nothing and can therefore
 	// still be claimed by the first browser to reach it (ADR-010).

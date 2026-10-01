@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/krisbaumgartner/omnisave/internal/access"
 	accessservice "github.com/krisbaumgartner/omnisave/internal/access/service"
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	catalogservice "github.com/krisbaumgartner/omnisave/internal/catalog/service"
@@ -672,7 +673,7 @@ func TestAuthenticationTakesTheOwnerTokenAndIssuedCredentialsOnly(t *testing.T) 
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	issued, err := credentials.ExchangeOwnerToken(context.Background(), "Dash")
+	issued, err := credentials.ExchangeOwnerToken(context.Background(), access.TokenExchange{Name: "Dash"})
 	if err != nil {
 		t.Fatal(err)
 	}

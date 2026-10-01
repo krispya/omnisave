@@ -115,8 +115,9 @@ func runConnect(ctx context.Context, arguments []string) error {
 	flags := flag.NewFlagSet("connect", flag.ContinueOnError)
 	statePath := flags.String("state", "", "path to local tracking state")
 	server := flags.String("server", "", "Omnisave server URL; skips discovery")
-	// Keep owner-token authentication as an explicit recovery path.
-	token := flags.String("token", os.Getenv("OMNISAVE_API_TOKEN"), "owner token; skips pairing")
+	// The owner token skips pairing: it is traded for this Device's own
+	// credential and never stored.
+	token := flags.String("token", os.Getenv("OMNISAVE_API_TOKEN"), "owner token to connect without pairing")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -152,7 +153,14 @@ func runConnect(ctx context.Context, arguments []string) error {
 		if serverURL == "" {
 			return errors.New("connecting with a token needs --server")
 		}
-		_, err = establishServer(ctx, store, &state, serverURL, *token)
+		local := state.EnsureDevice(host.DeviceName())
+		issued, err := remote.ExchangeOwnerToken(ctx, serverURL, *token,
+			access.TokenExchange{Name: local.Name, DeviceID: local.ID}, nil)
+		if err != nil {
+			tui.ConnectFailed(err)
+			return errReported
+		}
+		_, err = establishServer(ctx, store, &state, serverURL, issued.Token)
 		return err
 	}
 	_, err = connectByPairing(ctx, store, &state, serverURL)

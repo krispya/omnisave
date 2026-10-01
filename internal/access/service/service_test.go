@@ -244,7 +244,7 @@ func TestTheOwnerTokenAuthenticatesAndTradesForACredential(t *testing.T) {
 		t.Fatalf("the owner token authenticated as %+v", principal)
 	}
 
-	issued, err := service.ExchangeOwnerToken(ctx, "Dash")
+	issued, err := service.ExchangeOwnerToken(ctx, access.TokenExchange{Name: "Dash"})
 	if err != nil {
 		t.Fatal(err)
 	}

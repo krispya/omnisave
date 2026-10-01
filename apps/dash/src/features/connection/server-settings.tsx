@@ -3,11 +3,14 @@ import {
   listCredentials,
   listSettings,
   revokeCredential,
+  serverAccess,
+  setPIN,
   updateSetting,
   type Credential,
   type OwnerSetting,
 } from '../../lib/omnisave-api.js';
 import { CredentialList } from './credential-list.js';
+import { PINDialog } from './pin-dialog.js';
 import { ProviderDialog } from './provider-dialog.js';
 import { ProviderSettings } from './provider-settings.js';
 import { DeleteDialog } from '../../components/delete-dialog.js';
@@ -22,7 +25,7 @@ type ServerSettingsProps = {
   onDisconnect: () => void;
 };
 
-/** Server credentials, providers, and local discovery settings. */
+/** Server credentials, the owner PIN, providers, and local discovery settings. */
 export function ServerSettings({ token, credentialID, onDisconnect }: ServerSettingsProps) {
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [settings, setSettings] = useState<OwnerSetting[]>([]);
@@ -31,12 +34,20 @@ export function ServerSettings({ token, credentialID, onDisconnect }: ServerSett
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [providerError, setProviderError] = useState('');
+  const [pinSet, setPinSet] = useState(false);
+  const [changingPIN, setChangingPIN] = useState(false);
+  const [pinError, setPinError] = useState('');
 
   const refresh = useCallback(async () => {
     try {
-      const [issued, owned] = await Promise.all([listCredentials(token), listSettings(token)]);
+      const [issued, owned, access] = await Promise.all([
+        listCredentials(token),
+        listSettings(token),
+        serverAccess(),
+      ]);
       setCredentials(issued);
       setSettings(owned);
+      setPinSet(access.pinSet);
       setError('');
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Could not load server settings.');
@@ -82,6 +93,20 @@ export function ServerSettings({ token, credentialID, onDisconnect }: ServerSett
     }
   }
 
+  async function savePIN(pin: string) {
+    setBusyID('pin');
+    setPinError('');
+    try {
+      await setPIN(token, pin);
+      await refresh();
+      setChangingPIN(false);
+    } catch (saveError) {
+      setPinError(saveError instanceof Error ? saveError.message : 'That did not work.');
+    } finally {
+      setBusyID('');
+    }
+  }
+
   const networkSettings = settings.filter((setting) => setting.group === 'network');
 
   return (
@@ -103,6 +128,23 @@ export function ServerSettings({ token, credentialID, onDisconnect }: ServerSett
           void act(credential.id, () => revokeCredential(token, credential.id))
         }
       />
+
+      <SettingsGroup title="Sign-in">
+        <ActionRow
+          icon="lock"
+          title={pinSet ? 'Change PIN' : 'Set a PIN'}
+          subtitle={
+            pinSet
+              ? 'Other browsers sign in with it'
+              : 'Without one, other browsers need the owner token'
+          }
+          disabled={busyID === 'pin'}
+          onClick={() => {
+            setPinError('');
+            setChangingPIN(true);
+          }}
+        />
+      </SettingsGroup>
 
       {networkSettings.length === 0 ? null : (
         <div>
@@ -175,6 +217,16 @@ export function ServerSettings({ token, credentialID, onDisconnect }: ServerSett
           clientID={clientID?.text ?? ''}
           onCancel={() => setConnecting(false)}
           onSave={(values) => void saveProvider(values)}
+        />
+      ) : null}
+
+      {changingPIN ? (
+        <PINDialog
+          pinSet={pinSet}
+          saving={busyID === 'pin'}
+          error={pinError}
+          onCancel={() => setChangingPIN(false)}
+          onSave={(pin) => void savePIN(pin)}
         />
       ) : null}
 

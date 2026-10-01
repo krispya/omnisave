@@ -55,7 +55,7 @@ func send(t *testing.T, handler http.Handler, method, path, token, body string) 
 	return response
 }
 
-func TestOnlyThePairingEndpointsAnswerWithoutACredential(t *testing.T) {
+func TestWithoutACredentialADeviceCanOnlyAskToPair(t *testing.T) {
 	handler := newConnectedServer(t, nil)
 
 	open := send(t, handler, http.MethodPost, "/api/v1/pairing/requests", "",
@@ -216,6 +216,30 @@ func TestOnlyTheOwnerTokenTradesForACredential(t *testing.T) {
 	again := send(t, handler, http.MethodPost, "/api/v1/credentials/exchange", issued.Token, `{"name":"Second"}`)
 	if again.Code != http.StatusForbidden {
 		t.Fatalf("an issued credential minted another: %d %s", again.Code, again.Body.String())
+	}
+}
+
+// A Device connected with the owner token keeps a Device credential of its
+// own, never the owner token, so it holds exactly what pairing would give it.
+func TestADeviceConnectingWithTheOwnerTokenGetsOnlyADeviceCredential(t *testing.T) {
+	handler := newConnectedServer(t, nil)
+
+	var issued access.IssuedCredential
+	exchanged := send(t, handler, http.MethodPost, "/api/v1/credentials/exchange", owner,
+		`{"name":"steamdeck","device_id":"deck"}`)
+	if exchanged.Code != http.StatusCreated {
+		t.Fatalf("the owner token could not trade for a Device credential: %d %s",
+			exchanged.Code, exchanged.Body.String())
+	}
+	decodeResponse(t, exchanged, &issued)
+	if issued.Credential.Kind != access.KindDevice || issued.Credential.DeviceID != "deck" {
+		t.Fatalf("expected a credential bound to the Device, got %+v", issued.Credential)
+	}
+	if library := send(t, handler, http.MethodGet, "/api/v1/omnisaves", issued.Token, ""); library.Code != http.StatusOK {
+		t.Fatalf("the Device credential was refused: %d", library.Code)
+	}
+	if listed := send(t, handler, http.MethodGet, "/api/v1/credentials", issued.Token, ""); listed.Code != http.StatusForbidden {
+		t.Fatalf("a Device credential reached an owner-only route: %d", listed.Code)
 	}
 }
 
@@ -555,7 +579,7 @@ func TestProviderCredentialsPinnedByTheDeploymentAreNotEditable(t *testing.T) {
 	}
 }
 
-func TestADeviceCannotApproveAnotherDeviceOrChangeThePIN(t *testing.T) {
+func TestADeviceCredentialCannotAdministerTheServer(t *testing.T) {
 	handler := newConnectedServer(t, nil)
 	send(t, handler, http.MethodPost, "/api/v1/claim", "", `{"name":"Mac","pin":"4071"}`)
 
@@ -571,9 +595,9 @@ func TestADeviceCannotApproveAnotherDeviceOrChangeThePIN(t *testing.T) {
 		`{"handle":"`+ticket.Handle+`"}`), &collection)
 	device := collection.Token
 
-	// That Device now holds a real credential. ADR-007: approval happens in
-	// the Dash and nowhere else, so one compromised Device must not be able to
-	// admit others or take the PIN.
+	// That Device now holds a real credential. ADR-007: it syncs and uses the
+	// Library, so one compromised Device can neither admit others, lock the
+	// owner out, nor reconfigure the server.
 	decodeResponse(t, send(t, handler, http.MethodPost, "/api/v1/pairing/requests", "",
 		`{"device_id":"intruder","device_name":"intruder"}`), &ticket)
 	decodeResponse(t, send(t, handler, http.MethodGet, "/api/v1/pairing/requests", owner, ""), &pending)
@@ -586,9 +610,17 @@ func TestADeviceCannotApproveAnotherDeviceOrChangeThePIN(t *testing.T) {
 		"/api/v1/pairing/requests/"+pending[0].ID+"/deny", device, ""); denied.Code != http.StatusForbidden {
 		t.Fatalf("a Device denied a request: %d", denied.Code)
 	}
-	if changed := send(t, handler, http.MethodPut, "/api/v1/pin", device,
-		`{"pin":"9999"}`); changed.Code != http.StatusForbidden {
-		t.Fatalf("a Device changed the owner PIN: %d", changed.Code)
+	for _, request := range []struct{ method, path, body string }{
+		{http.MethodPut, "/api/v1/pin", `{"pin":"9999"}`},
+		{http.MethodGet, "/api/v1/pairing/requests", ""},
+		{http.MethodGet, "/api/v1/credentials", ""},
+		{http.MethodDelete, "/api/v1/credentials/" + collection.Token, ""},
+		{http.MethodGet, "/api/v1/settings", ""},
+		{http.MethodPatch, "/api/v1/settings/" + ownersettings.AnnounceDiscovery, `{"value":"false"}`},
+	} {
+		if refused := send(t, handler, request.method, request.path, device, request.body); refused.Code != http.StatusForbidden {
+			t.Fatalf("a Device was allowed %s %s: %d", request.method, request.path, refused.Code)
+		}
 	}
 
 	// The owner's own browser credential still can.

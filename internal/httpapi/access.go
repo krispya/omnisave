@@ -7,9 +7,9 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/settings"
 )
 
-// requestPairing records a client with no credential asking for one. It is one
-// of the two endpoints reachable without authentication, because a Device with
-// no credential is exactly who calls it.
+// requestPairing records a Device with no credential asking for one. It is
+// reachable without authentication, because a Device with no credential is
+// exactly who calls it.
 func (a *API) requestPairing(w http.ResponseWriter, r *http.Request) {
 	var input access.RequestPairing
 	if err := decodeJSON(w, r, &input); err != nil {
@@ -78,14 +78,12 @@ func (a *API) denyPairingRequest(w http.ResponseWriter, r *http.Request) {
 // exchangeOwnerToken trades the owner token for a credential of the caller's
 // own, which is how the Dash stops storing the owner's secret.
 func (a *API) exchangeOwnerToken(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Name string `json:"name"`
-	}
+	var input access.TokenExchange
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, err)
 		return
 	}
-	issued, err := a.access.ExchangeOwnerToken(r.Context(), input.Name)
+	issued, err := a.access.ExchangeOwnerToken(r.Context(), input)
 	if err != nil {
 		writeError(w, err)
 		return

@@ -120,7 +120,7 @@ func (s *service) SignIn(ctx context.Context, input access.SignIn) (*access.Issu
 		}
 		if subtle.ConstantTimeCompare([]byte(candidate), []byte(stored.Hash)) == 1 {
 			s.recordSignIn(input.SourceAddress, true, now)
-			return s.mintCredential(ctx, input.Name, s.repository.InsertCredential)
+			return s.mintCredential(ctx, input.Name, access.KindDash, "", s.repository.InsertCredential)
 		}
 	}
 

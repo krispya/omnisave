@@ -50,8 +50,8 @@ type service struct {
 }
 
 // New creates the access service. The owner token stays deployment
-// configuration (ADR-003); here it is the credential that bootstraps the
-// first issued one and the way back in when none of them work.
+// configuration (ADR-003); here it is the recovery and automation credential
+// that works when no issued one does (ADR-010).
 func New(repository access.Repository, ownerToken string) access.Service {
 	return NewWithClock(repository, ownerToken, time.Now)
 }
@@ -263,15 +263,26 @@ func (s *service) Deny(ctx context.Context, id string) error {
 	return s.repository.ResolvePairingRequest(ctx, id, access.PairingDenied, "", "")
 }
 
-func (s *service) ExchangeOwnerToken(ctx context.Context, name string) (*access.IssuedCredential, error) {
-	return s.mintCredential(ctx, name, s.repository.InsertCredential)
+func (s *service) ExchangeOwnerToken(ctx context.Context, input access.TokenExchange) (*access.IssuedCredential, error) {
+	deviceID := strings.TrimSpace(input.DeviceID)
+	if deviceID == "" {
+		return s.mintCredential(ctx, input.Name, access.KindDash, "", s.repository.InsertCredential)
+	}
+	// A Device connecting with the owner token gets an ordinary Device
+	// credential, the same as pairing would have issued it; the owner token
+	// itself never rests on a Device.
+	if len(deviceID) > 128 || strings.TrimSpace(input.Name) == "" {
+		return nil, fmt.Errorf("%w: a Device credential needs the Device's identity", access.ErrInvalid)
+	}
+	return s.mintCredential(ctx, input.Name, access.KindDevice, deviceID, s.repository.InsertCredential)
 }
 
-// mintCredential issues a browser's own credential. Trading the owner token
-// and claiming an unclaimed server produce the same thing and differ only in
-// how the write is allowed to fail.
+// mintCredential issues a credential of the caller's own. Trading the owner
+// token and claiming an unclaimed server produce the same thing and differ
+// only in how the write is allowed to fail.
 func (s *service) mintCredential(
-	ctx context.Context, name string, store func(context.Context, access.CredentialRecord) error,
+	ctx context.Context, name string, kind access.CredentialKind, deviceID string,
+	store func(context.Context, access.CredentialRecord) error,
 ) (*access.IssuedCredential, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -287,7 +298,8 @@ func (s *service) mintCredential(
 	record := access.CredentialRecord{
 		Credential: access.Credential{
 			ID:         uuid.NewString(),
-			Kind:       access.KindDash,
+			Kind:       kind,
+			DeviceID:   deviceID,
 			DeviceName: name,
 			CreatedAt:  s.now(),
 		},
@@ -317,7 +329,7 @@ func (s *service) Claim(ctx context.Context, input access.ClaimServer) (*access.
 	if _, err := normalizePIN(input.PIN); err != nil {
 		return nil, err
 	}
-	issued, err := s.mintCredential(ctx, input.Name, s.repository.InsertFirstCredential)
+	issued, err := s.mintCredential(ctx, input.Name, access.KindDash, "", s.repository.InsertFirstCredential)
 	if err != nil {
 		return nil, err
 	}
