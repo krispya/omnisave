@@ -213,8 +213,8 @@ export function LibraryDashboard({
           setSelectedSaveID(nextSave?.id ?? '');
         }
       }
-      setDeleteTarget(undefined);
       await onReload();
+      setDeleteTarget(undefined);
     } catch (deleteFailure) {
       setDeleteError(
         deleteFailure instanceof Error
