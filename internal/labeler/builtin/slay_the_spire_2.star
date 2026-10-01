@@ -3,7 +3,7 @@
 #   Mid-run:  "Necro A5, Hive flr 18, 53/66 HP"
 #   Run over: "Necro A4 win, 48 flrs, 1h02m"
 #             "Necro A5 died to Decimillipede, Hive flr 25"
-#             "Necro A5 abandoned, Hive flr 25"
+#             "Abandoned: Necro A5, Hive flr 25"
 #
 # A snapshot mid-run carries saves/current_run.save; a finished run deletes it
 # and appends saves/history/<start_time>.run. A snapshot with neither is a
@@ -110,7 +110,7 @@ def _run_over(doc):
         return (name + ", " + time) if time else name
     # An abandon mid-fight also records the encounter; quitting is still the outcome.
     if doc.get("was_abandoned"):
-        return "%s abandoned%s" % (who, _after_place(doc))
+        return "Abandoned: %s%s" % (who, _after_place(doc))
     killer = _pretty(doc.get("killed_by_encounter")) or _pretty(doc.get("killed_by_event"))
     if killer:
         return "%s died to %s%s" % (who, killer, _after_place(doc))
