@@ -57,6 +57,41 @@ func TestApplyCurrentAppliesACompleteVerifiedHeadSnapshot(t *testing.T) {
 	}
 }
 
+// RemovedFiles names what an apply took off the disk — the paths a store
+// reconciliation is entitled to retire, since the local save was proven
+// equal to a committed revision before anything was removed (FDR-005,
+// decision 13). It decides from layout alone, exactly as AppliedFiles does.
+func TestRemovedFilesNamesWhatTheApplyTookOffTheDisk(t *testing.T) {
+	directory := t.TempDir()
+	local := target.Save{Files: []target.File{
+		writeFile(t, directory, "progress.sav", "old-progress"),
+		writeFile(t, directory, "obsolete.dat", "old-sidecar"),
+	}}
+	current := omnisave.Revision{ID: "revision-2", OmnisaveID: "save-a", Files: []omnisave.RevisionFile{
+		revisionFile("battery/progress.sav", "new-progress", "application/octet-stream"),
+		revisionFile("battery/profile/new.dat", "new-sidecar", "application/octet-stream"),
+	}}
+	removed, err := binding.RemovedFiles(local, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 1 || removed[0] != filepath.Join(directory, "obsolete.dat") {
+		t.Fatalf("removed = %v", removed)
+	}
+
+	unchanged := omnisave.Revision{ID: "revision-1", OmnisaveID: "save-a", Files: []omnisave.RevisionFile{
+		revisionFile("battery/progress.sav", "old-progress", "application/octet-stream"),
+		revisionFile("battery/obsolete.dat", "old-sidecar", "application/octet-stream"),
+	}}
+	removed, err = binding.RemovedFiles(local, unchanged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("a revision placing every local path removes nothing, got %v", removed)
+	}
+}
+
 // CanApply is an answer's pre-flight: it must refuse a current revision
 // spelled in another save's layout, and it must decide from the layout
 // alone — the local files here do not exist on disk.

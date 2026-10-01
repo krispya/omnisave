@@ -356,7 +356,7 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 		// to a divergence the user never saw.
 		prompts := replayedAnswers(answers)
 		clear(answers)
-		ports := savesync.Ports{Server: l.server, Adapters: l.scanner, Report: report}
+		ports := savesync.Ports{Server: l.server, Adapters: l.scanner, Report: report, Checkpoint: l.store.Save}
 		result, err := savesync.Pass(passCtx, ports, &state, savesync.PassOptions{
 			Detector: l.detector, Prompts: prompts, PushFloor: l.floor,
 		})

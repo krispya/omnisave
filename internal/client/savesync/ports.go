@@ -9,6 +9,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client"
 	"github.com/krisbaumgartner/omnisave/internal/client/running"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
+	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/device"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
@@ -122,6 +123,7 @@ type Reporter interface {
 	StoreRegistrationSkipped(title, reason string)
 	StoreRegistrationFailed(title string, err error)
 	StoreRegistrationIncomplete(title string, count int)
+	StoreDeleted(title string, deleted int)
 	StoreExtras(title string, extras int)
 
 	// Unlocked names achievements the server recorded from this pass.
@@ -130,7 +132,10 @@ type Reporter interface {
 
 // Ports are the collaborators one reconciliation works through.
 type Ports struct {
-	Server   Server
-	Adapters Adapters
-	Report   Reporter
+	// Checkpoint persists the placement journal before filesystem or cloud
+	// mutations. Production callers must supply it; nil is for in-memory tests.
+	Checkpoint func(tracking.State) error
+	Server     Server
+	Adapters   Adapters
+	Report     Reporter
 }

@@ -64,12 +64,14 @@ func TestFinishPlacementReconcilesAPIGames(t *testing.T) {
 			Unchanged:  []string{"other.save"},
 			Ineligible: []string{"replay.mcr"},
 			Outside:    2,
+			Deleted:    []string{"stale.save"},
 			Extras:     []string{"gone.save"},
 			Failed:     []steamworks.Failure{{Name: "big.save", Cause: "quota"}},
 		}, nil
 	}
 	save := target.Save{Files: []target.File{{Path: filepath.Join(game.InstallRoot, "file.save")}}}
-	report, err := adapter.FinishPlacement(context.Background(), discovered, game, save)
+	removed := []string{filepath.Join(game.InstallRoot, "stale.save")}
+	report, err := adapter.FinishPlacement(context.Background(), discovered, game, save, target.PlacementEvidence{Removed: removed})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,12 +84,18 @@ func TestFinishPlacementReconcilesAPIGames(t *testing.T) {
 	if len(received.Files) != 1 {
 		t.Fatalf("files = %v", received.Files)
 	}
+	if len(received.Removed) != 1 || received.Removed[0] != removed[0] {
+		t.Fatalf("removed = %v", received.Removed)
+	}
 	// Unchanged entries stay out of the report; only real writes register.
 	if len(report.Unregistered) != 1 || report.Outside != 2 {
 		t.Fatalf("expected the undone work to be carried, got %+v", report)
 	}
 	if len(report.Registered) != 1 || report.Registered[0] != "file.save" || len(report.Extras) != 1 {
 		t.Fatalf("report = %+v", report)
+	}
+	if len(report.Deleted) != 1 || report.Deleted[0] != "stale.save" {
+		t.Fatalf("deleted = %v", report.Deleted)
 	}
 	if report.Failed["big.save"] != "quota" {
 		t.Fatalf("failed = %v", report.Failed)
@@ -101,7 +109,7 @@ func TestFinishPlacementLeavesFolderGamesToSteam(t *testing.T) {
 		t.Fatal("a folder-replicated game must not be reconciled")
 		return steamworks.Result{}, nil
 	}
-	report, err := adapter.FinishPlacement(context.Background(), discovered, game, target.Save{})
+	report, err := adapter.FinishPlacement(context.Background(), discovered, game, target.Save{}, target.PlacementEvidence{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +122,7 @@ func TestFinishPlacementReportsAMissingLibrary(t *testing.T) {
 	discovered, game := placementFixture(t, "0")
 	game.InstallRoot = t.TempDir()
 	adapter := New()
-	if _, err := adapter.FinishPlacement(context.Background(), discovered, game, target.Save{}); err == nil {
+	if _, err := adapter.FinishPlacement(context.Background(), discovered, game, target.Save{}, target.PlacementEvidence{}); err == nil {
 		t.Fatal("expected an error when the game ships no steamworks library")
 	}
 }

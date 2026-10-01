@@ -343,6 +343,36 @@ func AppliedFiles(save target.Save, current omnisave.Revision) ([]target.File, e
 	return files, nil
 }
 
+// RemovedFiles reports the native paths a successful ApplyCurrent of current
+// into save removed from disk: files the local save carried that the revision
+// places nothing at. The apply proved the local save equal to a committed
+// revision before touching it, so every removed file's content is recoverable
+// from history — which is what entitles anything acting on the placement to
+// also retire those files from a store's registry (FDR-005, decision 13).
+func RemovedFiles(save target.Save, current omnisave.Revision) ([]string, error) {
+	layout, err := describeLocalLayout(save)
+	if err != nil {
+		return nil, err
+	}
+	currentLocation := singleLocation(current.Files)
+	placed := make(map[string]bool, len(current.Files))
+	for _, file := range current.Files {
+		targetPath, _, err := layout.pathFor(file.Path, currentLocation, len(current.Files))
+		if err != nil {
+			return nil, err
+		}
+		placed[targetPath] = true
+	}
+	var removed []string
+	for path := range layout.currentPath {
+		if !placed[path] {
+			removed = append(removed, path)
+		}
+	}
+	sort.Strings(removed)
+	return removed, nil
+}
+
 // CanApply reports whether current maps into the local save's layout: every
 // canonical path must resolve under a location root this save carries. It
 // validates layout only and does not inspect or change the filesystem, so a
@@ -369,6 +399,23 @@ func CanApply(save target.Save, current omnisave.Revision) error {
 		targets[targetPath] = true
 	}
 	return nil
+}
+
+// PlannedMaterialization resolves the save's paths without writing files, so
+// callers can durably journal a first placement before changing the filesystem.
+func PlannedMaterialization(destination target.SaveDestination, current omnisave.Revision) (target.Save, error) {
+	planned, err := materializationPlan(destination, current)
+	if err != nil {
+		return target.Save{}, err
+	}
+	save := target.Save{ID: destination.ID, TargetID: destination.TargetID, GameID: destination.GameID,
+		Kind: destination.Kind, Metadata: destination.Metadata, LocationAliases: destination.LocationAliases}
+	for _, file := range planned {
+		location, relative, _ := strings.Cut(file.revision.Path, "/")
+		save.Files = append(save.Files, target.File{Path: file.target, LocationID: location,
+			RelativePath: filepath.FromSlash(relative), Size: file.revision.Artifact.Size})
+	}
+	return save, nil
 }
 
 // CanMaterialize reports whether one current maps into one native destination.

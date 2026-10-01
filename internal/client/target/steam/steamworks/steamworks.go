@@ -2,6 +2,8 @@ package steamworks
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"runtime"
@@ -26,6 +28,7 @@ type Client struct {
 	fileRead    func(uintptr, string, unsafe.Pointer, int32) int32
 	fileExists  func(uintptr, string) bool
 	getFileSize func(uintptr, string) int32
+	fileDelete  func(uintptr, string) bool
 }
 
 // Connect loads the game's Steamworks library and initializes it as the
@@ -73,6 +76,7 @@ func Connect(libraryPath, appID string) (*Client, error) {
 		{&client.fileRead, "SteamAPI_ISteamRemoteStorage_FileRead"},
 		{&client.fileExists, "SteamAPI_ISteamRemoteStorage_FileExists"},
 		{&client.getFileSize, "SteamAPI_ISteamRemoteStorage_GetFileSize"},
+		{&client.fileDelete, "SteamAPI_ISteamRemoteStorage_FileDelete"},
 	} {
 		if err := register(bind.target, handle, bind.name); err != nil {
 			client.shutdown()
@@ -155,8 +159,47 @@ func (c *Client) WriteFile(name string, content []byte) error {
 	if !ok {
 		return fmt.Errorf("steam refused the write (quota, size, or connectivity)")
 	}
-	if int(c.getFileSize(c.storage, name)) != len(content) {
-		return fmt.Errorf("steam recorded a different size than was written")
+	if !c.Holds(name, content) {
+		return fmt.Errorf("steam read-back differs from the written content")
+	}
+	return nil
+}
+
+// Exists reports whether Steam currently lists a file.
+func (c *Client) Exists(name string) bool { return c.fileExists(c.storage, name) }
+
+// Digest reads cloud content for a conditional mutation. An unreadable entry
+// is an error, never evidence that a cloud file is safe to replace.
+func (c *Client) Digest(name string) (string, error) {
+	if !c.fileExists(c.storage, name) {
+		return "", fmt.Errorf("cloud entry disappeared")
+	}
+	size := c.getFileSize(c.storage, name)
+	if size < 0 {
+		return "", fmt.Errorf("invalid cloud size")
+	}
+	content := make([]byte, max(1, int(size)))
+	read := c.fileRead(c.storage, name, unsafe.Pointer(&content[0]), size)
+	runtime.KeepAlive(content)
+	if read != size {
+		return "", fmt.Errorf("cloud read incomplete")
+	}
+	digest := sha256.Sum256(content[:size])
+	return hex.EncodeToString(digest[:]), nil
+}
+
+// DeleteFile removes name from the store's cloud and registry, exactly as
+// the game would when it retires a file. The store propagates the removal
+// to other machines itself, the same channel a write travels.
+func (c *Client) DeleteFile(name string) error {
+	if !c.fileExists(c.storage, name) {
+		return nil
+	}
+	if !c.fileDelete(c.storage, name) {
+		return fmt.Errorf("steam refused the delete")
+	}
+	if c.fileExists(c.storage, name) {
+		return fmt.Errorf("steam still lists the deleted file")
 	}
 	return nil
 }
