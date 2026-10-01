@@ -1,6 +1,7 @@
 # Labels Slay the Spire II revisions from the run state in the save.
 #
 #   Mid-run:  "Necro A5, Hive flr 18, 53/66 HP"
+#             "Necro A5, entering Hive, 56/72 HP"
 #   Run over: "Necro A4 win, 48 flrs, 1h02m"
 #             "Necro A5 died to Decimillipede, Hive flr 25"
 #             "Abandoned: Necro A5, Hive flr 25"
@@ -97,6 +98,27 @@ def _place(doc):
         return "%s flr %d" % (act, floors)
     return act
 
+def _next_act_after_boss(doc):
+    """A cleared boss can precede the save's act index advancing."""
+    room = doc.get("pre_finished_room")
+    acts = doc.get("acts")
+    index = doc.get("current_act_index")
+    history = doc.get("map_point_history")
+    if type(room) != "dict" or room.get("room_type") != "boss" or room.get("is_pre_finished") != True:
+        return None
+    if type(acts) != "list" or type(index) != "int" or index < 0 or index + 1 >= len(acts):
+        return None
+    if type(history) != "list" or len(history) != index + 1:
+        return None
+    points = history[index]
+    if type(points) != "list" or not points or type(points[-1]) != "dict" or points[-1].get("map_point_type") != "boss":
+        return None
+    next_act = acts[index + 1]
+    if type(next_act) == "dict":
+        next_act = next_act.get("id")
+    name = _pretty(next_act)
+    return "entering " + name if name else None
+
 def _after_place(doc):
     place = _place(doc)
     return (", " + place) if place else ""
@@ -119,7 +141,7 @@ def _run_over(doc):
 def _mid_run(doc):
     """Label for a run in progress: who, where, and how close to death."""
     parts = [_character(doc) + _ascension(doc)]
-    place = _place(doc)
+    place = _next_act_after_boss(doc) or _place(doc)
     if place:
         parts.append(place)
     player = _player(doc)

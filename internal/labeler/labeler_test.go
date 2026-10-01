@@ -110,6 +110,30 @@ func TestSlayTheSpire2LeadsAbandonedRunsWithTheirOutcome(t *testing.T) {
 	}
 }
 
+func TestSlayTheSpire2LabelsTheTransitionAfterAClearedBoss(t *testing.T) {
+	save := []byte(`{
+		"acts":[{"id":"ACT.UNDERDOCKS"},{"id":"ACT.HIVE"}],
+		"ascension":5,
+		"current_act_index":0,
+		"map_point_history":[[{"map_point_type":"ancient"},{"map_point_type":"boss"}]],
+		"pre_finished_room":{"room_type":"boss","is_pre_finished":true},
+		"players":[{"character":"CHARACTER.NECROBINDER","current_hp":56,"max_hp":72}]
+	}`)
+	named, err := New(&gameDirectory{games: map[string]*catalog.Game{
+		"sts2": {ID: "sts2", Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "2868840"}}},
+	}}, &artifactOpener{blobs: map[string][]byte{hashOf(save): save}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := []omnisave.RevisionFile{{
+		Path:     "profile1/saves/current_run.save",
+		Artifact: omnisave.Artifact{SHA256: hashOf(save), Size: int64(len(save))},
+	}}
+	if got := named.NameRevision(context.Background(), "sts2", files); got != "Necro A5, entering Hive, 56/72 HP" {
+		t.Fatalf("cleared boss transition labeled %q", got)
+	}
+}
+
 func TestAMisbehavingScriptCostsOnlyTheName(t *testing.T) {
 	spinning := "GAME_KEYS = [\"test.app:1\"]\n" +
 		"def label(snapshot):\n" +
