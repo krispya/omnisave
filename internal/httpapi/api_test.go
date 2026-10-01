@@ -985,17 +985,21 @@ func TestPresenceListsTheLivePlayingPicture(t *testing.T) {
 		Devices []struct {
 			DeviceID       string   `json:"device_id"`
 			PlayingGameIDs []string `json:"playing_game_ids"`
-			ReportedAt     string   `json:"reported_at"`
 		} `json:"devices"`
 	}
 	response = request(t, handler, http.MethodGet, "/api/v1/presence", "", nil)
+	// Readers learn who is playing, never when it was reported: only the
+	// server ages a report out (ADR-013).
+	if strings.Contains(response.Body.String(), "reported_at") {
+		t.Fatalf("presence exposed a report time: %s", response.Body.String())
+	}
 	decodeResponse(t, response, &presence)
 	if len(presence.Devices) != 1 {
 		t.Fatalf("expected one playing device, got %+v", presence.Devices)
 	}
 	device := presence.Devices[0]
-	if device.DeviceID != "device-1" || device.ReportedAt == "" {
-		t.Fatalf("expected device-1 with a report time, got %+v", device)
+	if device.DeviceID != "device-1" {
+		t.Fatalf("expected device-1, got %+v", device)
 	}
 	if len(device.PlayingGameIDs) != 2 || device.PlayingGameIDs[0] != "game-1" || device.PlayingGameIDs[1] != "game-2" {
 		t.Fatalf("expected the sorted playing set, got %+v", device.PlayingGameIDs)
@@ -1055,14 +1059,13 @@ func TestDevicePlayingStatusStory(t *testing.T) {
 
 	var game struct {
 		Provenance []struct {
-			DeviceID          string  `json:"device_id"`
-			Playing           bool    `json:"playing"`
-			PlayingReportedAt *string `json:"playing_reported_at"`
+			DeviceID string `json:"device_id"`
+			Playing  bool   `json:"playing"`
 		} `json:"provenance"`
 	}
 	response = request(t, handler, http.MethodGet, "/api/v1/games/"+resolved.Game.ID, "", nil)
 	decodeResponse(t, response, &game)
-	if len(game.Provenance) != 1 || !game.Provenance[0].Playing || game.Provenance[0].PlayingReportedAt == nil {
+	if len(game.Provenance) != 1 || !game.Provenance[0].Playing {
 		t.Fatalf("expected the provenance to read as playing, got %+v", game.Provenance)
 	}
 

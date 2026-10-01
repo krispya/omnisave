@@ -58,17 +58,14 @@ func (s *service) Presence() []device.Presence {
 	live := s.presence.live()
 	reports := make([]device.Presence, len(live))
 	for index, status := range live {
-		reports[index] = device.Presence{
-			DeviceID:       status.deviceID,
-			PlayingGameIDs: status.playing,
-			ReportedAt:     status.at,
-		}
+		reports[index] = device.Presence{DeviceID: status.deviceID, PlayingGameIDs: status.playing}
 	}
 	return reports
 }
 
-func (s *service) Playing(deviceID, gameID string) (time.Time, bool) {
-	return s.presence.playing(deviceID, gameID)
+func (s *service) Playing(deviceID, gameID string) bool {
+	_, playing := s.presence.playing(deviceID, gameID)
+	return playing
 }
 
 func (s *service) OnPresenceExpired(fn func()) {

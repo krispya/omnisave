@@ -23,7 +23,7 @@ func TestARegisteredDeviceReportsWhatItIsPlaying(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("expected the first report to change what readers see: changed=%t err=%v", changed, err)
 	}
-	if _, playing := devices.Playing("steam-deck", "hades"); !playing {
+	if !devices.Playing("steam-deck", "hades") {
 		t.Fatal("expected the Device to read as playing the reported game")
 	}
 	presence := devices.Presence()

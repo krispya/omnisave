@@ -795,8 +795,7 @@ type provenanceResponse struct {
 	catalog.GameTracking
 	// Playing reports that the Device recently reported a live session of
 	// this Game.
-	Playing           bool       `json:"playing,omitempty"`
-	PlayingReportedAt *time.Time `json:"playing_reported_at,omitempty"`
+	Playing bool `json:"playing,omitempty"`
 }
 
 type catalogResolutionResponse struct {
@@ -831,10 +830,9 @@ func (a *API) gameResponse(ctx context.Context, game *catalog.Game) catalogGameR
 	// a short credibility window, not a fact the catalog stores.
 	provenance := make([]provenanceResponse, len(game.Provenance))
 	for index, record := range game.Provenance {
-		provenance[index] = provenanceResponse{GameTracking: record}
-		if at, playing := a.devices.Playing(record.DeviceID, game.ID); playing {
-			provenance[index].Playing = true
-			provenance[index].PlayingReportedAt = &at
+		provenance[index] = provenanceResponse{
+			GameTracking: record,
+			Playing:      a.devices.Playing(record.DeviceID, game.ID),
 		}
 	}
 	return catalogGameResponse{

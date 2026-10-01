@@ -34,27 +34,22 @@ describe('applyPresence', () => {
         game('game-1', [record({}), record({ device_id: 'device-2', device_name: 'Desktop' })]),
         game('game-2', [record({})]),
       ],
-      [{ device_id: 'device-1', playing_game_ids: ['game-1'], reported_at: '2026-08-06T11:59:00Z' }]
+      [{ device_id: 'device-1', playing_game_ids: ['game-1'] }]
     );
     expect(chrono.provenance[0].playing).toBe(true);
-    expect(chrono.provenance[0].playing_reported_at).toBe('2026-08-06T11:59:00Z');
     expect(chrono.provenance[1].playing).toBeUndefined();
     expect(mario.provenance[0].playing).toBeUndefined();
   });
 
   it('clears a session the picture no longer carries', () => {
-    const [patched] = applyPresence(
-      [game('game-1', [record({ playing: true, playing_reported_at: '2026-08-06T11:58:00Z' })])],
-      []
-    );
+    const [patched] = applyPresence([game('game-1', [record({ playing: true })])], []);
     expect(patched.provenance[0].playing).toBeUndefined();
-    expect(patched.provenance[0].playing_reported_at).toBeUndefined();
   });
 
   it('leaves everything that is not presence alone', () => {
     const [patched] = applyPresence(
       [game('game-1', [record({})])],
-      [{ device_id: 'device-1', playing_game_ids: ['game-1'], reported_at: '2026-08-06T11:59:00Z' }]
+      [{ device_id: 'device-1', playing_game_ids: ['game-1'] }]
     );
     expect(patched.provenance[0].device_name).toBe('Steam Deck');
     expect(patched.provenance[0].last_seen_at).toBe('2026-08-06T11:00:00Z');

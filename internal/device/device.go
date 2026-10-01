@@ -30,12 +30,12 @@ type Registration struct {
 	Platform string `json:"platform,omitempty"`
 }
 
-// Presence is one Device's credible playing report: the Games it said it is
-// running and when it last said so.
+// Presence is one Device's credible playing report: the Games it says it is
+// running. It carries no report time: only the server judges when a report
+// has aged out (ADR-013).
 type Presence struct {
-	DeviceID       string    `json:"device_id"`
-	PlayingGameIDs []string  `json:"playing_game_ids"`
-	ReportedAt     time.Time `json:"reported_at"`
+	DeviceID       string   `json:"device_id"`
+	PlayingGameIDs []string `json:"playing_game_ids"`
 }
 
 // Service registers Devices and keeps their playing presence. Presence lives
@@ -54,9 +54,8 @@ type Service interface {
 	// Presence returns every Device with a credible non-empty playing report,
 	// ordered by Device ID.
 	Presence() []Presence
-	// Playing reports whether deviceID credibly reports gameID as running, and
-	// when it last said so.
-	Playing(deviceID, gameID string) (reportedAt time.Time, playing bool)
+	// Playing reports whether deviceID credibly reports gameID as running.
+	Playing(deviceID, gameID string) bool
 	// OnPresenceExpired registers fn to run whenever aging alone changes what
 	// readers see, so watchers hear about it instead of keeping clocks of their
 	// own (ADR-013). fn runs on the expiry timer's goroutine.
