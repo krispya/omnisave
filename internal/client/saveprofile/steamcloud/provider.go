@@ -13,6 +13,7 @@ import (
 
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
+	"github.com/krisbaumgartner/omnisave/internal/client/target/gamehub"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/steam/locator"
 )
 
@@ -25,9 +26,10 @@ const ProviderName = "steam-ufs"
 // consulted first it would rename the locations of lineages already minted
 // under the community rules' spelling.
 type Provider struct {
-	// roots are Steam installation directories, each holding the appcache
-	// this reads a game's configuration from and the userdata that tells an
-	// Auto-Cloud game from one reaching Steam through the API.
+	// roots are Steam client directories, each holding the appcache this
+	// reads a game's configuration from and, where the client keeps it
+	// there, the userdata that tells an Auto-Cloud game from one reaching
+	// Steam through the API.
 	roots []string
 	// cached indexes each appcache once rather than once per game asked
 	// about, since a scan asks about every game the manifest cannot place.
@@ -40,16 +42,21 @@ func New(steamRoots ...string) *Provider {
 	return &Provider{roots: steamRoots, cached: newCache()}
 }
 
-// NewDefault reads the cloud configuration of the Steam installations this
-// host conventionally has. A host with none answers nothing, as a host whose
-// Steam has never cached the game does. Conventional locations can spell
-// one installation twice — a symlink and its target — and canonicalizing
-// keeps a large appcache from being parsed and held once per spelling.
+// NewDefault reads the cloud configuration cached by every Steam client this
+// host conventionally has: Valve's installations, then GameHub's signed-in
+// accounts. A game's cloud configuration is Steam's own whichever client
+// cached it, so a game only GameHub has installed is still placed by it. A
+// host with none answers nothing, as a host whose Steam has never cached the
+// game does. GameHub's accounts are read once, here: one signed into later
+// is consulted from the next start. Conventional locations can spell one
+// installation twice — a symlink and its target — and canonicalizing keeps a
+// large appcache from being parsed and held once per spelling.
 func NewDefault() *Provider {
 	roots, err := locator.DefaultRoots()
 	if err != nil {
-		return New()
+		roots = nil
 	}
+	roots = append(roots, gamehub.SteamClientRoots(gamehub.DefaultRoot())...)
 	seen := make(map[string]bool, len(roots))
 	unique := make([]string, 0, len(roots))
 	for _, root := range roots {

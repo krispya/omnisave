@@ -23,6 +23,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/ludusavi/embedded"
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/steamcloud"
 	"github.com/krisbaumgartner/omnisave/internal/client/savesync"
+	"github.com/krisbaumgartner/omnisave/internal/client/target/gamehub"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/retroarch"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/steam"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
@@ -63,7 +64,7 @@ func runWithOutput(ctx context.Context, arguments []string, output io.Writer) er
 		Primary:   embedded.Provider(),
 		Secondary: steamcloud.NewDefault(),
 	}
-	scanner := client.NewScanner(profiles, retroarch.NewDefault(), steam.NewDefault())
+	scanner := client.NewScanner(profiles, retroarch.NewDefault(), steam.NewDefault(), gamehub.NewDefault())
 	if len(arguments) == 0 {
 		return runApp(ctx, scanner, nil)
 	}
