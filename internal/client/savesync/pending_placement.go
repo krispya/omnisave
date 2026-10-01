@@ -118,7 +118,14 @@ func (r *reconciliation) completePlacement(ctx context.Context, c candidate, p t
 	if err := c.finish(ctx, c.save, evidence); err != nil {
 		return err
 	}
-	if err := r.bindSynced(c.local, p.OmnisaveID, p.Current.ID); err != nil {
+	// An ordinary pull keeps its binding and achievement watermark. Only
+	// adoption of another lineage starts a fresh binding.
+	if !isBound || bound.OmnisaveID != p.OmnisaveID {
+		if err := r.state.Bind(c.local, p.OmnisaveID); err != nil {
+			return err
+		}
+	}
+	if err := r.state.RecordSynced(c.local, p.OmnisaveID, p.Current.ID); err != nil {
 		return err
 	}
 	r.state.ClearPlacement(c.local)

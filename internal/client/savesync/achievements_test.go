@@ -186,3 +186,24 @@ func TestSameSecondUnlocksContinueAcrossReports(t *testing.T) {
 		t.Fatalf("expected every new tied unlock after the boundary, got %d marks", len(marks))
 	}
 }
+
+// Pulling another Device's revision must not turn a watched but unreported
+// unlock into historical activity that the next achievement scan skips.
+func TestAPullPreservesUnreportedAchievements(t *testing.T) {
+	server := savesynctest.NewServer(t)
+	fixture, game, scanner := newAchievingFixture(t, "initial")
+	game.unlock("OLD", "Old", time.Now().Add(-time.Hour))
+	syncWithAchievements(t, scanner, server, &fixture)
+
+	game.unlock("NEW", "New", time.Now())
+	bound, _ := fixture.State.BindingFor(fixture.Local())
+	savesynctest.OtherDeviceCommit(t, server, bound.OmnisaveID, "remote-progress")
+	syncWithAchievements(t, scanner, server, &fixture)
+
+	if fixture.Read(t) != "remote-progress" {
+		t.Fatal("expected the remote revision pulled")
+	}
+	if marks := achievementsOf(t, server, &fixture); len(marks) != 1 || marks[0].ID != "NEW" {
+		t.Fatalf("pull discarded a watched unlock: %+v", marks)
+	}
+}
