@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/client/binding"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
@@ -71,6 +72,46 @@ func TestDivergedSaveCanForkHereAndContinueLocally(t *testing.T) {
 	// The next pass is quiet: the fork's current revision is exactly the local content.
 	if outcome := syncOnce(t, server, &fixture); outcome.Changed() {
 		t.Fatalf("expected the forked lineage to be in sync, got %+v", outcome)
+	}
+}
+
+// Using this Device's save stays on the same omnisave: the local content is
+// committed on top of the Current Revision and becomes current, so the
+// replaced revision is its parent and other Devices adopt it as a plain pull.
+func TestUsingThisDevicesSaveMakesItCurrentOnTheSameOmnisave(t *testing.T) {
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
+	bound := diverge(t, server, &fixture)
+	replaced := *savesynctest.Saves(t, server)[0].CurrentRevisionID
+	fixture.State.RecordAchievementsSeen(fixture.Local(), time.Unix(1700000000, 0), []string{"act-1"})
+
+	outcome := savesynctest.SyncOnce(t, server, &fixture, savesync.Options{Prompts: answering(t, savesync.DivergedUseLocal)})
+
+	if outcome.Pushed != 1 || outcome.Pulled != 0 || outcome.Forked != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected using local to only commit, got %+v", outcome)
+	}
+	if content := fixture.Read(t); content != "local-divergence" {
+		t.Fatalf("expected using local to leave local content alone, got %q", content)
+	}
+	saves := savesynctest.Saves(t, server)
+	if len(saves) != 1 {
+		t.Fatalf("expected no new omnisave, got %+v", saves)
+	}
+	committed, _ := findRevision(savesynctest.Revisions(t, server, bound.OmnisaveID), *saves[0].CurrentRevisionID)
+	if committed.ParentID == nil || *committed.ParentID != replaced {
+		t.Fatalf("expected the local save on top of the replaced current, got %+v", committed)
+	}
+	rebound, _ := fixture.State.BindingFor(fixture.Local())
+	if rebound.OmnisaveID != bound.OmnisaveID || rebound.LastSyncedRevisionID == nil || *rebound.LastSyncedRevisionID != committed.ID {
+		t.Fatalf("expected the binding synced to the local revision, got %+v", rebound)
+	}
+	// Staying on the same omnisave keeps what this Device already accounted
+	// for, so achievements unlocked before the answer are not lost.
+	if seen, ok := fixture.State.AchievementsSeen(fixture.Local()); !ok || len(seen.IDs) != 1 {
+		t.Fatalf("expected the achievement watermark kept, got %+v", seen)
+	}
+	if outcome := syncOnce(t, server, &fixture); outcome.Changed() {
+		t.Fatalf("expected the local save to be in sync, got %+v", outcome)
 	}
 }
 
@@ -192,26 +233,31 @@ func seedForeignLayoutLineage(t *testing.T, server *remote.Client, fixture *save
 }
 
 // A binding whose lineage is spelled in another save's layout can never adopt
-// that lineage's current: no jump can place its files here. The answer
-// refuses before preserving anything, so repeating it stacks nothing.
-func TestJumpToAForeignLayoutCurrentFailsBeforePreserving(t *testing.T) {
-	server := savesynctest.NewServer(t)
-	fixture := savesynctest.NewSyncFixture(t, "local-progress")
-	seeded := seedForeignLayoutLineage(t, server, &fixture)
-	if err := fixture.State.Bind(fixture.Local(), seeded.ID); err != nil {
-		t.Fatal(err)
-	}
+// that lineage's current, nor commit onto it without mixing two layouts in
+// one tree. Both sync answers refuse before changing anything, so repeating
+// them stacks nothing.
+func TestSyncingWithAForeignLayoutLineageFailsBeforeChangingAnything(t *testing.T) {
+	for _, choice := range []savesync.DivergedChoice{savesync.DivergedJump, savesync.DivergedUseLocal} {
+		t.Run(string(choice), func(t *testing.T) {
+			server := savesynctest.NewServer(t)
+			fixture := savesynctest.NewSyncFixture(t, "local-progress")
+			seeded := seedForeignLayoutLineage(t, server, &fixture)
+			if err := fixture.State.Bind(fixture.Local(), seeded.ID); err != nil {
+				t.Fatal(err)
+			}
 
-	outcome := savesynctest.SyncOnce(t, server, &fixture, savesync.Options{Prompts: answering(t, savesync.DivergedJump)})
+			outcome := savesynctest.SyncOnce(t, server, &fixture, savesync.Options{Prompts: answering(t, choice)})
 
-	if outcome.Failed != 1 || outcome.Forked != 0 || outcome.Pulled != 0 {
-		t.Fatalf("expected the jump refused with nothing preserved, got %+v", outcome)
-	}
-	if content := fixture.Read(t); content != "local-progress" {
-		t.Fatalf("expected the local save untouched, got %q", content)
-	}
-	if saves := savesynctest.Saves(t, server); len(saves) != 1 {
-		t.Fatalf("expected no preservation minted for a refused jump, got %+v", saves)
+			if outcome.Failed != 1 || outcome.Pushed != 0 || outcome.Branched != 0 || outcome.Pulled != 0 {
+				t.Fatalf("expected the answer refused with nothing changed, got %+v", outcome)
+			}
+			if content := fixture.Read(t); content != "local-progress" {
+				t.Fatalf("expected the local save untouched, got %q", content)
+			}
+			if revisions := savesynctest.Revisions(t, server, seeded.ID); len(revisions) != 1 {
+				t.Fatalf("expected no revision committed for a refused answer, got %+v", revisions)
+			}
+		})
 	}
 }
 
@@ -252,10 +298,11 @@ func TestAnUnattendedPassSeedsAnUnmatchedSaveWithNothingToAdopt(t *testing.T) {
 	}
 }
 
-// A jump that fails after preserving — an outage the preservation itself
-// survived — records what it created. The next answer resumes that exact
-// preservation instead of minting a duplicate.
-func TestARepeatedJumpAnswerReusesTheEarlierPreservation(t *testing.T) {
+// A binding with no baseline shares no revision with its lineage, so a jump
+// keeps the local progress as a branch of current, inside the same omnisave.
+// When the pull then fails, the branch is already in the history the retry
+// matches against, so the retry preserves nothing twice.
+func TestABaselinelessJumpKeepsProgressAsABranchOfCurrent(t *testing.T) {
 	var failDownloads atomic.Bool
 	server := savesynctest.NewInterceptedServer(t, func(response http.ResponseWriter, request *http.Request) bool {
 		if failDownloads.Load() && request.Method == http.MethodGet &&
@@ -270,6 +317,7 @@ func TestARepeatedJumpAnswerReusesTheEarlierPreservation(t *testing.T) {
 		t.Fatalf("expected the first pass to seed, got %+v", outcome)
 	}
 	bound, _ := fixture.State.BindingFor(fixture.Local())
+	current := *bound.LastSyncedRevisionID
 	fixture.Write(t, "local-progress")
 	// Rebinding drops the baseline: unmatched content, diverged from the start.
 	if err := fixture.State.Bind(fixture.Local(), bound.OmnisaveID); err != nil {
@@ -280,20 +328,29 @@ func TestARepeatedJumpAnswerReusesTheEarlierPreservation(t *testing.T) {
 
 	failDownloads.Store(true)
 	outcome := savesynctest.SyncOnce(t, server, &fixture, jump)
-	if outcome.Forked != 1 || outcome.Failed != 1 {
-		t.Fatalf("expected the preservation to land and the pull to fail, got %+v", outcome)
+	if outcome.Branched != 1 || outcome.Forked != 0 || outcome.Failed != 1 {
+		t.Fatalf("expected the branch to land and the pull to fail, got %+v", outcome)
 	}
-	if saves := savesynctest.Saves(t, server); len(saves) != 2 {
-		t.Fatalf("expected the lineage and one preservation, got %+v", saves)
+	if saves := savesynctest.Saves(t, server); len(saves) != 1 || *saves[0].CurrentRevisionID != current {
+		t.Fatalf("expected the progress kept inside the lineage behind current, got %+v", saves)
+	}
+	history := savesynctest.Revisions(t, server, bound.OmnisaveID)
+	for _, revision := range history {
+		if revision.ID != current && (revision.ParentID == nil || *revision.ParentID != current) {
+			t.Fatalf("expected the branch to grow from current, got %+v", revision)
+		}
+	}
+	if len(history) != 2 {
+		t.Fatalf("expected the seed and one branch, got %+v", history)
 	}
 
 	failDownloads.Store(false)
 	outcome = savesynctest.SyncOnce(t, server, &fixture, jump)
-	if outcome.Pulled != 1 || outcome.Forked != 0 || outcome.Failed != 0 {
-		t.Fatalf("expected the retry to reuse the preservation and pull, got %+v", outcome)
+	if outcome.Pulled != 1 || outcome.Branched != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected the retry to pull without another branch, got %+v", outcome)
 	}
-	if saves := savesynctest.Saves(t, server); len(saves) != 2 {
-		t.Fatalf("expected the retry to mint nothing new, got %+v", saves)
+	if after := savesynctest.Revisions(t, server, bound.OmnisaveID); len(after) != len(history) {
+		t.Fatalf("expected the retry to commit nothing new, had %d and got %d", len(history), len(after))
 	}
 	if content := fixture.Read(t); content != "server-content" {
 		t.Fatalf("expected the jump to adopt the current revision, got %q", content)

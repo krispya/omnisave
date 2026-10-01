@@ -385,8 +385,8 @@ func TestAnUnboundRestoreRetriesSteamAfterLocalPlacement(t *testing.T) {
 	fixture.State.Unbind(fixture.Local())
 	adapter := &finishingAdapter{failure: errors.New("Steam unavailable")}
 	scanner := client.NewScanner(nil, adapter)
-	options := savesync.Options{Prompts: savesync.Prompts{Stale: func(savesync.StaleQuestion) (savesync.StaleChoice, error) {
-		return savesync.StaleJump, nil
+	options := savesync.Options{Prompts: savesync.Prompts{Stale: func(savesync.StaleQuestion) (savesync.DivergedChoice, error) {
+		return savesync.DivergedJump, nil
 	}}}
 	first, _ := reconcileWith(t, server, scanner, &fixture, options)
 	if first.Failed != 1 || fixture.Read(t) != "new-progress" {

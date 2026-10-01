@@ -158,16 +158,6 @@ func TestTrackReportNamesTheJumpPreservationFork(t *testing.T) {
 	}
 }
 
-func TestTrackReportSaysWhereAnUnmatchedLocalSaveWasPreserved(t *testing.T) {
-	report := &TrackReport{}
-	report.PreservedAs("Chrono Trigger", "New Game+ (Steam Deck)")
-
-	rendered := strings.Join(report.render(), "\n")
-	if !strings.Contains(rendered, "Local save preserved as New Game+ (Steam Deck)") {
-		t.Fatalf("expected the preservation sentence, got:\n%s", rendered)
-	}
-}
-
 func TestTrackReportExplainsAServerDeletionUnderTheUntrackedGame(t *testing.T) {
 	report := &TrackReport{}
 	report.SaveDeleted("Chrono Trigger")

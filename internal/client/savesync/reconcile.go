@@ -276,14 +276,6 @@ func (r *reconciliation) bindUnbound(ctx context.Context, c candidate) error {
 		return nil
 	}
 	matches := binding.FindManifestMatches(manifest, c.save, matchable)
-	// A failed adoption left this save's progress preserved in an Omnisave it
-	// recorded, and the answer was to adopt another. Content equality must not
-	// quietly settle that answer the other way, so the question stays open and
-	// a repeated answer reuses the preservation (FDR-005, decision 4).
-	if pendingID, pending := r.state.PendingPreservationFor(c.local); pending &&
-		len(matches) == 1 && matches[0].Omnisave.ID == pendingID {
-		return r.chooseLineage(ctx, c, matches, matchable, held)
-	}
 	if len(matches) == 1 && matches[0].MatchesCurrent() {
 		matched := matches[0].Omnisave
 		if err := r.bindSynced(c.local, matched.ID, *matched.CurrentRevisionID); err != nil {
@@ -302,9 +294,9 @@ func (r *reconciliation) bindUnbound(ctx context.Context, c candidate) error {
 
 // resolveStale handles an unbound save whose content matches exactly one
 // lineage at a revision that is not current. A headless pass leaves it
-// waiting; a person chooses between jumping to the Current Revision and
-// forking at the matched revision. The fork answer names the save it would
-// create, and creates exactly that one.
+// waiting; a person chooses between jumping to the Current Revision, making
+// the local content current, and forking at the matched revision. The fork
+// answer names the save it would create, and creates exactly that one.
 func (r *reconciliation) resolveStale(ctx context.Context, c candidate, match binding.ContentMatch) error {
 	title, name := c.local.GameTitle, omnisaveDisplayName(match.Omnisave)
 	current, currentFound := revisionByID(r.lineages.histories[match.Omnisave.ID], match.Omnisave.CurrentRevisionID)
@@ -325,7 +317,7 @@ func (r *reconciliation) resolveStale(ctx context.Context, c candidate, match bi
 		return err
 	}
 	switch choice {
-	case StaleJump:
+	case DivergedJump:
 		if err := r.place(ctx, c, matchedRevision, current, match.Omnisave.ID); err != nil {
 			r.failed(title, err)
 			return nil
@@ -333,7 +325,10 @@ func (r *reconciliation) resolveStale(ctx context.Context, c candidate, match bi
 		r.outcome.Jumped++
 		r.Report.SyncedWith(title, name, time.Now())
 		return nil
-	case StaleFork:
+	case DivergedUseLocal:
+		r.makeLocalCurrent(ctx, c, match.Omnisave, current)
+		return nil
+	case DivergedFork:
 		fork, err := r.Server.ForkOmnisave(ctx, match.Omnisave.ID, omnisave.ForkOmnisave{
 			RevisionID:  matchedRevision.ID,
 			DisplayName: forkName,
@@ -452,36 +447,15 @@ func (r *reconciliation) chooseLineage(
 			r.failed(title, errors.New("chosen save has no readable current revision"))
 			return nil
 		}
+		if choice.UseLocal {
+			r.makeLocalCurrent(ctx, c, selected, current)
+			return nil
+		}
 		r.syncUnmatched(ctx, c, selected, current)
 	default:
 		return errors.New("ambiguous binding prompt returned no choice")
 	}
 	return nil
-}
-
-// recordedAdoption is the preservation a failed adoption of this save
-// recorded, while it still holds the save's content: a repeated answer
-// continues it instead of preserving again. Only the recorded identity is
-// trusted, never content equality alone (FDR-005, decision 4).
-func (r *reconciliation) recordedAdoption(c candidate) (*omnisave.Omnisave, *omnisave.Revision) {
-	pendingID, pending := r.state.PendingPreservationFor(c.local)
-	if !pending {
-		return nil, nil
-	}
-	recorded, listed := r.lineages.save(pendingID)
-	if !listed {
-		return nil, nil
-	}
-	history, err := c.loadHistory(pendingID)
-	if err != nil {
-		return nil, nil
-	}
-	current, exists := revisionByID(history, recorded.CurrentRevisionID)
-	manifest, err := c.readManifest()
-	if !exists || err != nil || !binding.MatchesManifest(manifest, c.save.LocationAliases, current) {
-		return nil, nil
-	}
-	return &recorded, &current
 }
 
 // seed creates a new Omnisave from one local save and records the seed
@@ -501,11 +475,14 @@ func (r *reconciliation) seed(ctx context.Context, c candidate) {
 	r.Report.SyncedWith(title, omnisaveDisplayName(*created), time.Now())
 }
 
-// syncUnmatched preserves unmatched local progress as a new save before
-// adopting the chosen save. The two saves have no common revision, so the
-// preservation is a seed rather than a branch or fork.
+// syncUnmatched keeps unmatched local progress as a branch of the chosen
+// save before adopting its Current Revision. The two share no revision, so
+// the branch grows from current, named for the Device and left behind the
+// current pointer; adoption never creates an Omnisave. A failed placement
+// needs no record: the retry finds the local content in the chosen save's
+// history and is asked as a stale match, whose jump finishes this answer.
 func (r *reconciliation) syncUnmatched(ctx context.Context, c candidate, selected omnisave.Omnisave, current omnisave.Revision) {
-	title := c.local.GameTitle
+	title, name := c.local.GameTitle, omnisaveDisplayName(selected)
 	// Adoption ends by applying the chosen save's Current Revision to this
 	// save's files, so prove the layout can take it before local progress is
 	// preserved toward it.
@@ -513,26 +490,17 @@ func (r *reconciliation) syncUnmatched(ctx context.Context, c candidate, selecte
 		r.failed(title, err)
 		return
 	}
-	preserved, preservedRevision := r.recordedAdoption(c)
-	if preserved == nil {
-		created, revision, err := binding.Seed(ctx, r.Server, selected.GameID, c.save,
-			deconflictName(selected, deviceDisplayName(r.state)))
-		if err != nil {
-			r.failed(title, err)
-			return
-		}
-		preserved, preservedRevision = created, revision
-		r.outcome.Seeded++
-		r.Report.PreservedAs(title, omnisaveDisplayName(*preserved))
+	branch, err := binding.PushBranchAside(ctx, r.Server, selected.ID, c.save, current.ID, current, deviceDisplayName(r.state))
+	if err != nil {
+		r.commitFailed(title, name, err)
+		return
 	}
-
-	// Past here the preservation exists; a failure records it so a later
-	// pass recognizes it as this save's own rather than starting over.
-	if err := r.place(ctx, c, *preservedRevision, current, selected.ID); err != nil {
-		r.state.RecordPendingPreservation(c.local, preserved.ID)
+	r.outcome.Branched++
+	r.Report.BranchKept(title, name)
+	if err := r.place(ctx, c, *branch, current, selected.ID); err != nil {
 		r.failed(title, err)
 		return
 	}
 	r.outcome.Pulled++
-	r.Report.SyncedWith(title, omnisaveDisplayName(selected), time.Now())
+	r.Report.SyncedWith(title, name, time.Now())
 }

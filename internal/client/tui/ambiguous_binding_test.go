@@ -11,7 +11,8 @@ import (
 
 func TestUnmatchedLocalSaveOffersSyncOrCreateWithoutIgnore(t *testing.T) {
 	action := unmatchedBindingSync
-	form := unmatchedBindingActionForm("Slay the Spire 2", &action).WithWidth(80)
+	options := []savesync.AmbiguousOption{{OmnisaveID: "omnisave-1", Name: "Save 1"}, {OmnisaveID: "omnisave-2", Name: "New Game+"}}
+	form := unmatchedBindingActionForm("Slay the Spire 2", options, &action).WithWidth(80)
 	form.Update(form.Init())
 
 	view := ansi.Strip(form.View())
@@ -29,6 +30,28 @@ func TestUnmatchedLocalSaveOffersSyncOrCreateWithoutIgnore(t *testing.T) {
 		if strings.Contains(view, absent) {
 			t.Fatalf("expected no ignore choice %q, got:\n%s", absent, view)
 		}
+	}
+}
+
+// A lone existing save is named in the first step, so syncing with it needs
+// no picker and goes straight to which save becomes current.
+func TestALoneExistingSaveIsNamedInTheFirstStep(t *testing.T) {
+	action := unmatchedBindingSync
+	options := []savesync.AmbiguousOption{{OmnisaveID: "omnisave-1", Name: "Main"}}
+
+	form := unmatchedBindingActionForm("Slay the Spire 2", options, &action).WithWidth(80)
+	form.Update(form.Init())
+
+	view := ansi.Strip(form.View())
+	if !strings.Contains(view, "› Sync with Main") || !strings.Contains(view, "Create a new save") {
+		t.Fatalf("expected the first step to name the lone save, got:\n%s", view)
+	}
+	step := currentStep("Main")
+	if view := divergedStepView(t, *step); !strings.Contains(view, "Which save becomes current on Main?") {
+		t.Fatalf("expected syncing to ask which save becomes current, got:\n%s", view)
+	}
+	if step.Options[1].Choice != savesync.DivergedUseLocal {
+		t.Fatalf("expected the second option to use this device's save, got %+v", step.Options)
 	}
 }
 
