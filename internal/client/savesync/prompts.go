@@ -12,7 +12,7 @@ import "errors"
 // person calling off the run from a failure.
 type Prompts struct {
 	// SyncToDevice picks which server save to place on a Device that has no
-	// local save for the game (FDR-004). An empty choice places nothing.
+	// local save for the game (FDR-003). An empty choice places nothing.
 	SyncToDevice func(gameTitle string, options []SyncToDeviceOption) (SyncToDeviceChoice, error)
 	// Stale resolves a Local Save matching exactly one Omnisave at a
 	// revision that is not its Current Revision.

@@ -3,7 +3,7 @@
 // the mapping between domain errors and error responses. Both sides compile
 // against this one definition, so a renamed event or a new refusal is a
 // compile-time change rather than a string that silently stops matching. The
-// Dash mirrors it by hand in apps/dash/src/lib/omnisave-api.ts.
+// Dash mirrors it by hand.
 package contract
 
 import (
@@ -25,8 +25,9 @@ const (
 	// a fork, a deletion — anything that changes what a Device would sync
 	// against.
 	LibraryChanged = "library.changed"
-	// AccessChanged announces a pending access request appearing, resolving,
-	// or expiring.
+	// AccessChanged announces a change in who may reach the server: a pending
+	// request appearing, resolving, or expiring, or a credential issued or
+	// revoked.
 	AccessChanged = "access.changed"
 	// DevicesChanged announces a change in Device playing presence.
 	DevicesChanged = "devices.changed"
@@ -113,7 +114,7 @@ func errorStatus(err error) int {
 		return http.StatusUnauthorized
 	// A setting the deployment pinned is not the owner's to change, and
 	// saying so is the point: a Dash that silently ignored the edit would
-	// be worse than one that never offered it (ADR-008).
+	// be worse than one that never offered it (ADR-003).
 	case errors.Is(err, settings.ErrPinned):
 		return http.StatusForbidden
 	case errors.Is(err, access.ErrRateLimited):

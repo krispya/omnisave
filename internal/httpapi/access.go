@@ -208,7 +208,7 @@ func (a *API) listSettings(w http.ResponseWriter, r *http.Request) {
 
 // updateSetting stores one owner setting. The value arrives as text whatever
 // its kind, because that is what a switch, a client ID, and a secret have in
-// common on the wire — and what comes back never carries a secret (ADR-011).
+// common on the wire — and what comes back never carries a secret (ADR-003).
 func (a *API) updateSetting(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Value string `json:"value"`

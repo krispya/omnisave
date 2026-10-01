@@ -67,7 +67,7 @@ func (s *service) register(providers []catalog.Provider) []catalog.Provider {
 }
 
 // Resolve answers known evidence locally, before any provider is asked
-// (FDR-001, decision 6). Otherwise the providers' claim can still connect the
+// (FDR-001, decision 4). Otherwise the providers' claim can still connect the
 // evidence to a known Game; failing that, a new Game is created.
 func (s *service) Resolve(ctx context.Context, input catalog.Evidence) (*catalog.Resolution, error) {
 	evidence, valid := normalizeEvidence(input)

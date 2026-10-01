@@ -409,7 +409,7 @@ func TestRestoreMovesCurrentAndTheNextCommitCreatesABranch(t *testing.T) {
 // A branch commit names its parent separately from the current revision it
 // expects, so a Device whose content continues a node a restore moved away
 // from attaches there instead of pretending to continue current. The
-// concurrency check still guards the pointer (FDR-005, decision 15).
+// concurrency check still guards the pointer (FDR-005, decision 10).
 func TestABranchCommitAttachesToItsParentAndStillGuardsCurrent(t *testing.T) {
 	ctx := context.Background()
 	saves := omnisaveservice.New(sqlitetest.Open(t, "chrono-trigger"))

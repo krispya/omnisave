@@ -356,7 +356,7 @@ func TestAPullWaitsWhileTheGameIsPlayedAndAppliesOnceItCloses(t *testing.T) {
 // A rewind under unsynced local progress is not a conflict: the server moved
 // its pointer back without adding anything this device lacks, so the local
 // content commits as a branch off the baseline it continues, and current
-// follows it (FDR-005, decision 15). No prompt, no preservation fork.
+// follows it (FDR-005, decision 10). No prompt, no preservation fork.
 func TestARestoreUnderLocalProgressBranchesWithoutAsking(t *testing.T) {
 	server := savesynctest.NewServer(t)
 	fixture := savesynctest.NewSyncFixture(t, "first-progress")

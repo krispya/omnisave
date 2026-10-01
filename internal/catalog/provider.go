@@ -6,7 +6,7 @@ import (
 )
 
 // Provider is an external catalog: Hasheous for ROMs, IGDB for everything
-// else. Providers make Claims; they never own a Game (FDR-001, decision 5).
+// else. Providers make Claims; they never own a Game (FDR-001, decision 3).
 // ErrNotFound and ErrUnavailable mean the provider has nothing to add, and
 // the service moves on to the next one.
 type Provider interface {

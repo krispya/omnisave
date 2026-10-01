@@ -495,7 +495,7 @@ func TestABranchIsAnnouncedOnceAndLeavesNoCondition(t *testing.T) {
 // Watch used to stall on a rewind it could not resolve: the save diverged,
 // every later pass re-reported it, and nothing synced until someone ran
 // track. Branching keeps the loop flowing without a prompt (FDR-005,
-// decision 15).
+// decision 10).
 func TestARewoundCurrentUnderLocalProgressKeepsWatchFlowing(t *testing.T) {
 	server := savesynctest.NewServer(t)
 	fixture := savesynctest.NewSyncFixture(t, "first-progress")

@@ -11,7 +11,7 @@ type Evidence struct {
 }
 
 // GameIdentifier is an external ID qualified by its namespace, such as
-// steam.app, igdb.game, or hasheous.game (FDR-001, decision 3).
+// steam.app, igdb.game, or hasheous.game (FDR-001, decision 2).
 type GameIdentifier struct {
 	Namespace string `json:"namespace"`
 	Value     string `json:"value"`

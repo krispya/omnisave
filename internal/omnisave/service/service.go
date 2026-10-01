@@ -252,7 +252,7 @@ func (s *service) CommitRevision(ctx context.Context, saveID string, input omnis
 	// The parent is where the new node attaches; the expected current revision
 	// is only the concurrency check. They are the same node for an ordinary
 	// commit and differ for a branch commit, whose content continues a node a
-	// restore moved current away from (FDR-005, decision 15).
+	// restore moved current away from (FDR-005, decision 10).
 	parentRevisionID := input.ExpectedCurrentRevisionID
 	if input.ParentRevisionID != nil {
 		parentRevisionID = input.ParentRevisionID

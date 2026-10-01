@@ -74,7 +74,7 @@ func appliedSave(save target.Save, current omnisave.Revision) target.Save {
 
 // syncToDevice offers a game's server saves to a Device with no local save
 // for it, and places the one a person picks at the game's only compatible
-// destination (FDR-004). A pass without the prompt reports the offer and
+// destination (FDR-003). A pass without the prompt reports the offer and
 // leaves the game untouched; it never writes into a game unasked.
 func (r *reconciliation) syncToDevice(ctx context.Context, empty emptyCandidate) error {
 	discovered := empty.discovered

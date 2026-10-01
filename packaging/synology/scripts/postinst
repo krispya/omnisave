@@ -42,8 +42,8 @@ SETTINGS
 else
     # DSM keeps etc across an uninstall, so a reinstall finds the previous
     # installation's file. Keep every setting the operator may have edited,
-    # including the token they already gave their devices, and fill in a token
-    # only if that file somehow has none.
+    # including the owner token they may have kept for recovery, and fill in a
+    # token only if that file somehow has none.
     OWNER_TOKEN=$(current_token)
     if [ -z "${OWNER_TOKEN}" ]; then
         OWNER_TOKEN=$(generate_token)

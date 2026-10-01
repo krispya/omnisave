@@ -33,7 +33,7 @@ const (
 	SourceDeployment Source = "deployment"
 )
 
-// Kind is what sort of answer a setting takes (ADR-011). A secret is the one
+// Kind is what sort of answer a setting takes (ADR-003). A secret is the one
 // that changes how it is handled everywhere: it is written and never read
 // back, so nothing that serializes a Setting can leak it by omission.
 type Kind string
@@ -110,7 +110,7 @@ type Service interface {
 }
 
 // Repository persists owner settings, the small tier of configuration that
-// belongs to the owner rather than the deployment (ADR-008).
+// belongs to the owner rather than the deployment (ADR-003).
 type Repository interface {
 	// GetOwnerSetting returns the owner's stored value; ok is false while the
 	// owner has never set the key.

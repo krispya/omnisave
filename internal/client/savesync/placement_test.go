@@ -109,7 +109,7 @@ func TestAPullFinishesThePlacementWithTheAdapter(t *testing.T) {
 	}
 }
 
-// The measured failure (FDR-005): a rewound revision can carry live state
+// The measured failure (FDR-005, decision 13): a rewound revision can carry live state
 // the local save had lost — a run file deleted by an abandon — and it is
 // exactly that file the store must be told about. The finisher therefore
 // has to see what the apply left on disk, not what discovery found before

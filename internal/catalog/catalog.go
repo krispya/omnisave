@@ -27,7 +27,7 @@ var (
 )
 
 // IdentityConflict reports evidence already held by different Games. The
-// Games are never merged to resolve it (FDR-001, decision 7).
+// Games are never merged to resolve it (FDR-001, decision 5).
 type IdentityConflict struct {
 	GameIDs []string
 }
