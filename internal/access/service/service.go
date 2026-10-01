@@ -97,7 +97,8 @@ func (s *service) Authenticate(ctx context.Context, token string) (*access.Princ
 	}, nil
 }
 
-// touch records credential use asynchronously and at most once per interval.
+// touch records credential use at most once per interval. Keep the best-effort
+// write within the request so it cannot outlive the repository during shutdown.
 func (s *service) touch(ctx context.Context, credentialID string) {
 	now := s.now()
 	s.mu.Lock()
@@ -109,9 +110,7 @@ func (s *service) touch(ctx context.Context, credentialID string) {
 	s.lastTouched[credentialID] = now
 	s.mu.Unlock()
 
-	go func() {
-		_ = s.repository.TouchCredential(context.WithoutCancel(ctx), credentialID, now)
-	}()
+	_ = s.repository.TouchCredential(ctx, credentialID, now)
 }
 
 func (s *service) RequestPairing(ctx context.Context, input access.RequestPairing) (*access.PairingTicket, error) {
