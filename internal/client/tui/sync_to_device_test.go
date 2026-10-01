@@ -5,11 +5,13 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/krisbaumgartner/omnisave/internal/client/savesync"
 )
 
 func TestSyncToDevicePromptOffersEverySaveWithConciseLabels(t *testing.T) {
 	var choice string
-	form := syncToDeviceForm("Chrono Trigger", []SyncToDeviceOption{
+	form := syncToDeviceForm("Chrono Trigger", []savesync.SyncToDeviceOption{
 		{OmnisaveID: "save-1", Name: "Main Playthrough"},
 		{OmnisaveID: "save-2", Name: "New Game+"},
 	}, &choice).WithWidth(80)

@@ -558,6 +558,10 @@ var migrations = []string{
 		WHERE revision_id IN (SELECT id FROM members)
 		AND substr(path, 1, 7) = 'remote/'
 	);`,
+
+	// A matched ROM's hashes already live on its Game as fingerprints, and
+	// nothing ever read the rest of the record back.
+	`DROP TABLE game_roms;`,
 }
 
 func migrate(db *sql.DB) error {

@@ -1,81 +1,63 @@
 # FDR-001: Game Identity Resolution
 
-**Status:** Active **Last reviewed:** 2026-07-18
+**Status:** Active **Last reviewed:** 2026-09-30
 
 ## Overview
 
-Game Identity Resolution gives clients and catalog providers a shared way to refer to the same game without requiring one universal external identifier. The server resolves available identity evidence into a server-owned Game, which Omnisaves can then reference consistently across platforms, stores, and emulators.
+Resolution turns the Evidence a Device reports for an installed game into one server-owned Game, which every omnisave of that game references across stores, platforms, and emulators. No single external identifier has to cover every game.
 
 ## Behavior
 
-- A client can resolve a Game using one or more scoped identifiers, optional content fingerprints, and descriptive title or platform hints.
-- Resolving known evidence returns the existing canonical Game. New evidence supplied alongside known evidence becomes part of that Game's identity.
-- Catalog providers may add identifiers, fingerprints, descriptive metadata, and media when they can substantiate a match.
-- If no existing Game or provider match is available, the server can create a provisional Game when the client provides an identity and usable title.
-- Resolving the same game through different known identifiers returns the same server-owned Game.
-- Evidence already assigned to different Games produces an Identity Conflict. The server does not silently merge the Games or partially apply the new evidence.
-- A user-selected catalog match enriches the chosen Game while preserving its existing identity evidence.
-- Resolution does not choose an Omnisave or start synchronization. It only establishes which Game the discovered installation represents.
+- A Device resolves a game from scoped identifiers and content fingerprints, plus optional title and platform hints. At least one identifier or fingerprint is required.
+- Evidence the Library already holds resolves to that Game, whichever piece is sent; new evidence sent with it joins that Game.
+- Unknown evidence is offered to the Catalog. A provider's claim counts only if it repeats evidence it was asked about, and then adds its identifiers, fingerprints, description, and media. Providers are asked in turn, each seeing what earlier claims added, and one that is unavailable is skipped.
+- When no provider knows the game, the server creates a provisional Game named by the Device's title hint. Without a title, resolution fails.
+- Evidence already held by different Games is an identity conflict: resolution fails without merging the Games or applying any of the new evidence.
+- Choosing a catalog match for a Game replaces how it is described (title, metadata, media) with that claim's and adds the claim's evidence. The match is refused if that evidence belongs to another Game.
 
 ## Design Decisions
 
-### 1. The server owns the canonical Game identity
+### 1. The server owns the Game identity
 
-**Decision:** Every Game receives a server-local UUID. External identifiers are evidence attached to the Game rather than its primary identity.
+**Decision:** Every Game gets a server-local ID. External identifiers are evidence attached to it, never its identity.
 
-**Why:** No external catalog covers every commercial game, ROM, emulator, and regional release. A local identity remains stable when providers are missing, changed, or supplemented later. Downstream of [ADR-001](../adr/ADR-001-server-authority.md): the server is the authority Omnisaves reference, so it must own the identity they reference by.
+**Why:** No external catalog covers every commercial game, ROM, emulator, and regional release, and a local identity stays stable when providers are missing, change, or are added later. The server is the authority omnisaves reference ([ADR-001](../adr/ADR-001-server-authority.md)), so it owns the identity they reference by.
 
-**Tradeoff:** Two independent Omnisave servers can assign different UUIDs to the same game and need evidence, rather than UUID equality, to reconcile catalogs in the future.
+**Tradeoff:** Two servers can give the same game different IDs; only evidence can reconcile them.
 
-### 2. Identity is accumulated evidence
+### 2. Identity is scoped, accumulated evidence
 
-**Decision:** A Game may carry many scoped identifiers and many content fingerprints. Descriptive title and platform values are hints, not unique identities.
+**Decision:** A Game holds any number of namespaced identifiers (`steam.app`, `igdb.game`, `hasheous.game`) and platform-scoped fingerprints. Neither kind is required, and titles and platforms are only hints.
 
-**Why:** Steam games commonly have a strong store identifier but no content fingerprint, while ROMs commonly have strong hashes but no store identifier. The same model must represent both without inventing missing data.
+**Why:** Steam games have a store ID and no content hash; ROMs have exact hashes and no store ID. One model holds both without inventing missing data, and an unqualified ID is meaningless once two providers can use the same value.
 
-**Tradeoff:** Resolution must normalize and compare a collection of evidence, which is more complex than looking up one provider ID.
+**Tradeoff:** Adapters and providers must keep namespace names stable, and a Game without fingerprints gets no exact-content guarantee.
 
-### 3. Identifier namespaces are explicit
+### 3. Providers make claims; they never own Games
 
-**Decision:** External IDs are qualified by a namespace such as `steam.app`, `igdb.game`, or `hasheous.game`.
+**Decision:** A provider adds evidence, metadata, and media to a Game, but its record is not the Game.
 
-**Why:** An unqualified numeric or textual ID has no reliable meaning. Scoped identifiers allow unrelated providers to use overlapping values safely and make the source and kind of an identity clear.
+**Why:** Providers stay replaceable, and claims from Hasheous, IGDB, or future providers can coexist on one Game.
 
-**Tradeoff:** Adapters and providers must agree on stable namespace names.
+**Tradeoff:** Conflicting claims have to be detected rather than settled by trusting one provider everywhere.
 
-### 4. Fingerprints are optional and platform-scoped
+### 4. Known evidence is resolved locally first
 
-**Decision:** A fingerprint records a platform, hash algorithm, and value, but Games are not required to have one.
+**Decision:** The server reuses a Game it already knows before asking any provider.
 
-**Why:** Exact hashes are valuable for identifying ROM content and regional variants. They are unavailable or unsuitable for many installed PC games, so making them mandatory would exclude Steam and similar targets.
+**Why:** Repeated scans should be deterministic, fast, and work while a provider is offline or unconfigured. Providers only help when local evidence does not already settle identity.
 
-**Tradeoff:** Games without fingerprints depend on store identifiers or later catalog matching and cannot receive exact-content guarantees.
+**Tradeoff:** A provisional Game stays provisional until someone chooses a match; resolving known evidence never asks providers again.
 
-### 5. Providers make claims rather than own Games
+### 5. Ambiguity fails instead of merging
 
-**Decision:** A catalog provider can enrich resolution with additional evidence and metadata, but the provider's record is not the canonical Game.
+**Decision:** Each identifier or fingerprint belongs to at most one Game. A request that connects evidence held by different Games fails atomically with an identity conflict.
 
-**Why:** This keeps the catalog provider replaceable and permits claims from Hasheous, IGDB, Steam, Ludusavi, or future sources to coexist on one Game.
+**Why:** Joining catalog records automatically can attach saves to the wrong game, which does more damage than asking a person to resolve the ambiguity.
 
-**Tradeoff:** Conflicting provider claims require explicit detection and future repair tools instead of being resolved by trusting one provider globally.
-
-### 6. Known evidence is resolved locally first
-
-**Decision:** The server reuses a locally known Game before consulting an external provider.
-
-**Why:** Repeated scans should be deterministic, fast, and available when an external catalog is offline. Provider calls are only useful when local evidence does not already establish identity.
-
-**Tradeoff:** A known provisional Game is not automatically refreshed by every resolution request; metadata refresh needs its own policy.
-
-### 7. Ambiguity fails instead of merging automatically
-
-**Decision:** Each identifier or fingerprint can identify only one Game. If a request connects evidence already owned by different Games, resolution fails atomically with an Identity Conflict.
-
-**Why:** Automatically joining catalog records can attach saves to the wrong game, which is more damaging than requiring a user or future repair workflow to resolve the ambiguity.
-
-**Tradeoff:** Incorrect historical matches can block resolution until catalog identity-management tools exist.
+**Tradeoff:** A wrong historical match blocks resolution until a person deletes or rematches a Game.
 
 ## Related
 
-- **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — the server-as-authority premise behind server-owned canonical identity.
-- **FDRs:** [FDR-002](FDR-002-game-lifecycle.md) — when resolution happens in a game's lifecycle (at track time).
+- **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — the server-as-authority premise behind server-owned identity; [ADR-003](../adr/ADR-003-environment-server-configuration.md) — how provider credentials are configured, and why a provider may be unavailable.
+- **FDRs:** [FDR-002](FDR-002-game-lifecycle.md) — resolution happens when a game is tracked.

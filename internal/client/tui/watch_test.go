@@ -7,6 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/krisbaumgartner/omnisave/internal/client/savesync"
 )
 
 func newTestWatchModel(requests chan WatchRequest) watchModel {
@@ -430,7 +432,7 @@ func TestAnsweringSendsTheChoiceAndTheSaveItBelongsTo(t *testing.T) {
 	if request.Title != "Project Zomboid" || request.Omnisave != "Save 2" {
 		t.Fatalf("expected the answer to name the save it belongs to, got %v", request)
 	}
-	if request.Diverged != DivergedBindingJump {
+	if request.Diverged != savesync.DivergedJump {
 		t.Fatalf("expected the default answer to take current, got %q", request.Diverged)
 	}
 
@@ -442,7 +444,7 @@ func TestAnsweringSendsTheChoiceAndTheSaveItBelongsTo(t *testing.T) {
 	if forked.(watchModel).question != nil {
 		t.Fatal("expected answering to close the question")
 	}
-	if request := <-requests; request.Diverged != DivergedBindingFork {
+	if request := <-requests; request.Diverged != savesync.DivergedFork {
 		t.Fatalf("expected moving down to answer fork, got %q", request.Diverged)
 	}
 }

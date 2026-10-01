@@ -12,6 +12,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
 	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
+	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite/sqlitetest"
 )
 
 func markMirrorPathFormat(t *testing.T, databasePath, saveID string) {
@@ -36,6 +37,7 @@ func TestMigrateLocationsRenamesAWholeLineage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "slay-the-spire-2")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "slay-the-spire-2"})
 	if err != nil {
@@ -172,6 +174,7 @@ func TestMigrateLocationsRefusesMixedAndForkedLineages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "mixed-game", "forked-game")
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 
@@ -247,6 +250,7 @@ func TestMigrateLocationsRefusesOverlongRenames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "long-game")
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "long-game"})
@@ -282,6 +286,7 @@ func TestMigrateLocationsMeasuresRenamedPathsInBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "wide-game")
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "wide-game"})

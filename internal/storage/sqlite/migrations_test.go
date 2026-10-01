@@ -5,12 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
-	"github.com/krisbaumgartner/omnisave/internal/storage"
 )
 
 // The path-format migration classifies legacy data once at schema upgrade.
@@ -28,7 +28,15 @@ func TestMigrationVersionsExistingLineagePathFormats(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)`); err != nil {
 		t.Fatal(err)
 	}
-	for index, migration := range migrations[:len(migrations)-1] {
+	// Every migration before the classification, found by its content so
+	// migrations appended later do not move the story's start.
+	classification := slices.IndexFunc(migrations, func(migration string) bool {
+		return strings.Contains(migration, "ADD COLUMN path_format_version")
+	})
+	if classification < 0 {
+		t.Fatal("the path-format classification migration is missing")
+	}
+	for index, migration := range migrations[:classification] {
 		if _, err := db.Exec(migration); err != nil {
 			t.Fatalf("apply migration %d: %v", index+1, err)
 		}
@@ -209,7 +217,7 @@ func TestMigrationGraftsLegacyCopiedRootForksOntoTheirForkPoint(t *testing.T) {
 	if roots != 1 {
 		t.Fatalf("expected a single root, got %d", roots)
 	}
-	if _, err := repository.GetRevision(ctx, "fork", "r2"); !errors.Is(err, storage.ErrNotFound) {
+	if _, err := repository.GetRevision(ctx, "fork", "r2"); !errors.Is(err, omnisave.ErrNotFound) {
 		t.Fatalf("the source's later revision leaked into the fork: %v", err)
 	}
 

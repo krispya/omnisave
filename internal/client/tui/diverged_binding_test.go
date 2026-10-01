@@ -5,13 +5,15 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/krisbaumgartner/omnisave/internal/client/savesync"
 )
 
 // The prompt opens on taking current: the answer that adds no save is the
 // safe thing to land on when someone confirms without reading.
 func TestDivergedBindingPromptOffersTwoLosslessChoices(t *testing.T) {
 	choice := DivergedBindingDefault
-	question := DivergedQuestion{
+	question := savesync.DivergedQuestion{
 		GameTitle:    "Slay the Spire 2",
 		OmnisaveName: "Save 1",
 		ForkName:     "Save 1 (Steam Deck)",
@@ -38,11 +40,11 @@ func TestDivergedBindingPromptOffersTwoLosslessChoices(t *testing.T) {
 // A Device with no name has no deconflicting name to offer, so the fork
 // answer says only that a save appears.
 func TestTheForkAnswerFallsBackWithoutADeviceName(t *testing.T) {
-	options := DivergedOptions(DivergedQuestion{OmnisaveName: "Save 1"})
+	options := DivergedOptions(savesync.DivergedQuestion{OmnisaveName: "Save 1"})
 	if options[1].Label != "Fork as a new save" {
 		t.Fatalf("expected a generic fork label without a device name, got %q", options[1].Label)
 	}
-	if options[DivergedDefaultIndex(options)].Choice != DivergedBindingJump {
+	if options[DivergedDefaultIndex(options)].Choice != savesync.DivergedJump {
 		t.Fatal("expected both surfaces to open on taking current")
 	}
 }

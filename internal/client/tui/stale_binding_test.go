@@ -5,11 +5,13 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/krisbaumgartner/omnisave/internal/client/savesync"
 )
 
 func TestStaleBindingPromptUsesGameEventOptionHierarchy(t *testing.T) {
-	choice := StaleBindingJump
-	question := StaleQuestion{
+	choice := savesync.StaleJump
+	question := savesync.StaleQuestion{
 		GameTitle:    "Slay the Spire 2",
 		OmnisaveName: "Save 1",
 		ForkName:     "Save 1 (Steam Deck)",

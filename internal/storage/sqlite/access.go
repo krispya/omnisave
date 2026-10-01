@@ -3,13 +3,13 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/access"
-	"github.com/krisbaumgartner/omnisave/internal/storage"
 )
 
-func (r *Repository) InsertCredential(ctx context.Context, record storage.CredentialRecord) error {
+func (r *Repository) InsertCredential(ctx context.Context, record access.CredentialRecord) error {
 	_, err := r.db.ExecContext(ctx, `INSERT INTO credentials(
 		id, token_hash, kind, device_id, device_name, created_at, last_used_at, revoked_at
 	) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)`,
@@ -19,7 +19,7 @@ func (r *Repository) InsertCredential(ctx context.Context, record storage.Creden
 	return err
 }
 
-func (r *Repository) InsertFirstCredential(ctx context.Context, record storage.CredentialRecord) error {
+func (r *Repository) InsertFirstCredential(ctx context.Context, record access.CredentialRecord) error {
 	result, err := r.db.ExecContext(ctx, `INSERT INTO credentials(
 		id, token_hash, kind, device_id, device_name, created_at, last_used_at, revoked_at
 	)
@@ -36,7 +36,7 @@ func (r *Repository) InsertFirstCredential(ctx context.Context, record storage.C
 		return err
 	}
 	if affected == 0 {
-		return storage.ErrConflict
+		return access.ErrClaimed
 	}
 	return nil
 }
@@ -96,13 +96,13 @@ func (r *Repository) RevokeCredential(ctx context.Context, id string, at time.Ti
 			return err
 		}
 		if !exists {
-			return storage.ErrNotFound
+			return access.ErrNotFound
 		}
 	}
 	return nil
 }
 
-func (r *Repository) InsertPairingRequest(ctx context.Context, record storage.PairingRecord) error {
+func (r *Repository) InsertPairingRequest(ctx context.Context, record access.PairingRecord) error {
 	_, err := r.db.ExecContext(ctx, `INSERT INTO pairing_requests(
 		id, code, handle_hash, device_id, device_name, platform, source_address,
 		status, created_at, expires_at, minted_token, credential_id
@@ -165,7 +165,7 @@ func (r *Repository) ResolvePairingRequest(
 		return err
 	}
 	if affected == 0 {
-		return storage.ErrNotFound
+		return access.ErrNotFound
 	}
 	return nil
 }
@@ -173,14 +173,14 @@ func (r *Repository) ResolvePairingRequest(
 // TakePairingToken reads a request by handle hash and takes any token waiting
 // on it in the same transaction. Two pollers racing here is exactly the case
 // that must not hand out one credential twice.
-func (r *Repository) TakePairingToken(ctx context.Context, handleHash string, now time.Time) (*storage.PairingRecord, error) {
+func (r *Repository) TakePairingToken(ctx context.Context, handleHash string, now time.Time) (*access.PairingRecord, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	var record storage.PairingRecord
+	var record access.PairingRecord
 	var createdAt, expiresAt, status string
 	err = tx.QueryRowContext(ctx, `SELECT
 		id, code, device_id, device_name, platform, source_address, status,
@@ -190,7 +190,7 @@ func (r *Repository) TakePairingToken(ctx context.Context, handleHash string, no
 		&record.SourceAddress, &status, &createdAt, &expiresAt, &record.MintedToken,
 	)
 	if err != nil {
-		return nil, translateNotFound(err)
+		return nil, translateNotFound(err, access.ErrNotFound)
 	}
 	record.Status = access.PairingStatus(status)
 	if record.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {
@@ -229,14 +229,14 @@ func (r *Repository) DeleteExpiredPairingRequests(ctx context.Context, before ti
 	return err
 }
 
-func (r *Repository) GetOwnerPIN(ctx context.Context) (*storage.OwnerPIN, error) {
-	var pin storage.OwnerPIN
+func (r *Repository) GetOwnerPIN(ctx context.Context) (*access.OwnerPIN, error) {
+	var pin access.OwnerPIN
 	var updatedAt string
 	err := r.db.QueryRowContext(ctx,
 		`SELECT salt, hash, iterations, updated_at FROM owner_pin WHERE id = 1`).
 		Scan(&pin.Salt, &pin.Hash, &pin.Iterations, &updatedAt)
 	if err != nil {
-		return nil, translateNotFound(err)
+		return nil, translateNotFound(err, access.ErrNoPIN)
 	}
 	if pin.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt); err != nil {
 		return nil, err
@@ -244,7 +244,7 @@ func (r *Repository) GetOwnerPIN(ctx context.Context) (*storage.OwnerPIN, error)
 	return &pin, nil
 }
 
-func (r *Repository) SetOwnerPIN(ctx context.Context, pin storage.OwnerPIN) error {
+func (r *Repository) SetOwnerPIN(ctx context.Context, pin access.OwnerPIN) error {
 	_, err := r.db.ExecContext(ctx, `INSERT INTO owner_pin(id, salt, hash, iterations, updated_at)
 		VALUES (1, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -254,10 +254,13 @@ func (r *Repository) SetOwnerPIN(ctx context.Context, pin storage.OwnerPIN) erro
 	return err
 }
 
-func (r *Repository) GetOwnerSetting(ctx context.Context, key string) (string, error) {
+func (r *Repository) GetOwnerSetting(ctx context.Context, key string) (string, bool, error) {
 	var value string
 	err := r.db.QueryRowContext(ctx, `SELECT value FROM owner_settings WHERE key = ?`, key).Scan(&value)
-	return value, translateNotFound(err)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return value, err == nil, err
 }
 
 func (r *Repository) SetOwnerSetting(ctx context.Context, key, value string, at time.Time) error {
@@ -275,7 +278,7 @@ func scanCredential(row scanner) (*access.Credential, error) {
 	err := row.Scan(&credential.ID, &kind, &credential.DeviceID, &credential.DeviceName,
 		&createdAt, &lastUsedAt, &revokedAt)
 	if err != nil {
-		return nil, translateNotFound(err)
+		return nil, translateNotFound(err, access.ErrNotFound)
 	}
 	credential.Kind = access.CredentialKind(kind)
 	if credential.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {
@@ -296,7 +299,7 @@ func scanPairingRequest(row scanner) (*access.PairingRequest, error) {
 	err := row.Scan(&request.ID, &request.Code, &request.DeviceID, &request.DeviceName,
 		&request.Platform, &request.SourceAddress, &status, &createdAt, &expiresAt)
 	if err != nil {
-		return nil, translateNotFound(err)
+		return nil, translateNotFound(err, access.ErrNotFound)
 	}
 	request.Status = access.PairingStatus(status)
 	if request.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {

@@ -8,7 +8,8 @@ import (
 
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
-	"github.com/krisbaumgartner/omnisave/internal/storage/storagetest"
+	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
+	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite/sqlitetest"
 )
 
 // An achievement is an event on the play timeline, not part of a snapshot's
@@ -26,14 +27,14 @@ func session() time.Time {
 
 type history struct {
 	saves      omnisave.Service
-	repository *storagetest.MemoryRepository
+	repository *sqlite.Repository
 	saveID     string
 	current    *string
 }
 
 func playedSave(t *testing.T) *history {
 	t.Helper()
-	repository := storagetest.NewMemoryRepository()
+	repository := sqlitetest.Open(t, "firewatch")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(context.Background(), omnisave.CreateOmnisave{GameID: "firewatch"})
 	if err != nil {

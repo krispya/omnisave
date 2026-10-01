@@ -8,9 +8,9 @@ export function applyPresence(catalog: CatalogGame[], devices: DevicePresence[])
     provenance: game.provenance.map((record) => {
       const report = reports.get(record.device_id);
       if (report?.playing_game_ids.includes(game.id)) {
-        return { ...record, playing: true, playing_reported_at: report.reported_at };
+        return { ...record, playing: true };
       }
-      return { ...record, playing: undefined, playing_reported_at: undefined };
+      return { ...record, playing: undefined };
     }),
   }));
 }

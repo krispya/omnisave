@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/krisbaumgartner/omnisave/internal/client/savesync"
+	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
 func TestTrackReportNestsEachGamesEventsUnderItsLine(t *testing.T) {
@@ -227,5 +230,42 @@ func TestTrackReportLetsASaveFailureClaimTheGameGlyph(t *testing.T) {
 	}
 	if rendered[2] != "      Save failed — upload rejected" {
 		t.Fatalf("expected the save failure under the game, got %q", rendered)
+	}
+}
+
+// A held lineage says why it is held. A server's refusal names its reason,
+// so a permanent hold reads differently from one that heals.
+func TestTrackReportSaysWhyALineageIsHeld(t *testing.T) {
+	report := &TrackReport{}
+	report.MigrationHeld("Chrono Trigger", "Main", savesync.HoldNoMappingEvidence)
+	report.MigrationHeld("Stardew Valley", "Farm run",
+		&omnisave.MigrationRefused{Reason: omnisave.MigrationRefusedForkFamily})
+
+	rendered := strings.Join(report.render(), "\n")
+	for _, sentence := range []string{
+		"Main not migrated — this device's save gives no evidence for the mapping",
+		"Farm run not migrated — the lineage shares history with a fork",
+	} {
+		if !strings.Contains(rendered, sentence) {
+			t.Fatalf("expected %q in the report, got:\n%s", sentence, rendered)
+		}
+	}
+}
+
+// A migrated lineage and a restore registered with the store each read as
+// news under their game, since both change what the game will load.
+func TestTrackReportSpeaksMigrationsAndStoreRegistration(t *testing.T) {
+	report := &TrackReport{}
+	report.Migrated("Chrono Trigger", "Main")
+	report.StoreRegistered("Slay the Spire 2", 1)
+
+	rendered := strings.Join(report.render(), "\n")
+	for _, sentence := range []string{
+		"Main migrated to the game's own save location",
+		"Registered 1 restored file with Steam Cloud",
+	} {
+		if !strings.Contains(rendered, sentence) {
+			t.Fatalf("expected %q in the report, got:\n%s", sentence, rendered)
+		}
 	}
 }

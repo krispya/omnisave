@@ -7,8 +7,6 @@ import (
 	"maps"
 	"os"
 	"os/signal"
-	"sort"
-	"strings"
 	"syscall"
 	"time"
 
@@ -18,10 +16,9 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client/activity"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
 	"github.com/krisbaumgartner/omnisave/internal/client/running"
-	"github.com/krisbaumgartner/omnisave/internal/client/target"
+	"github.com/krisbaumgartner/omnisave/internal/client/savesync"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
-	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
 // watchSink receives the watch loop's lifecycle. The live view renders it;
@@ -152,7 +149,7 @@ type handoff struct {
 // watchSeed carries presence, the warmed detector, and deferred pulls into watch.
 type watchSeed struct {
 	detector *running.Detector
-	presence presenceWatch
+	presence savesync.Presence
 	deferred []string
 }
 
@@ -255,7 +252,7 @@ type watchLoop struct {
 	// watched avoids repeating the handoff pass before polling begins.
 	watched []string
 	// presence makes the handoff report available immediately.
-	presence presenceWatch
+	presence savesync.Presence
 	// deferred keeps handoff pull gates active from the first sweep.
 	deferred []string
 }
@@ -304,7 +301,7 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	// forgotten: the pass validates each against fresh state, so an answer to
 	// a divergence that resolved itself meanwhile is simply never reached,
 	// and a stale answer can never land on a later, different question.
-	answers := make(map[string]tui.DivergedBindingChoice)
+	answers := make(map[string]savesync.DivergedChoice)
 	// held is set while a question is on screen. The answer has to land on
 	// the table the question was built from, so the loop runs no pass until
 	// it comes back — presence keeps re-affirming either way, because the
@@ -312,17 +309,17 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 	held := false
 	affirmPresence := func() (map[string]bool, bool) {
 		// Skip process sweeps when there is no presence or deferred pull to update.
-		if l.detector == nil || (presence.deviceID == "" && len(deferred) == 0) {
+		if l.detector == nil || (!presence.Reportable() && len(deferred) == 0) {
 			return nil, false
 		}
-		playing, err := playingNow(ctx, l.detector, presence.matchers)
+		playing, err := presence.Sweep(ctx, l.detector)
 		if err != nil {
 			// A failed sweep neither clears presence nor resolves deferred pulls.
 			return nil, false
 		}
-		if presence.deviceID != "" {
-			reportPlaying(ctx, l.server, presence, playing)
-			sink.Playing(playingGames(presence.titles, playing))
+		if presence.Reportable() {
+			presence.Report(ctx, l.server, playing)
+			sink.Playing(presence.Titles(playing))
 		}
 		return playing, true
 	}
@@ -359,23 +356,27 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 		// to a divergence the user never saw.
 		prompts := replayedAnswers(answers)
 		clear(answers)
-		outcome, files, played, err := syncPass(passCtx, l.scanner, l.server, l.detector, &state, report, l.floor, prompts)
+		ports := savesync.Ports{Server: l.server, Adapters: l.scanner, Report: report}
+		result, err := savesync.Pass(passCtx, ports, &state, savesync.PassOptions{
+			Detector: l.detector, Prompts: prompts, PushFloor: l.floor,
+		})
+		outcome, files, played := result.Outcome, result.Watched, result.Played
 		// Preserve the last valid presence after a failed scan.
-		if played.presence.deviceID != "" {
-			presence = played.presence
+		if played.Presence.Reportable() {
+			presence = played.Presence
 		}
-		if played.swept {
+		if played.Swept {
 			// Reuse the pass's process sweep as the affirmation.
-			if presence.deviceID != "" {
-				reportPlaying(ctx, l.server, presence, played.playing)
-				sink.Playing(playingGames(presence.titles, played.playing))
+			if presence.Reportable() {
+				presence.Report(ctx, l.server, played.Playing)
+				sink.Playing(presence.Titles(played.Playing))
 			}
 		} else {
 			affirmPresence()
 		}
 		// Only a reconciled pass may replace or re-arm deferred pull state.
 		if err == nil && outcome.Synced {
-			deferred = played.waiting
+			deferred = played.Waiting
 			exitFired = false
 		}
 		presenceTicker.Reset(nextAffirm())
@@ -418,7 +419,7 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 		affirmPresence()
 	}
 	sink.Watching(len(watched))
-	signature := statSignature(watched)
+	signature := savesync.StatSignature(watched)
 	dirty := false
 	pollTicker := time.NewTicker(l.poll)
 	defer pollTicker.Stop()
@@ -456,12 +457,12 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 		// The signature is rebased even after a failure, so a write that
 		// landed during the failed pass is not counted twice. The retry
 		// commits it; the poll does not need to raise it again.
-		signature = statSignature(watched)
+		signature = savesync.StatSignature(watched)
 		dirty = false
 	}
 	// Delay triggered passes until local writes have been quiet for one interval.
 	stillWriting := func() bool {
-		if next := statSignature(watched); next != signature {
+		if next := savesync.StatSignature(watched); next != signature {
 			signature = next
 			dirty = true
 		}
@@ -548,7 +549,7 @@ func (l watchLoop) run(ctx context.Context, sink watchSink) {
 			}
 			refresh()
 		case <-pollTicker.C:
-			next := statSignature(watched)
+			next := savesync.StatSignature(watched)
 			if next != signature {
 				// Writes are still landing; wait for one quiet interval so
 				// a burst becomes a single commit.
@@ -575,21 +576,32 @@ func answerKey(gameTitle, omnisaveName string) string {
 // use. Only the divergence question is answerable this way, so every other
 // question stays nil and waits for an interactive run exactly as before. A
 // pass with nothing to replay gets no prompts at all and stays headless.
-func replayedAnswers(answers map[string]tui.DivergedBindingChoice) *reconcilePrompts {
+func replayedAnswers(answers map[string]savesync.DivergedChoice) savesync.Prompts {
 	if len(answers) == 0 {
-		return nil
+		return savesync.Prompts{}
 	}
-	replayed := make(map[string]tui.DivergedBindingChoice, len(answers))
+	replayed := make(map[string]savesync.DivergedChoice, len(answers))
 	maps.Copy(replayed, answers)
-	return &reconcilePrompts{
-		diverged: func(question tui.DivergedQuestion) (tui.DivergedBindingChoice, error) {
+	return savesync.Prompts{
+		Diverged: func(question savesync.DivergedQuestion) (savesync.DivergedChoice, error) {
 			choice, answered := replayed[answerKey(question.GameTitle, question.OmnisaveName)]
 			if !answered {
-				return "", errUnanswered
+				return "", savesync.ErrUnanswered
 			}
 			return choice, nil
 		},
 	}
+}
+
+// deferredGameExited reports whether a game holding back a pull has closed
+// since the pass that deferred it — the moment that pull can safely land.
+func deferredGameExited(deferred []string, playing map[string]bool) bool {
+	for _, gameID := range deferred {
+		if !playing[gameID] {
+			return true
+		}
+	}
+	return false
 }
 
 // plainWatchSink logs events line by line — the no-TTY behavior. There is
@@ -627,47 +639,4 @@ func (plainWatchSink) PassFinished(result tui.PassResult) {
 
 func (plainWatchSink) Requests() <-chan tui.WatchRequest {
 	return nil
-}
-
-// saveSignature summarizes one save the way the watch loop's poll summarizes
-// every watched path. Sharing the summary is the point: a write the poll
-// would notice as a reason to run a pass is a write that pass will not
-// mistake for stillness.
-func saveSignature(save target.Save) string {
-	paths := make([]string, 0, len(save.Files))
-	for _, file := range save.Files {
-		paths = append(paths, file.Path)
-	}
-	// Adapters are free to discover a save's files in any order; the summary
-	// must describe the save, not the order it came back in.
-	sort.Strings(paths)
-	return statSignature(paths)
-}
-
-// settledSince reports that nothing can have happened to a bound save since
-// the pass that last verified it: its files carry the summary that pass
-// recorded, and the Omnisave still points at the revision they were proved
-// equal to. Both halves are needed — unchanged files under a moved current
-// is a pull, and moved files under an unchanged current is a commit.
-func settledSince(bound tracking.Binding, remoteSave omnisave.Omnisave, signature string) bool {
-	if bound.LocalSignature == "" || bound.LocalSignature != signature {
-		return false
-	}
-	return bound.LastSyncedRevisionID != nil && remoteSave.CurrentRevisionID != nil &&
-		*bound.LastSyncedRevisionID == *remoteSave.CurrentRevisionID
-}
-
-// statSignature summarizes the watched files' size and modification time;
-// any difference between polls means the game wrote its save.
-func statSignature(paths []string) string {
-	var summary strings.Builder
-	for _, path := range paths {
-		info, err := os.Stat(path)
-		if err != nil {
-			fmt.Fprintf(&summary, "%s:missing;", path)
-			continue
-		}
-		fmt.Fprintf(&summary, "%s:%d:%d;", path, info.Size(), info.ModTime().UnixNano())
-	}
-	return summary.String()
 }

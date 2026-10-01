@@ -10,18 +10,18 @@ import (
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	catalogservice "github.com/krisbaumgartner/omnisave/internal/catalog/service"
-	"github.com/krisbaumgartner/omnisave/internal/storage/storagetest"
+	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite/sqlitetest"
 )
 
 const coverImage = "\x89PNG\r\n\x1a\ncover image"
 
 func TestResolveBuildsOneCanonicalGameFromDifferentIdentifiers(t *testing.T) {
 	ctx := context.Background()
-	repository := storagetest.NewMemoryRepository()
+	repository := sqlitetest.Open(t)
 	provider := &fakeProvider{}
 	games := catalogservice.New(repository, repository, provider)
 
-	created, err := games.Resolve(ctx, catalog.ResolveGame{
+	created, err := games.Resolve(ctx, catalog.Evidence{
 		Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "2560710"}},
 		TitleHint:   "Super Mario World",
 	})
@@ -35,7 +35,7 @@ func TestResolveBuildsOneCanonicalGameFromDifferentIdentifiers(t *testing.T) {
 		t.Fatalf("expected all provider identities and cached media: %v", created.Game)
 	}
 
-	reused, err := games.Resolve(ctx, catalog.ResolveGame{
+	reused, err := games.Resolve(ctx, catalog.Evidence{
 		Identifiers: []catalog.GameIdentifier{{Namespace: "igdb.game", Value: "1070"}},
 	})
 	if err != nil {
@@ -61,18 +61,18 @@ func TestResolveBuildsOneCanonicalGameFromDifferentIdentifiers(t *testing.T) {
 
 func TestResolveRejectsEvidenceAssignedToDifferentGames(t *testing.T) {
 	ctx := context.Background()
-	repository := storagetest.NewMemoryRepository()
+	repository := sqlitetest.Open(t)
 	for _, game := range []catalog.Game{
 		{ID: "one", Title: "One", MetadataSource: "client", Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "1"}}, RefreshedAt: time.Now()},
 		{ID: "two", Title: "Two", MetadataSource: "client", Identifiers: []catalog.GameIdentifier{{Namespace: "igdb.game", Value: "2"}}, RefreshedAt: time.Now()},
 	} {
-		if err := repository.SaveGame(ctx, game, nil); err != nil {
+		if err := repository.SaveGame(ctx, game); err != nil {
 			t.Fatal(err)
 		}
 	}
 	games := catalogservice.New(repository, repository, nil)
 
-	_, err := games.Resolve(ctx, catalog.ResolveGame{Identifiers: []catalog.GameIdentifier{
+	_, err := games.Resolve(ctx, catalog.Evidence{Identifiers: []catalog.GameIdentifier{
 		{Namespace: "steam.app", Value: "1"},
 		{Namespace: "igdb.game", Value: "2"},
 	}})
@@ -84,7 +84,7 @@ func TestResolveRejectsEvidenceAssignedToDifferentGames(t *testing.T) {
 
 func TestManualMatchCreatesCatalogGameWithoutLocalFingerprint(t *testing.T) {
 	ctx := context.Background()
-	repository := storagetest.NewMemoryRepository()
+	repository := sqlitetest.Open(t)
 	provider := &fakeProvider{}
 	games := catalogservice.New(repository, repository, provider)
 
@@ -105,20 +105,19 @@ func TestManualMatchCreatesCatalogGameWithoutLocalFingerprint(t *testing.T) {
 
 func TestResolutionProvidersBuildOnEarlierIdentityClaims(t *testing.T) {
 	ctx := context.Background()
-	repository := storagetest.NewMemoryRepository()
-	hashes := &stagedProvider{name: "hashes", resolve: func(evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
-		return &catalog.ProviderMatch{
+	repository := sqlitetest.Open(t)
+	hashes := &stagedProvider{name: "hashes", resolve: func(evidence catalog.Evidence) (*catalog.Claim, error) {
+		return &catalog.Claim{
 			Source: "hashes", Title: "Local title", Platform: "SNES",
 			Identifiers:  []catalog.GameIdentifier{{Namespace: "igdb.game", Value: "1070"}},
 			Fingerprints: evidence.Fingerprints,
-			ROM:          catalog.ROMMatch{Source: "no-intro", ProviderID: "rom-1"},
 		}, nil
 	}}
-	metadata := &stagedProvider{name: "metadata", resolve: func(evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
+	metadata := &stagedProvider{name: "metadata", resolve: func(evidence catalog.Evidence) (*catalog.Claim, error) {
 		if len(evidence.Identifiers) != 1 || evidence.Identifiers[0].Namespace != "igdb.game" {
 			return nil, catalog.ErrNotFound
 		}
-		return &catalog.ProviderMatch{
+		return &catalog.Claim{
 			Source: "metadata", Title: "Super Mario World", Publisher: "Nintendo",
 			Identifiers: []catalog.GameIdentifier{{Namespace: "igdb.game", Value: "1070"}},
 		}, nil
@@ -126,7 +125,7 @@ func TestResolutionProvidersBuildOnEarlierIdentityClaims(t *testing.T) {
 	games := catalogservice.NewWithProviders(repository, repository,
 		[]catalog.Provider{hashes, metadata}, []catalog.Provider{metadata, hashes})
 
-	resolved, err := games.Resolve(ctx, catalog.ResolveGame{Fingerprints: []catalog.GameFingerprint{{
+	resolved, err := games.Resolve(ctx, catalog.Evidence{Fingerprints: []catalog.GameFingerprint{{
 		Platform: "snes", Algorithm: "sha1", Value: "0123456789abcdef0123456789abcdef01234567",
 	}}})
 	if err != nil {
@@ -144,7 +143,7 @@ type fakeProvider struct {
 
 func (p *fakeProvider) Name() string { return "fake" }
 
-func (p *fakeProvider) Resolve(_ context.Context, evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
+func (p *fakeProvider) Resolve(_ context.Context, evidence catalog.Evidence) (*catalog.Claim, error) {
 	p.resolutions++
 	match := p.match()
 	match.Identifiers = append(match.Identifiers, evidence.Identifiers...)
@@ -159,15 +158,15 @@ func (p *fakeProvider) Search(context.Context, catalog.SearchGames) ([]catalog.G
 	}}, nil
 }
 
-func (p *fakeProvider) Match(_ context.Context, selectionToken string) (*catalog.ProviderMatch, error) {
+func (p *fakeProvider) Match(_ context.Context, selectionToken string) (*catalog.Claim, error) {
 	if selectionToken != "known-selection" {
 		return nil, catalog.ErrInvalid
 	}
 	return p.match(), nil
 }
 
-func (p *fakeProvider) match() *catalog.ProviderMatch {
-	return &catalog.ProviderMatch{
+func (p *fakeProvider) match() *catalog.Claim {
+	return &catalog.Claim{
 		Source: "hasheous",
 		Identifiers: []catalog.GameIdentifier{
 			{Namespace: "hasheous.game", Value: "337"},
@@ -175,7 +174,6 @@ func (p *fakeProvider) match() *catalog.ProviderMatch {
 		},
 		Title: "Super Mario World", SortTitle: "Super Mario World",
 		Platform: "Super Nintendo Entertainment System", Publisher: "Nintendo",
-		ROM:   catalog.ROMMatch{ProviderID: "1628019", Source: "no-intro"},
 		Media: []catalog.MediaReference{{Kind: "cover", ProviderID: "cover-id"}},
 	}
 }
@@ -189,12 +187,12 @@ var _ catalog.Provider = (*fakeProvider)(nil)
 
 type stagedProvider struct {
 	name    string
-	resolve func(catalog.ResolveGame) (*catalog.ProviderMatch, error)
+	resolve func(catalog.Evidence) (*catalog.Claim, error)
 }
 
 func (p *stagedProvider) Name() string { return p.name }
 
-func (p *stagedProvider) Resolve(_ context.Context, evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
+func (p *stagedProvider) Resolve(_ context.Context, evidence catalog.Evidence) (*catalog.Claim, error) {
 	return p.resolve(evidence)
 }
 
@@ -202,7 +200,7 @@ func (p *stagedProvider) Search(context.Context, catalog.SearchGames) ([]catalog
 	return nil, catalog.ErrNotFound
 }
 
-func (p *stagedProvider) Match(context.Context, string) (*catalog.ProviderMatch, error) {
+func (p *stagedProvider) Match(context.Context, string) (*catalog.Claim, error) {
 	return nil, catalog.ErrNotFound
 }
 

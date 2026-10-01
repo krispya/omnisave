@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/krisbaumgartner/omnisave/internal/artifact"
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
-	"github.com/krisbaumgartner/omnisave/internal/storage"
 )
 
 func TestGamesWithoutALabelerStayUnnamed(t *testing.T) {
@@ -159,7 +159,7 @@ func (d *gameDirectory) GetGame(_ context.Context, id string) (*catalog.Game, er
 	if game, ok := d.games[id]; ok {
 		return game, nil
 	}
-	return nil, storage.ErrNotFound
+	return nil, catalog.ErrNotFound
 }
 
 type artifactOpener struct {
@@ -169,7 +169,7 @@ type artifactOpener struct {
 func (o *artifactOpener) OpenArtifact(_ context.Context, sha256 string) (io.ReadCloser, error) {
 	content, ok := o.blobs[sha256]
 	if !ok {
-		return nil, storage.ErrNotFound
+		return nil, artifact.ErrNotFound
 	}
 	return io.NopCloser(bytes.NewReader(content)), nil
 }

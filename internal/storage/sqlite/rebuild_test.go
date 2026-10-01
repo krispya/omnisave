@@ -13,6 +13,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
 	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
+	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite/sqlitetest"
 	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
@@ -42,7 +43,7 @@ func TestAServerThatLostItsDatabaseRebuildsEverything(t *testing.T) {
 		Identifiers: []catalog.GameIdentifier{
 			{Namespace: "hasheous.game", Value: "1234"},
 		},
-	}, nil); err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -212,6 +213,7 @@ func TestRebuildImportsRevisionsADatabaseBackupMissed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Only save"})
 	if err != nil {
@@ -298,7 +300,7 @@ func TestALineageWhoseRecordWasLostIsRebuiltFromItsManifests(t *testing.T) {
 	}
 	saves := omnisaveservice.New(repository)
 
-	if err := repository.SaveGame(ctx, catalog.Game{ID: "game-chrono", Title: "Chrono Trigger"}, nil); err != nil {
+	if err := repository.SaveGame(ctx, catalog.Game{ID: "game-chrono", Title: "Chrono Trigger"}); err != nil {
 		t.Fatal(err)
 	}
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-chrono", DisplayName: "Sole survivor"})
@@ -365,6 +367,7 @@ func TestACommitIsNotAcknowledgedUntilItsOutboxProjectionIsDurable(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Only save"})
 	if err != nil {
@@ -435,6 +438,7 @@ func TestForkRevisionChainsSurviveLosingTheDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-chrono")
 	saves := omnisaveservice.New(repository)
 
 	source, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-chrono", DisplayName: "Main run"})
@@ -540,6 +544,7 @@ func TestARewoundCurrentSurvivesLosingTheDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Only save"})
 	if err != nil {
@@ -598,6 +603,7 @@ func TestReconcileRewritesAncestorsRetainedPastTheirCreator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	source, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Source"})
 	if err != nil {

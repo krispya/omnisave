@@ -114,7 +114,7 @@ const ProviderName = "igdb"
 
 func (p *Provider) Name() string { return ProviderName }
 
-func (p *Provider) Resolve(ctx context.Context, evidence catalog.ResolveGame) (*catalog.ProviderMatch, error) {
+func (p *Provider) Resolve(ctx context.Context, evidence catalog.Evidence) (*catalog.Claim, error) {
 	if value := identifierValue(evidence.Identifiers, "igdb.game"); value != "" {
 		gameID, valid := positiveID(value)
 		if !valid {
@@ -124,7 +124,7 @@ func (p *Provider) Resolve(ctx context.Context, evidence catalog.ResolveGame) (*
 		if err != nil {
 			return nil, err
 		}
-		return game.match(nil, evidence.PlatformHint), nil
+		return game.claim(nil, evidence.PlatformHint), nil
 	}
 	steamID := identifierValue(evidence.Identifiers, "steam.app")
 	if steamID == "" {
@@ -145,10 +145,10 @@ func (p *Provider) Resolve(ctx context.Context, evidence catalog.ResolveGame) (*
 	// save across every OS Steam ships on, so its platform is the store's
 	// "PC" — never a console the game also appeared on, and not the scanning
 	// host's OS, which would let devices disagree about the same Game.
-	match := results[0].Game.match([]catalog.GameIdentifier{{Namespace: "steam.app", Value: steamID}}, "")
-	match.Platform = "PC"
-	match.PlatformCompany = ""
-	return match, nil
+	claim := results[0].Game.claim([]catalog.GameIdentifier{{Namespace: "steam.app", Value: steamID}}, "")
+	claim.Platform = "PC"
+	claim.PlatformCompany = ""
+	return claim, nil
 }
 
 func (p *Provider) Search(ctx context.Context, input catalog.SearchGames) ([]catalog.GameCandidate, error) {
@@ -176,7 +176,7 @@ func (p *Provider) Search(ctx context.Context, input catalog.SearchGames) ([]cat
 	return slices.Clone(candidates), nil
 }
 
-func (p *Provider) Match(ctx context.Context, selectionToken string) (*catalog.ProviderMatch, error) {
+func (p *Provider) Match(ctx context.Context, selectionToken string) (*catalog.Claim, error) {
 	id, platform, _ := strings.Cut(strings.TrimSpace(selectionToken), "|")
 	gameID, valid := positiveID(id)
 	if !valid {
@@ -186,14 +186,14 @@ func (p *Provider) Match(ctx context.Context, selectionToken string) (*catalog.P
 	if err != nil {
 		return nil, err
 	}
-	match := game.match(nil, "")
+	claim := game.claim(nil, "")
 	// The token's platform is the row the user chose in search, already in
 	// the vocabulary resolution stamps, so it is stored as chosen rather
 	// than re-derived from IGDB's platform list.
 	if platform = strings.TrimSpace(platform); platform != "" {
-		match.PlatformCompany, match.Platform = catalog.SplitPlatform(platform)
+		claim.PlatformCompany, claim.Platform = catalog.SplitPlatform(platform)
 	}
-	return match, nil
+	return claim, nil
 }
 
 // imageSizes maps a media kind to the IGDB image size that suits it. Artwork
@@ -432,7 +432,7 @@ type involvedCompany struct {
 	Publisher bool       `json:"publisher"`
 }
 
-func (g game) match(additional []catalog.GameIdentifier, platformHint string) *catalog.ProviderMatch {
+func (g game) claim(additional []catalog.GameIdentifier, platformHint string) *catalog.Claim {
 	identifiers := append([]catalog.GameIdentifier{{Namespace: "igdb.game", Value: strconv.FormatInt(g.ID, 10)}}, additional...)
 	metadata := make(map[string]any)
 	if g.FirstReleaseDate > 0 {
@@ -443,7 +443,7 @@ func (g game) match(additional []catalog.GameIdentifier, platformHint string) *c
 		metadata["genres"] = genres
 	}
 	platformCompany, platformName := catalog.SplitPlatform(choosePlatform(g.Platforms, platformHint))
-	match := &catalog.ProviderMatch{
+	claim := &catalog.Claim{
 		Source:          "igdb",
 		Identifiers:     identifiers,
 		Title:           strings.TrimSpace(g.Name),
@@ -454,7 +454,7 @@ func (g game) match(additional []catalog.GameIdentifier, platformHint string) *c
 		Metadata:        metadata,
 	}
 	if imageIDPattern.MatchString(g.Cover.ImageID) {
-		match.Media = []catalog.MediaReference{{
+		claim.Media = []catalog.MediaReference{{
 			Provider: "igdb", Kind: "cover", ProviderID: g.Cover.ImageID, Attribution: "IGDB",
 		}}
 	}
@@ -465,7 +465,7 @@ func (g game) match(additional []catalog.GameIdentifier, platformHint string) *c
 		if !imageIDPattern.MatchString(artwork.ImageID) {
 			continue
 		}
-		match.Media = append(match.Media, catalog.MediaReference{
+		claim.Media = append(claim.Media, catalog.MediaReference{
 			Provider:    "igdb",
 			Kind:        "artwork",
 			Position:    position,
@@ -474,7 +474,7 @@ func (g game) match(additional []catalog.GameIdentifier, platformHint string) *c
 		})
 		position++
 	}
-	return match
+	return claim
 }
 
 // candidates returns one selectable row per platform the game shipped on, so
