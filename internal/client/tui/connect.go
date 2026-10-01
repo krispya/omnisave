@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/krisbaumgartner/omnisave/internal/discovery"
+	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
 // PromptServerURL asks where the server is. It is the fallback for a network
@@ -140,6 +141,10 @@ func Cause(err error) string {
 	var timeout net.Error
 	if errors.As(err, &timeout) && timeout.Timeout() {
 		return "the request timed out"
+	}
+	var conflict *omnisave.CurrentRevisionConflict
+	if errors.As(err, &conflict) {
+		return "Omnisave current revision moved on the server"
 	}
 	deepest := err
 	for {

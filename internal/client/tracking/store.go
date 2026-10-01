@@ -11,9 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/krisbaumgartner/omnisave/internal/client"
-	"github.com/krisbaumgartner/omnisave/internal/client/target"
 )
 
 // Game is the local identity retained when a discovered game is tracked.
@@ -565,51 +562,4 @@ func sameLocalSave(left, right Binding) bool {
 
 func localSaveKey(binding Binding) string {
 	return fmt.Sprintf("%d:%s%d:%s%d:%s", len(binding.Adapter), binding.Adapter, len(binding.TargetID), binding.TargetID, len(binding.LocalSaveID), binding.LocalSaveID)
-}
-
-// FromScans returns selectable local identities from scanner results.
-func FromScans(scans []client.TargetScan) []Game {
-	var games []Game
-	for _, scan := range scans {
-		for _, discovered := range scan.Games {
-			title := discovered.Game.Identity.DisplayTitle(discovered.Game.ID)
-			games = append(games, Game{
-				ID:       discovered.Game.ID,
-				Adapter:  scan.Target.Adapter,
-				TargetID: scan.Target.ID,
-				Title:    title,
-			})
-		}
-	}
-	return games
-}
-
-// SavesFromScans returns exact local saves from scanner results.
-func SavesFromScans(scans []client.TargetScan) []LocalSave {
-	var saves []LocalSave
-	for _, scan := range scans {
-		for _, discovered := range scan.Games {
-			for _, save := range discovered.Saves {
-				saves = append(saves, LocalSaveFrom(scan, discovered, save))
-			}
-		}
-	}
-	return saves
-}
-
-// LocalSaveFrom describes one discovered native save as a bindable identity.
-func LocalSaveFrom(scan client.TargetScan, discovered client.GameScan, save target.Save) LocalSave {
-	local := LocalSave{
-		ID:        save.ID,
-		Adapter:   scan.Target.Adapter,
-		TargetID:  scan.Target.ID,
-		GameID:    discovered.Game.ID,
-		GameTitle: discovered.Game.Identity.DisplayTitle(discovered.Game.ID),
-		Kind:      save.Kind,
-		FileCount: len(save.Files),
-	}
-	for _, file := range save.Files {
-		local.Size += file.Size
-	}
-	return local
 }

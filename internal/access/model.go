@@ -4,9 +4,9 @@ package access
 
 import "time"
 
-// CredentialKind separates the things that hold a credential. The Dash is not
-// privileged — it holds an issued credential like any Device — but it is worth
-// telling apart in a list the owner reads.
+// CredentialKind separates the things that hold a credential. A browser's
+// credential carries the owner's authority; a Device's syncs and uses the
+// Library, nothing more (ADR-007).
 type CredentialKind string
 
 const (
@@ -97,6 +97,14 @@ type IssuedCredential struct {
 	Token      string     `json:"token"`
 }
 
+// TokenExchange asks for a credential in return for the owner token. An empty
+// DeviceID asks for a browser credential; a DeviceID asks for that Device's
+// own credential, bound to the identity it already self-identifies with.
+type TokenExchange struct {
+	Name     string `json:"name,omitempty"`
+	DeviceID string `json:"device_id,omitempty"`
+}
+
 // SignIn is a browser offering the owner's PIN in exchange for a credential
 // of its own (ADR-010).
 type SignIn struct {
@@ -112,7 +120,7 @@ type ClaimServer struct {
 }
 
 // Principal is who a request authenticated as. The owner token authenticates
-// without a credential — it is the bootstrap and the way back in — so a
+// without a credential — it is for recovery and automation (ADR-010) — so a
 // principal with no credential ID is the owner arriving directly.
 type Principal struct {
 	Owner        bool

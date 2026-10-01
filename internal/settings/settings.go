@@ -10,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/krisbaumgartner/omnisave/internal/storage"
 )
 
 // AnnounceDiscovery controls whether the server announces itself locally.
@@ -35,7 +33,7 @@ const (
 	SourceDeployment Source = "deployment"
 )
 
-// Kind is what sort of answer a setting takes (ADR-011). A secret is the one
+// Kind is what sort of answer a setting takes (ADR-003). A secret is the one
 // that changes how it is handled everywhere: it is written and never read
 // back, so nothing that serializes a Setting can leak it by omission.
 type Kind string
@@ -111,8 +109,17 @@ type Service interface {
 	OnChange(listener func(Setting))
 }
 
+// Repository persists owner settings, the small tier of configuration that
+// belongs to the owner rather than the deployment (ADR-003).
+type Repository interface {
+	// GetOwnerSetting returns the owner's stored value; ok is false while the
+	// owner has never set the key.
+	GetOwnerSetting(ctx context.Context, key string) (value string, ok bool, err error)
+	SetOwnerSetting(ctx context.Context, key, value string, at time.Time) error
+}
+
 type service struct {
-	repository storage.SettingsRepository
+	repository Repository
 	pinned     map[string]string
 	now        func() time.Time
 
@@ -122,7 +129,7 @@ type service struct {
 
 // New creates the settings service. Pinned values come from the environment,
 // read once at startup as ADR-003 requires, and cannot be edited at runtime.
-func New(repository storage.SettingsRepository, pinned map[string]string) Service {
+func New(repository Repository, pinned map[string]string) Service {
 	return &service{repository: repository, pinned: pinned, now: time.Now}
 }
 
@@ -191,7 +198,7 @@ func (s *service) Value(ctx context.Context, key string) string {
 	if pinned, ok := s.pinned[key]; ok {
 		return pinned
 	}
-	stored, err := s.repository.GetOwnerSetting(ctx, definition.Key)
+	stored, _, err := s.repository.GetOwnerSetting(ctx, definition.Key)
 	if err != nil {
 		return ""
 	}
@@ -258,12 +265,12 @@ func (s *service) resolve(ctx context.Context, definition Definition) (*Setting,
 		return &setting, nil
 	}
 
-	stored, err := s.repository.GetOwnerSetting(ctx, definition.Key)
-	if errors.Is(err, storage.ErrNotFound) {
-		return &setting, nil
-	}
+	stored, ok, err := s.repository.GetOwnerSetting(ctx, definition.Key)
 	if err != nil {
 		return nil, err
+	}
+	if !ok {
+		return &setting, nil
 	}
 	if definition.Kind == KindToggle {
 		if _, parseErr := parseBool(stored); parseErr != nil {

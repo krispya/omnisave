@@ -1,7 +1,11 @@
 // Package omnisave defines versioned, persistent game-save records.
 package omnisave
 
-import "time"
+import (
+	"time"
+
+	"github.com/krisbaumgartner/omnisave/internal/artifact"
+)
 
 // Omnisave identifies one independently versioned game save. Path-format
 // versions and the retired-location vocabulary live in pathformat.go.
@@ -93,12 +97,9 @@ type RevisionFile struct {
 	Artifact Artifact `json:"artifact"`
 }
 
-// Artifact locates and describes immutable bytes.
-type Artifact struct {
-	Format string `json:"format"`
-	SHA256 string `json:"sha256"`
-	Size   int64  `json:"size"`
-}
+// Artifact describes a revision file's immutable bytes. The vocabulary is
+// shared with game media, so it lives in the artifact package.
+type Artifact = artifact.Artifact
 
 // CreateOmnisave describes a new logical game save.
 type CreateOmnisave struct {

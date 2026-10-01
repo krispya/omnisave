@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/krisbaumgartner/omnisave/internal/omnisave"
+	"github.com/krisbaumgartner/omnisave/internal/httpapi/contract"
 )
 
 // LibraryChangedEvent announces server-side movement worth a reconcile pass:
 // a commit, a restore, a fork, a deletion — anything that changes what a
 // device would sync against.
-const LibraryChangedEvent = omnisave.LibraryChangedEvent
+const LibraryChangedEvent = contract.LibraryChanged
 
 const (
 	eventsRetryFloor   = time.Second

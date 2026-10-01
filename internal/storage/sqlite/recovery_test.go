@@ -17,6 +17,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
 	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
+	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite/sqlitetest"
 	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
@@ -47,7 +48,7 @@ func TestSavesAreRecoverableFromACopyOfTheStoreAlone(t *testing.T) {
 		Identifiers: []catalog.GameIdentifier{
 			{Namespace: "hasheous.game", Value: "1234"},
 		},
-	}, nil); err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -146,6 +147,7 @@ func TestDeletedSavesStayDeletedInACopyOfTheStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 
 	kept, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Kept"})
@@ -201,6 +203,7 @@ func TestCommittedDeletionOverridesAnOlderDatabaseBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Discarded"})
 	if err != nil {
@@ -248,7 +251,7 @@ func TestDeletedGamesStayDeletedWhenOnlyThePortableStoreSurvives(t *testing.T) {
 		t.Fatal(err)
 	}
 	game := catalog.Game{ID: "game-to-forget", Title: "Forgotten Game"}
-	if err := repository.SaveGame(ctx, game, nil); err != nil {
+	if err := repository.SaveGame(ctx, game); err != nil {
 		t.Fatal(err)
 	}
 	saves := omnisaveservice.New(repository)
@@ -302,6 +305,7 @@ func TestDeletedRevisionsStayDeletedWhenTheirManifestSurvives(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Main run"})
 	if err != nil {
@@ -382,6 +386,7 @@ func TestOpeningSweepsWhatNothingReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Main run"})
 	if err != nil {
@@ -431,6 +436,7 @@ func TestAStaleRevisionTombstoneIsClearedWhenTheDeleteNeverCommitted(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Main run"})
 	if err != nil {
@@ -491,6 +497,7 @@ func TestAMissingManifestIsRepairedAndMutationsResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Main run"})
 	if err != nil {
@@ -554,6 +561,7 @@ func TestADeletedSaveRecordDoesNotBlockLaterMutations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	deleted, err := saves.Create(ctx, omnisave.CreateOmnisave{
 		GameID: "game-1", DisplayName: "Discarded run",
@@ -605,6 +613,7 @@ func TestAnUnreplayableOutboxOpensReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Main run"})
 	if err != nil {
@@ -656,6 +665,7 @@ func TestOpeningRebuildsWhatTheStoreIsMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Only save"})
 	if err != nil {

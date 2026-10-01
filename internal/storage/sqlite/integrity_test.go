@@ -11,11 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krisbaumgartner/omnisave/internal/artifact"
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
-	"github.com/krisbaumgartner/omnisave/internal/storage"
 	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
+	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite/sqlitetest"
 	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
@@ -69,14 +70,15 @@ func TestRevisionCommitRequiresArtifactAvailabilityAtThePersistenceBoundary(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Only save"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifact := storeOmnisaveArtifact(t, ctx, saves, "bytes present during preflight")
-	if err := repository.Store().RemoveObject(artifact.SHA256); err != nil {
+	preflighted := storeOmnisaveArtifact(t, ctx, saves, "bytes present during preflight")
+	if err := repository.Store().RemoveObject(preflighted.SHA256); err != nil {
 		t.Fatal(err)
 	}
 
@@ -85,11 +87,11 @@ func TestRevisionCommitRequiresArtifactAvailabilityAtThePersistenceBoundary(t *t
 		OmnisaveID: save.ID,
 		CreatedAt:  time.Now().UTC(),
 		Files: []omnisave.RevisionFile{{
-			Path: "save.dat", Artifact: artifact,
+			Path: "save.dat", Artifact: preflighted,
 		}},
 	}, false)
-	var unavailable *storage.ArtifactsUnavailable
-	if !errors.As(err, &unavailable) || len(unavailable.SHA256) != 1 || unavailable.SHA256[0] != artifact.SHA256 {
+	var unavailable *artifact.Unavailable
+	if !errors.As(err, &unavailable) || len(unavailable.SHA256) != 1 || unavailable.SHA256[0] != preflighted.SHA256 {
 		t.Fatalf("expected the persistence boundary to reject the missing object, got %v", err)
 	}
 	history, err := repository.ListRevisions(ctx, save.ID)
@@ -117,7 +119,7 @@ func TestDeletedIdentifiersCannotBeReusedBeforeOutboxProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	game := catalog.Game{ID: "never-reused", Title: "Original"}
-	if err := first.SaveGame(ctx, game, nil); err != nil {
+	if err := first.SaveGame(ctx, game); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,10 +136,10 @@ func TestDeletedIdentifiersCannotBeReusedBeforeOutboxProjection(t *testing.T) {
 	}
 	first.WaitForCleanup()
 	game.Title = "Accidental reuse"
-	if err := second.SaveGame(ctx, game, nil); !errors.Is(err, storage.ErrConflict) {
+	if err := second.SaveGame(ctx, game); !errors.Is(err, catalog.ErrConflict) {
 		t.Fatalf("expected the committed deletion ledger to reject reuse, got %v", err)
 	}
-	if err := first.SaveGame(ctx, catalog.Game{ID: "any-other", Title: "Any"}, nil); err == nil {
+	if err := first.SaveGame(ctx, catalog.Game{ID: "any-other", Title: "Any"}); err == nil {
 		t.Fatal("expected durable mutations to stop after the marker could not be written")
 	}
 	if err := second.DeleteGame(ctx, game.ID); err != nil {
@@ -198,6 +200,7 @@ func TestReconcilingDoesNotResurrectADeletedSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Discarded"})
 	if err != nil {
@@ -243,6 +246,7 @@ func TestATombstoneForASaveThatWasNotDeletedIsCleared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Survivor"})
 	if err != nil {
@@ -296,6 +300,7 @@ func TestReconcilingAHealthyStoreRewritesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Only save"})
 	if err != nil {
@@ -337,6 +342,7 @@ func TestOneUnwritableRecordDoesNotStopTheServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-1")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-1", DisplayName: "Only save"})
 	if err != nil {

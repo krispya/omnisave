@@ -3,44 +3,10 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
-	"github.com/krisbaumgartner/omnisave/internal/storage"
 )
-
-func (r *Repository) UpsertDevice(ctx context.Context, device catalog.Device) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO devices(id, name, platform, created_at, last_seen_at)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			name = excluded.name, platform = excluded.platform, last_seen_at = excluded.last_seen_at`,
-		device.ID, device.Name, device.Platform,
-		device.CreatedAt.Format(time.RFC3339Nano), device.LastSeenAt.Format(time.RFC3339Nano),
-	)
-	return err
-}
-
-func (r *Repository) GetDevice(ctx context.Context, id string) (*catalog.Device, error) {
-	var device catalog.Device
-	var createdAt, lastSeenAt string
-	err := r.db.QueryRowContext(ctx,
-		`SELECT id, name, platform, created_at, last_seen_at FROM devices WHERE id = ?`, id,
-	).Scan(&device.ID, &device.Name, &device.Platform, &createdAt, &lastSeenAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, storage.ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	if device.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {
-		return nil, err
-	}
-	if device.LastSeenAt, err = time.Parse(time.RFC3339Nano, lastSeenAt); err != nil {
-		return nil, err
-	}
-	return &device, nil
-}
 
 // TrackGame upserts one provenance record. A repeated track refreshes the
 // device's presence and clears any earlier untracking; the first tracked
@@ -60,7 +26,7 @@ func (r *Repository) TrackGame(ctx context.Context, gameID string, record catalo
 		return err
 	}
 	if !known {
-		return storage.ErrNotFound
+		return catalog.ErrNotFound
 	}
 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO game_tracking(
@@ -95,7 +61,7 @@ func (r *Repository) UntrackGame(ctx context.Context, gameID, deviceID string, a
 		return err
 	}
 	if count == 0 {
-		return storage.ErrNotFound
+		return catalog.ErrNotFound
 	}
 	return nil
 }

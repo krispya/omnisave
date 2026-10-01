@@ -22,9 +22,10 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/catalog/hasheous"
 	"github.com/krisbaumgartner/omnisave/internal/catalog/igdb"
 	catalogservice "github.com/krisbaumgartner/omnisave/internal/catalog/service"
+	deviceservice "github.com/krisbaumgartner/omnisave/internal/device/service"
 	"github.com/krisbaumgartner/omnisave/internal/discovery"
+	"github.com/krisbaumgartner/omnisave/internal/httpapi"
 	"github.com/krisbaumgartner/omnisave/internal/labeler"
-	"github.com/krisbaumgartner/omnisave/internal/omnisave/httpapi"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
 	"github.com/krisbaumgartner/omnisave/internal/settings"
 	sqlitestorage "github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
@@ -123,6 +124,7 @@ func runServer(ctx context.Context, config serverConfig) error {
 	mux.Handle("/api/v1/", httpapi.New(credentials, httpapi.Config{
 		Saves:    saves,
 		Catalog:  games,
+		Devices:  deviceservice.New(repository),
 		Settings: ownerSettings,
 	}))
 	mux.Handle("/", dashHandler(config.WebDir))
