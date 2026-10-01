@@ -32,6 +32,15 @@ export function DeleteDialog({
   return (
     <Dialog title={title} description={description} busy={deleting} onDismiss={onCancel}>
       {error ? <DialogError>{error}</DialogError> : null}
+      {deleting ? (
+        <p role="status" className="mt-4 flex items-center gap-2 text-sm text-muted">
+          <span
+            className="size-4 animate-spin rounded-full border-2 border-outline border-t-text"
+            aria-hidden="true"
+          />
+          {busyLabel}
+        </p>
+      ) : null}
 
       <DialogActions>
         {/* Focus starts on the way out, so a reflexive Enter cancels rather than deletes. */}

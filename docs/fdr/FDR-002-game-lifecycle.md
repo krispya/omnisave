@@ -19,6 +19,7 @@ How a game enters the Library, what the server remembers about where it has live
 - A game or save deleted on the server is untracked on each Device at its next sync (decision 7).
 - Deleting all of a game's omnisaves leaves the game and its provenance in the Library.
 - Deleting the game removes its saves, revision history, unshared artifacts, and provenance, and records immutable deletion markers so restoring an older portable copy cannot undo it. This is the lifecycle's only act of forgetting.
+- The Dash shows deletion in progress until the Library refreshes, so a save or game does not appear idle while its deletion is still underway.
 
 ## Design Decisions
 
