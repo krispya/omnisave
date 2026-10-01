@@ -8,21 +8,18 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/steam/locator"
+	"github.com/krisbaumgartner/omnisave/internal/client/target/steam/steamapps"
 	"github.com/krisbaumgartner/omnisave/internal/client/target/steam/steamworks"
 )
 
 const adapterName = "steam"
 
-var (
-	libraryPath = regexp.MustCompile(`(?m)^\s*"path"\s+"([^"]+)"`)
-	manifestRow = regexp.MustCompile(`(?m)^\s*"([^"]+)"\s+"([^"]*)"`)
-)
+var libraryPath = regexp.MustCompile(`(?m)^\s*"path"\s+"([^"]+)"`)
 
 type Adapter struct {
 	locators []locator.Locator
@@ -89,42 +86,19 @@ func (a *Adapter) DiscoverGames(ctx context.Context, discovered target.Target) (
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		steamApps := filepath.Join(library, "steamapps")
-		entries, err := os.ReadDir(steamApps)
-		if os.IsNotExist(err) {
-			continue
-		}
+		apps, err := steamapps.Installed(library)
 		if err != nil {
 			return nil, err
 		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if entry.IsDir() || !strings.HasPrefix(name, "appmanifest_") || !strings.HasSuffix(name, ".acf") {
-				continue
-			}
-			app, err := readAppManifest(filepath.Join(steamApps, name))
-			if err != nil {
-				return nil, err
-			}
-			if app.ID == "" || app.InstallDirectory == "" || seen[app.ID] {
-				continue
-			}
-			installRoot := filepath.Join(steamApps, "common", app.InstallDirectory)
-			info, err := os.Stat(installRoot)
-			if os.IsNotExist(err) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			if !info.IsDir() {
+		for _, app := range apps {
+			if seen[app.ID] {
 				continue
 			}
 			seen[app.ID] = true
 			environment := target.CurrentEnvironment(library)
-			prefixRoot := filepath.Join(steamApps, "compatdata", app.ID, "pfx")
+			prefixRoot := filepath.Join(library, "steamapps", "compatdata", app.ID, "pfx")
 			if prefixInfo, err := os.Stat(prefixRoot); err == nil && prefixInfo.IsDir() {
-				environment.Runtime = target.RuntimeProton
+				environment.Runtime = target.RuntimeWine
 				environment.PrefixRoot = prefixRoot
 			} else if err != nil && !os.IsNotExist(err) {
 				return nil, err
@@ -139,7 +113,7 @@ func (a *Adapter) DiscoverGames(ctx context.Context, discovered target.Target) (
 					// ships on, so the platform is the store's, not the host's.
 					Platform: "PC",
 				},
-				InstallRoot: installRoot,
+				InstallRoot: app.InstallRoot,
 				Environment: environment,
 				Metadata:    map[string]string{"library_root": library},
 			})
@@ -184,31 +158,6 @@ func validateGame(discovered target.Target, game target.InstalledGame) error {
 		return fmt.Errorf("invalid Steam game")
 	}
 	return nil
-}
-
-type appManifest struct {
-	ID               string
-	Title            string
-	InstallDirectory string
-}
-
-func readAppManifest(path string) (appManifest, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return appManifest{}, fmt.Errorf("read Steam app manifest %s: %w", path, err)
-	}
-	values := make(map[string]string)
-	for _, match := range manifestRow.FindAllStringSubmatch(string(data), -1) {
-		values[strings.ToLower(match[1])] = strings.ReplaceAll(match[2], `\\`, `\`)
-	}
-	if _, err := strconv.ParseUint(values["appid"], 10, 64); err != nil {
-		return appManifest{}, nil
-	}
-	title := values["name"]
-	if title == "" {
-		title = values["appid"]
-	}
-	return appManifest{ID: values["appid"], Title: title, InstallDirectory: values["installdir"]}, nil
 }
 
 func steamLibraries(root string) ([]string, error) {

@@ -30,7 +30,7 @@ func TestWindowsProfileResolvesInsideAProtonEnvironment(t *testing.T) {
 		Identity: target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "123"}}},
 		Environment: target.Environment{
 			HostOS:     saveprofile.OSLinux,
-			Runtime:    target.RuntimeProton,
+			Runtime:    target.RuntimeWine,
 			PrefixRoot: prefix,
 		},
 	}
@@ -156,7 +156,7 @@ func TestRootRulesStayInTheLibraryUnderProton(t *testing.T) {
 		Identity: target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "123"}}},
 		Environment: target.Environment{
 			HostOS:     saveprofile.OSLinux,
-			Runtime:    target.RuntimeProton,
+			Runtime:    target.RuntimeWine,
 			StoreRoot:  library,
 			PrefixRoot: filepath.Join(library, "steamapps", "compatdata", "123", "pfx"),
 		},
@@ -211,7 +211,7 @@ Example:
 	}
 	deck := target.InstalledGame{
 		ID: "steam:123", TargetID: "steam", Identity: identity,
-		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeProton, PrefixRoot: prefix},
+		Environment: target.Environment{HostOS: saveprofile.OSLinux, Runtime: target.RuntimeWine, PrefixRoot: prefix},
 	}
 	saves, err := saveprofile.Resolve(deck, *profile)
 	if err != nil {

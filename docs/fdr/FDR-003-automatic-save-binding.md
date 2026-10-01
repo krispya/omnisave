@@ -25,6 +25,7 @@ Binding connects a Device's saves to omnisaves during tracking and every sync pa
 
 - A tracked game with no local content is offered its existing omnisaves, even when there is only one. Choosing one places its Current Revision in the game's own save folder and records it as the baseline. Declining, or an unattended pass, places nothing; the offer returns on the next interactive run.
 - An omnisave is offered only when the Device's save-location knowledge names exactly one destination its Current Revision fits, and never while it is held for migration.
+- A Windows game run through Wine, under Proton or GameHub, keeps its save folders inside its prefix. Until the launcher has created that prefix, the game has no destination to offer.
 - Placement is verified before it lands, never overwrites content that appeared after discovery, leaves nothing partial on failure, and finishes in the store's registry where the game needs that ([FDR-005](FDR-005-save-sync.md), decision 13).
 
 ## Design Decisions

@@ -57,6 +57,14 @@ Resolution turns the Evidence a Device reports for an installed game into one se
 
 **Tradeoff:** A wrong historical match blocks resolution until a person deletes or rematches a Game.
 
+### 6. A store's identity holds whichever client installed the game
+
+**Decision:** A game installed by a third-party client of a store, such as GameHub for Steam, is reported with the store's identifier and platform, never an identity of the client's own.
+
+**Why:** It is the same purchase running the store's own build, so it must resolve to the same Game for its omnisaves to follow the player between clients, from Steam on a Deck to GameHub on a Mac.
+
+**Tradeoff:** A Device with the game installed through both clients reports two installs of one Game, each with its own Local Saves.
+
 ## Related
 
 - **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — the server-as-authority premise behind server-owned identity; [ADR-003](../adr/ADR-003-environment-server-configuration.md) — how provider credentials are configured, and why a provider may be unavailable.

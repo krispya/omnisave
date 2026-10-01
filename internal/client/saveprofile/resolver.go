@@ -154,7 +154,7 @@ func applies(rule Rule, game target.InstalledGame) bool {
 			return false
 		}
 	}
-	if game.Environment.Runtime == target.RuntimeProton {
+	if game.Environment.Runtime == target.RuntimeWine {
 		return rule.OS == "" || rule.OS == OSWindows
 	}
 	return rule.OS == "" || rule.OS == game.Environment.HostOS
@@ -198,8 +198,8 @@ func expand(template string, game target.InstalledGame) string {
 	}
 	if home != "" {
 		// A rule may name the OS account owning the save. Native
-		// environments derive it from the home directory; Proton prefixes
-		// always call the account steamuser.
+		// environments derive it from the home directory; the prefixes
+		// Proton and GameHub create both call the account steamuser.
 		values["osUserName"] = filepath.Base(home)
 	}
 	if values["winAppData"] == "" {
@@ -222,10 +222,11 @@ func expand(template string, game target.InstalledGame) string {
 		values["xdgConfig"] = filepath.Join(home, ".config")
 	}
 
-	if environment.Runtime == target.RuntimeProton {
-		// <root> stays the native store root: a Proton game's library is
+	if environment.Runtime == target.RuntimeWine {
+		// <root> stays the native store root: a prefixed game's library is
 		// still where it is, and <root>/steamapps/... rules depend on that.
-		// Only user-relative placeholders move inside the prefix.
+		// Only user-relative placeholders move inside the prefix, and with
+		// no prefix yet they expand to nothing rather than to the host's.
 		userHome := filepath.Join(environment.PrefixRoot, "drive_c", "users", "steamuser")
 		drive := filepath.Join(environment.PrefixRoot, "drive_c")
 		values["home"] = userHome

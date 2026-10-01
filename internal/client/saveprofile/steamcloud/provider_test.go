@@ -11,6 +11,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile"
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/steamcloud"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
+	"github.com/krisbaumgartner/omnisave/internal/client/target/gamehub"
 )
 
 func steamIdentity(appID string) target.GameIdentity {
@@ -428,5 +429,36 @@ func TestSteamCloudKeepsOnlyTheFoldersSteamHasSyncedFrom(t *testing.T) {
 	}
 	if len(profile.Rules) != 1 || profile.Rules[0].Path != "<base>/portal/save/*.sav" {
 		t.Fatalf("expected only the folder Steam synced from, got %+v", profile.Rules)
+	}
+}
+
+// GameHub caches Steam's app configuration for each signed-in account, with
+// none of Valve's userdata beside it. A game only GameHub has installed is
+// still placed by the folders its developer declared to Steam.
+func TestSteamCloudReadsTheConfigurationGameHubCached(t *testing.T) {
+	gameHub := t.TempDir()
+	writeAppinfo(t, filepath.Join(gameHub, "steam-client", "accounts", "76561198000000000", "appcache"), app{
+		id: 3526710,
+		section: map[string]any{
+			"common": map[string]any{"name": "Everything is Crab"},
+			"ufs": map[string]any{
+				"savefiles": map[string]any{
+					"0": map[string]any{
+						"root": "WinAppDataLocalLow", "path": "Odd Dreams Digital/Everything is Crab/SyncedData/Steam",
+						"pattern": "Slot_*_*v*save", "recursive": 1,
+					},
+				},
+			},
+		},
+	})
+
+	provider := steamcloud.New(gamehub.SteamClientRoots(gameHub)...)
+	profile, err := provider.Find(context.Background(), steamIdentity("3526710"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "<winLocalAppDataLow>/Odd Dreams Digital/Everything is Crab/SyncedData/Steam/**/Slot_*_*v*save"
+	if len(profile.Rules) != 1 || profile.Rules[0].Path != want || profile.Rules[0].OS != saveprofile.OSWindows {
+		t.Fatalf("expected the declared Windows folder, got %+v", profile.Rules)
 	}
 }
