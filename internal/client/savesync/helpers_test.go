@@ -79,7 +79,7 @@ func strictPrompts(t *testing.T) savesync.Prompts {
 			t.Fatalf("unexpected sync-to-device prompt for %q", gameTitle)
 			return savesync.SyncToDeviceChoice{}, nil
 		},
-		Stale: func(question savesync.StaleQuestion) (savesync.StaleChoice, error) {
+		Stale: func(question savesync.StaleQuestion) (savesync.DivergedChoice, error) {
 			t.Fatalf("unexpected stale prompt for %q", question.GameTitle)
 			return "", nil
 		},

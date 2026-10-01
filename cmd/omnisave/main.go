@@ -695,7 +695,7 @@ func sessionPrompts(session *tui.WaitSession) savesync.Prompts {
 			session.Interact(func() { choice, err = tui.PromptSyncToDevice(gameTitle, options) })
 			return choice, err
 		},
-		Stale: func(question savesync.StaleQuestion) (choice savesync.StaleChoice, err error) {
+		Stale: func(question savesync.StaleQuestion) (choice savesync.DivergedChoice, err error) {
 			session.Interact(func() { choice, err = tui.PromptStaleBinding(question) })
 			return choice, err
 		},

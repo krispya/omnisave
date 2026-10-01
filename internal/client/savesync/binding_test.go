@@ -67,11 +67,11 @@ func TestTrackingCanJumpAStaleLocalSaveToTheCurrentRevision(t *testing.T) {
 		}
 	})
 	prompts := strictPrompts(t)
-	prompts.Stale = func(question savesync.StaleQuestion) (savesync.StaleChoice, error) {
+	prompts.Stale = func(question savesync.StaleQuestion) (savesync.DivergedChoice, error) {
 		if question.GameTitle != "Chrono Trigger" || question.OmnisaveName != "New Game+" {
 			t.Fatalf("unexpected stale-match prompt: %+v", question)
 		}
-		return savesync.StaleJump, nil
+		return savesync.DivergedJump, nil
 	}
 
 	outcome, _ := reconcile(t, server, &fixture, savesync.Options{Prompts: prompts})
@@ -123,8 +123,8 @@ func TestTrackingCanForkAStaleLocalSaveAtItsMatchingRevision(t *testing.T) {
 		}
 	})
 	prompts := strictPrompts(t)
-	prompts.Stale = func(savesync.StaleQuestion) (savesync.StaleChoice, error) {
-		return savesync.StaleFork, nil
+	prompts.Stale = func(savesync.StaleQuestion) (savesync.DivergedChoice, error) {
+		return savesync.DivergedFork, nil
 	}
 
 	outcome, _ := reconcile(t, server, &fixture, savesync.Options{Prompts: prompts})
@@ -164,12 +164,12 @@ func TestAReverseStaleSaveGetsTheStalePromptAndCanAdoptTheOlderCurrent(t *testin
 	})
 	prompted := false
 	prompts := strictPrompts(t)
-	prompts.Stale = func(question savesync.StaleQuestion) (savesync.StaleChoice, error) {
+	prompts.Stale = func(question savesync.StaleQuestion) (savesync.DivergedChoice, error) {
 		if question.GameTitle != "Chrono Trigger" || question.OmnisaveName != "New Game+" {
 			t.Fatalf("unexpected stale-match prompt: %+v", question)
 		}
 		prompted = true
-		return savesync.StaleJump, nil
+		return savesync.DivergedJump, nil
 	}
 
 	outcome, _ := reconcile(t, server, &fixture, savesync.Options{Prompts: prompts})
@@ -222,8 +222,8 @@ func TestAReverseStaleSaveCanForkToKeepItsDescendantContent(t *testing.T) {
 		}
 	})
 	prompts := strictPrompts(t)
-	prompts.Stale = func(savesync.StaleQuestion) (savesync.StaleChoice, error) {
-		return savesync.StaleFork, nil
+	prompts.Stale = func(savesync.StaleQuestion) (savesync.DivergedChoice, error) {
+		return savesync.DivergedFork, nil
 	}
 
 	outcome, _ := reconcile(t, server, &fixture, savesync.Options{Prompts: prompts})
@@ -389,11 +389,12 @@ func TestFreshDeviceCanChooseAndMaterializeAnExistingServerSave(t *testing.T) {
 	}
 }
 
-func TestAnUnmatchedLocalSaveCanSyncWithAChosenSaveWithoutLosingProgress(t *testing.T) {
-	server := savesynctest.NewServer(t)
-	fixture := savesynctest.NewSyncFixture(t, "server-content")
-	fixture.State.Device.Name = "Steam Deck"
-	if outcome := savesynctest.SyncOnce(t, server, &fixture, savesync.Options{}); outcome.Seeded != 1 {
+// unmatchedBeside seeds the server's save from the fixture, then unbinds it
+// and writes new content, leaving an unmatched local save beside the
+// returned binding's omnisave.
+func unmatchedBeside(t *testing.T, server savesync.Server, fixture *savesynctest.Fixture) tracking.Binding {
+	t.Helper()
+	if outcome := savesynctest.SyncOnce(t, server, fixture, savesync.Options{}); outcome.Seeded != 1 {
 		t.Fatalf("expected the server save seeded, got %+v", outcome)
 	}
 	original, ok := fixture.State.BindingFor(fixture.Local())
@@ -401,48 +402,88 @@ func TestAnUnmatchedLocalSaveCanSyncWithAChosenSaveWithoutLosingProgress(t *test
 		t.Fatal("expected the seeded save to be unbound for the unmatched-save story")
 	}
 	fixture.Write(t, "local-progress")
+	return original
+}
 
+// adopting answers the unmatched-save question by syncing with omnisaveID,
+// keeping its current save or using this Device's.
+func adopting(t *testing.T, omnisaveID string, useLocal bool) savesync.Prompts {
 	prompts := strictPrompts(t)
-	prompts.Ambiguous = func(gameTitle string, options []savesync.AmbiguousOption) (savesync.AmbiguousChoice, error) {
-		if gameTitle != "Chrono Trigger" || len(options) != 1 || options[0].MatchedRevisionID != "" {
-			t.Fatalf("expected one unmatched server save, got %q %+v", gameTitle, options)
+	prompts.Ambiguous = func(_ string, options []savesync.AmbiguousOption) (savesync.AmbiguousChoice, error) {
+		if len(options) != 1 || options[0].MatchedRevisionID != "" {
+			t.Fatalf("expected one unmatched server save, got %+v", options)
 		}
-		return savesync.AmbiguousChoice{OmnisaveID: original.OmnisaveID}, nil
+		return savesync.AmbiguousChoice{OmnisaveID: omnisaveID, UseLocal: useLocal}, nil
 	}
-	outcome := savesynctest.SyncOnce(t, server, &fixture, savesync.Options{Prompts: prompts})
+	return prompts
+}
 
+// Keeping the chosen save's current keeps the unmatched progress as a branch
+// of that save, named for the Device, before taking current. Nothing is lost
+// and no omnisave appears.
+func TestAnUnmatchedSaveKeepingTheCurrentSaveKeepsItsProgressAsABranch(t *testing.T) {
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "server-content")
+	fixture.State.Device.Name = "Steam Deck"
+	original := unmatchedBeside(t, server, &fixture)
+	current := *original.LastSyncedRevisionID
+
+	outcome := savesynctest.SyncOnce(t, server, &fixture, savesync.Options{Prompts: adopting(t, original.OmnisaveID, false)})
+
+	if outcome.Branched != 1 || outcome.Pulled != 1 || outcome.Seeded != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected a branch followed by a completed sync, got %+v", outcome)
+	}
 	if content := fixture.Read(t); content != "server-content" {
 		t.Fatalf("expected the chosen save applied locally, got %q", content)
 	}
-	bound, ok := fixture.State.BindingFor(fixture.Local())
-	if !ok || bound.OmnisaveID != original.OmnisaveID || bound.LastSyncedRevisionID == nil {
-		t.Fatalf("expected a settled binding to the chosen save, got %+v", bound)
+	assertBinding(t, &fixture, original.OmnisaveID, current)
+	if saves := savesynctest.Saves(t, server); len(saves) != 1 || *saves[0].CurrentRevisionID != current {
+		t.Fatalf("expected one save, still at its current, got %+v", saves)
 	}
-	saves := savesynctest.Saves(t, server)
-	if len(saves) != 2 {
-		t.Fatalf("expected the original and preserved saves, got %+v", saves)
-	}
-	var preserved omnisave.Omnisave
-	for _, save := range saves {
-		if save.ID != original.OmnisaveID {
-			preserved = save
+	for _, revision := range savesynctest.Revisions(t, server, original.OmnisaveID) {
+		if revision.ID == current {
+			continue
 		}
-	}
-	history := savesynctest.Revisions(t, server, preserved.ID)
-	if preserved.DisplayName != "Save 1 (Steam Deck)" || len(history) != 1 ||
-		len(history[0].Files) != 1 || history[0].Files[0].Artifact.SHA256 != artifactOf("local-progress").SHA256 {
-		t.Fatalf("expected unmatched progress preserved in its own named save, save=%+v history=%+v", preserved, history)
-	}
-	if outcome.Seeded != 1 || outcome.Pulled != 1 || outcome.Diverged != 0 || outcome.Failed != 0 {
-		t.Fatalf("expected preservation followed by a completed sync, got %+v", outcome)
+		if revision.ParentID == nil || *revision.ParentID != current || revision.DisplayName != "Steam Deck" ||
+			revision.Files[0].Artifact.SHA256 != artifactOf("local-progress").SHA256 {
+			t.Fatalf("expected the local progress as a Steam Deck branch of current, got %+v", revision)
+		}
 	}
 }
 
-// An adoption that fails after preserving local progress leaves its answer
-// open. The next pass does not quietly bind to the preservation because it
-// holds the same content, and answering again reuses that preservation
-// instead of preserving twice (FDR-005, decision 4).
-func TestAFailedAdoptionIsAskedAgainAndReusesItsPreservation(t *testing.T) {
+// Using this Device's save commits the unmatched content on top of the chosen
+// save's current instead, so it becomes current there and the local files
+// stay as they are.
+func TestAnUnmatchedSaveCanBecomeTheChosenSavesCurrent(t *testing.T) {
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "server-content")
+	original := unmatchedBeside(t, server, &fixture)
+	replaced := *original.LastSyncedRevisionID
+
+	outcome := savesynctest.SyncOnce(t, server, &fixture, savesync.Options{Prompts: adopting(t, original.OmnisaveID, true)})
+
+	if outcome.Pushed != 1 || outcome.Pulled != 0 || outcome.Branched != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected using local to only commit, got %+v", outcome)
+	}
+	if content := fixture.Read(t); content != "local-progress" {
+		t.Fatalf("expected the local save untouched, got %q", content)
+	}
+	saves := savesynctest.Saves(t, server)
+	if len(saves) != 1 {
+		t.Fatalf("expected no new omnisave, got %+v", saves)
+	}
+	committed, _ := findRevision(savesynctest.Revisions(t, server, original.OmnisaveID), *saves[0].CurrentRevisionID)
+	if committed.ParentID == nil || *committed.ParentID != replaced {
+		t.Fatalf("expected the local save on top of the replaced current, got %+v", committed)
+	}
+	assertBinding(t, &fixture, original.OmnisaveID, committed.ID)
+}
+
+// An adoption whose placement fails has already kept the progress as a
+// branch, so the next pass finds the content in the chosen save's history.
+// An unattended pass waits on it as a stale match rather than binding, and
+// jumping there finishes the adoption without a second branch.
+func TestAFailedAdoptionResumesAsAStaleMatch(t *testing.T) {
 	var failDownloads atomic.Bool
 	server := savesynctest.NewInterceptedServer(t, func(response http.ResponseWriter, request *http.Request) bool {
 		if failDownloads.Load() && request.Method == http.MethodGet &&
@@ -453,41 +494,61 @@ func TestAFailedAdoptionIsAskedAgainAndReusesItsPreservation(t *testing.T) {
 		return false
 	})
 	fixture := savesynctest.NewSyncFixture(t, "server-content")
-	if outcome := syncOnce(t, server, &fixture); outcome.Seeded != 1 {
-		t.Fatalf("expected the server save seeded, got %+v", outcome)
-	}
-	original, _ := fixture.State.BindingFor(fixture.Local())
-	fixture.State.Unbind(fixture.Local())
-	fixture.Write(t, "local-progress")
-	asked := 0
-	adopt := strictPrompts(t)
-	adopt.Ambiguous = func(string, []savesync.AmbiguousOption) (savesync.AmbiguousChoice, error) {
-		asked++
-		return savesync.AmbiguousChoice{OmnisaveID: original.OmnisaveID}, nil
-	}
+	original := unmatchedBeside(t, server, &fixture)
 
 	failDownloads.Store(true)
-	if outcome := savesynctest.SyncOnce(t, server, &fixture, savesync.Options{Prompts: adopt}); outcome.Seeded != 1 || outcome.Failed != 1 {
-		t.Fatalf("expected the progress preserved and the adoption to fail, got %+v", outcome)
+	if outcome := savesynctest.SyncOnce(t, server, &fixture, savesync.Options{Prompts: adopting(t, original.OmnisaveID, false)}); outcome.Branched != 1 || outcome.Failed != 1 {
+		t.Fatalf("expected the progress kept and the adoption to fail, got %+v", outcome)
 	}
 	failDownloads.Store(false)
 	if outcome := syncOnce(t, server, &fixture); outcome.Unbound != 1 || outcome.Rebound != 0 {
-		t.Fatalf("expected the open answer to wait, not rebind by content, got %+v", outcome)
+		t.Fatalf("expected the stale match to wait, not rebind by content, got %+v", outcome)
 	}
+	before := savesynctest.Revisions(t, server, original.OmnisaveID)
 
-	outcome := savesynctest.SyncOnce(t, server, &fixture, savesync.Options{Prompts: adopt})
-	if outcome.Pulled != 1 || outcome.Seeded != 0 || outcome.Failed != 0 || asked != 2 {
-		t.Fatalf("expected the repeated answer to complete the adoption, got %+v after %d answers", outcome, asked)
+	jump := strictPrompts(t)
+	jump.Stale = func(savesync.StaleQuestion) (savesync.DivergedChoice, error) { return savesync.DivergedJump, nil }
+	outcome := savesynctest.SyncOnce(t, server, &fixture, savesync.Options{Prompts: jump})
+
+	if outcome.Jumped != 1 || outcome.Branched != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected the jump to finish the adoption, got %+v", outcome)
 	}
-	if saves := savesynctest.Saves(t, server); len(saves) != 2 {
-		t.Fatalf("expected the original and one preservation, got %+v", saves)
+	if after := savesynctest.Revisions(t, server, original.OmnisaveID); len(after) != len(before) {
+		t.Fatalf("expected no second branch, had %d revisions and got %d", len(before), len(after))
 	}
 	if content := fixture.Read(t); content != "server-content" {
 		t.Fatalf("expected the chosen save applied, got %q", content)
 	}
-	if bound, _ := fixture.State.BindingFor(fixture.Local()); bound.OmnisaveID != original.OmnisaveID {
-		t.Fatalf("expected the binding on the adopted save, got %+v", bound)
+	assertBinding(t, &fixture, original.OmnisaveID, *original.LastSyncedRevisionID)
+}
+
+// A stale save can become current too: its content is committed on top of
+// the Current Revision, so the newer revision it had fallen behind stays in
+// history as the parent.
+func TestAStaleSaveCanBecomeCurrent(t *testing.T) {
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
+	_, bound := savesynctest.PushSecondRevision(t, server, &fixture, "second-progress")
+	newer := *bound.LastSyncedRevisionID
+	fixture.State.Unbind(fixture.Local())
+	fixture.Write(t, "first-progress")
+	prompts := strictPrompts(t)
+	prompts.Stale = func(savesync.StaleQuestion) (savesync.DivergedChoice, error) { return savesync.DivergedUseLocal, nil }
+
+	outcome := savesynctest.SyncOnce(t, server, &fixture, savesync.Options{Prompts: prompts})
+
+	if outcome.Pushed != 1 || outcome.Jumped != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected using local to only commit, got %+v", outcome)
 	}
+	if content := fixture.Read(t); content != "first-progress" {
+		t.Fatalf("expected the local save untouched, got %q", content)
+	}
+	saves := savesynctest.Saves(t, server)
+	committed, _ := findRevision(savesynctest.Revisions(t, server, bound.OmnisaveID), *saves[0].CurrentRevisionID)
+	if len(saves) != 1 || committed.ParentID == nil || *committed.ParentID != newer {
+		t.Fatalf("expected the stale content on top of the newer revision, got %+v", committed)
+	}
+	assertBinding(t, &fixture, bound.OmnisaveID, committed.ID)
 }
 
 func TestASaveMatchingTwoForkedLineagesBindsAtTheChosenRevision(t *testing.T) {

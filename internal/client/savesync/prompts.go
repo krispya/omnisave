@@ -16,7 +16,8 @@ type Prompts struct {
 	SyncToDevice func(gameTitle string, options []SyncToDeviceOption) (SyncToDeviceChoice, error)
 	// Stale resolves a Local Save matching exactly one Omnisave at a
 	// revision that is not its Current Revision.
-	Stale func(question StaleQuestion) (StaleChoice, error)
+	// It is answered like a divergence, with a DivergedChoice.
+	Stale func(question StaleQuestion) (DivergedChoice, error)
 	// Ambiguous resolves a Local Save matching zero or several Omnisaves.
 	Ambiguous func(gameTitle string, options []AmbiguousOption) (AmbiguousChoice, error)
 	// Diverged resolves a bound save with progress on both sides (FDR-005,
@@ -57,16 +58,6 @@ type StaleQuestion struct {
 	ForkName string
 }
 
-// StaleChoice resolves a stale save.
-type StaleChoice string
-
-const (
-	// StaleJump replaces the local save with the Current Revision.
-	StaleJump StaleChoice = "jump"
-	// StaleFork creates a new lineage from the matching revision.
-	StaleFork StaleChoice = "fork"
-)
-
 // AmbiguousOption is one existing save a Local Save could sync with.
 // MatchedRevisionID names the revision holding the Local Save's exact
 // content, and is empty when adopting the save would replace that content.
@@ -77,10 +68,14 @@ type AmbiguousOption struct {
 }
 
 // AmbiguousChoice resolves a Local Save that matches zero or several saves.
-// Create makes the Local Save a new save instead of choosing one.
+// Create makes the Local Save a new save instead of choosing one. UseLocal,
+// for a chosen save the content did not match, makes the local content its
+// Current Revision instead of applying that save's current here; a matched
+// save already holds the content and ignores it.
 type AmbiguousChoice struct {
 	OmnisaveID string
 	Create     bool
+	UseLocal   bool
 }
 
 // DivergedQuestion is one diverged save put to a person: the game, the
@@ -95,16 +90,21 @@ type DivergedQuestion struct {
 	ForkName string
 }
 
-// DivergedChoice keeps both sides recoverable: forking continues the local
-// progress as its own lineage, jumping keeps it reachable — as a branch in
-// the same tree when it is unsynced, or not at all when the history already
-// holds it — and takes the Current Revision.
+// DivergedChoice answers a diverged save, and a stale one, which is asked
+// the same way. Every answer keeps both sides recoverable: forking continues
+// the local progress as its own lineage; jumping and using the local content
+// both stay on the Omnisave and differ in which side's content becomes
+// current. Whichever side loses stays in the Omnisave's history (FDR-005,
+// decision 4; FDR-003, decision 5).
 type DivergedChoice string
 
 const (
 	// DivergedFork continues this Device's progress as a new lineage.
 	DivergedFork DivergedChoice = "fork"
 	// DivergedJump takes the Current Revision, keeping any unsynced local
-	// progress as a branch of the baseline first.
+	// progress as a branch first.
 	DivergedJump DivergedChoice = "jump"
+	// DivergedUseLocal commits this Device's content on top of the Current
+	// Revision and makes it current, leaving local files untouched.
+	DivergedUseLocal DivergedChoice = "use-local"
 )
