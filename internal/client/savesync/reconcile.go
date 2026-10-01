@@ -269,6 +269,14 @@ func (r *reconciliation) bindUnbound(ctx context.Context, c candidate) error {
 		return nil
 	}
 	matches := binding.FindManifestMatches(manifest, c.save, matchable)
+	// A failed adoption left this save's progress preserved in an Omnisave it
+	// recorded, and the answer was to adopt another. Content equality must not
+	// quietly settle that answer the other way, so the question stays open and
+	// a repeated answer reuses the preservation (FDR-005, decision 4).
+	if pendingID, pending := r.state.PendingPreservationFor(c.local); pending &&
+		len(matches) == 1 && matches[0].Omnisave.ID == pendingID {
+		return r.chooseLineage(ctx, c, matches, matchable, held)
+	}
 	if len(matches) == 1 && matches[0].MatchesCurrent() {
 		matched := matches[0].Omnisave
 		if err := r.bindSynced(c.local, matched.ID, *matched.CurrentRevisionID); err != nil {
@@ -355,11 +363,6 @@ func (r *reconciliation) chooseLineage(
 	held int,
 ) error {
 	title := c.local.GameTitle
-	if r.Prompts.Ambiguous == nil {
-		r.outcome.Unbound++
-		r.Report.Unbound(title)
-		return nil
-	}
 	matchedRevisions := make(map[string]string, len(matches))
 	for _, match := range matches {
 		matchedRevisions[match.Omnisave.ID] = match.Revisions[len(match.Revisions)-1].ID
@@ -416,6 +419,11 @@ func (r *reconciliation) chooseLineage(
 		r.seed(ctx, c)
 		return nil
 	}
+	if r.Prompts.Ambiguous == nil {
+		r.outcome.Unbound++
+		r.Report.Unbound(title)
+		return nil
+	}
 	choice, err := r.Prompts.Ambiguous(title, offered)
 	if err != nil {
 		return err
@@ -449,6 +457,31 @@ func (r *reconciliation) chooseLineage(
 	return nil
 }
 
+// recordedAdoption is the preservation a failed adoption of this save
+// recorded, while it still holds the save's content: a repeated answer
+// continues it instead of preserving again. Only the recorded identity is
+// trusted, never content equality alone (FDR-005, decision 4).
+func (r *reconciliation) recordedAdoption(c candidate) (*omnisave.Omnisave, *omnisave.Revision) {
+	pendingID, pending := r.state.PendingPreservationFor(c.local)
+	if !pending {
+		return nil, nil
+	}
+	recorded, listed := r.lineages.save(pendingID)
+	if !listed {
+		return nil, nil
+	}
+	history, err := c.loadHistory(pendingID)
+	if err != nil {
+		return nil, nil
+	}
+	current, exists := revisionByID(history, recorded.CurrentRevisionID)
+	manifest, err := c.readManifest()
+	if !exists || err != nil || !binding.MatchesManifest(manifest, c.save.LocationAliases, current) {
+		return nil, nil
+	}
+	return &recorded, &current
+}
+
 // seed creates a new Omnisave from one local save and records the seed
 // revision as the binding's sync baseline.
 func (r *reconciliation) seed(ctx context.Context, c candidate) {
@@ -478,14 +511,18 @@ func (r *reconciliation) syncUnmatched(ctx context.Context, c candidate, selecte
 		r.failed(title, err)
 		return
 	}
-	preserved, preservedRevision, err := binding.Seed(ctx, r.Server, selected.GameID, c.save,
-		deconflictName(selected, deviceDisplayName(r.state)))
-	if err != nil {
-		r.failed(title, err)
-		return
+	preserved, preservedRevision := r.recordedAdoption(c)
+	if preserved == nil {
+		created, revision, err := binding.Seed(ctx, r.Server, selected.GameID, c.save,
+			deconflictName(selected, deviceDisplayName(r.state)))
+		if err != nil {
+			r.failed(title, err)
+			return
+		}
+		preserved, preservedRevision = created, revision
+		r.outcome.Seeded++
+		r.Report.PreservedAs(title, omnisaveDisplayName(*preserved))
 	}
-	r.outcome.Seeded++
-	r.Report.PreservedAs(title, omnisaveDisplayName(*preserved))
 
 	// Past here the preservation exists; a failure records it so a later
 	// pass recognizes it as this save's own rather than starting over.

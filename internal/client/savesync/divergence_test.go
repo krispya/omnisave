@@ -234,6 +234,24 @@ func TestAnUnmatchedSaveWithOnlyForeignLayoutLineagesSeedsWithoutAsking(t *testi
 	}
 }
 
+// An unattended pass takes the same one safe outcome: nothing matches and
+// nothing can be adopted, so the save gets its own omnisave instead of
+// waiting on a question nobody is there to answer.
+func TestAnUnattendedPassSeedsAnUnmatchedSaveWithNothingToAdopt(t *testing.T) {
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "local-progress")
+	seeded := seedForeignLayoutLineage(t, server, &fixture)
+
+	outcome := syncOnce(t, server, &fixture)
+
+	if outcome.Seeded != 1 || outcome.Unbound != 0 || outcome.Failed != 0 {
+		t.Fatalf("expected the unattended pass to seed, got %+v", outcome)
+	}
+	if bound, ok := fixture.State.BindingFor(fixture.Local()); !ok || bound.OmnisaveID == seeded.ID {
+		t.Fatalf("expected a fresh omnisave bound, got %+v", bound)
+	}
+}
+
 // A jump that fails after preserving — an outage the preservation itself
 // survived — records what it created. The next answer resumes that exact
 // preservation instead of minting a duplicate.

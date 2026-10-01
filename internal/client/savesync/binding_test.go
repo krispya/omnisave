@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/krisbaumgartner/omnisave/internal/client"
@@ -434,6 +435,58 @@ func TestAnUnmatchedLocalSaveCanSyncWithAChosenSaveWithoutLosingProgress(t *test
 	}
 	if outcome.Seeded != 1 || outcome.Pulled != 1 || outcome.Diverged != 0 || outcome.Failed != 0 {
 		t.Fatalf("expected preservation followed by a completed sync, got %+v", outcome)
+	}
+}
+
+// An adoption that fails after preserving local progress leaves its answer
+// open. The next pass does not quietly bind to the preservation because it
+// holds the same content, and answering again reuses that preservation
+// instead of preserving twice (FDR-005, decision 4).
+func TestAFailedAdoptionIsAskedAgainAndReusesItsPreservation(t *testing.T) {
+	var failDownloads atomic.Bool
+	server := savesynctest.NewInterceptedServer(t, func(response http.ResponseWriter, request *http.Request) bool {
+		if failDownloads.Load() && request.Method == http.MethodGet &&
+			strings.Contains(request.URL.Path, "/api/v1/artifacts/") {
+			http.Error(response, "unavailable", http.StatusInternalServerError)
+			return true
+		}
+		return false
+	})
+	fixture := savesynctest.NewSyncFixture(t, "server-content")
+	if outcome := syncOnce(t, server, &fixture); outcome.Seeded != 1 {
+		t.Fatalf("expected the server save seeded, got %+v", outcome)
+	}
+	original, _ := fixture.State.BindingFor(fixture.Local())
+	fixture.State.Unbind(fixture.Local())
+	fixture.Write(t, "local-progress")
+	asked := 0
+	adopt := strictPrompts(t)
+	adopt.Ambiguous = func(string, []savesync.AmbiguousOption) (savesync.AmbiguousChoice, error) {
+		asked++
+		return savesync.AmbiguousChoice{OmnisaveID: original.OmnisaveID}, nil
+	}
+
+	failDownloads.Store(true)
+	if outcome := savesynctest.SyncOnce(t, server, &fixture, savesync.Options{Prompts: adopt}); outcome.Seeded != 1 || outcome.Failed != 1 {
+		t.Fatalf("expected the progress preserved and the adoption to fail, got %+v", outcome)
+	}
+	failDownloads.Store(false)
+	if outcome := syncOnce(t, server, &fixture); outcome.Unbound != 1 || outcome.Rebound != 0 {
+		t.Fatalf("expected the open answer to wait, not rebind by content, got %+v", outcome)
+	}
+
+	outcome := savesynctest.SyncOnce(t, server, &fixture, savesync.Options{Prompts: adopt})
+	if outcome.Pulled != 1 || outcome.Seeded != 0 || outcome.Failed != 0 || asked != 2 {
+		t.Fatalf("expected the repeated answer to complete the adoption, got %+v after %d answers", outcome, asked)
+	}
+	if saves := savesynctest.Saves(t, server); len(saves) != 2 {
+		t.Fatalf("expected the original and one preservation, got %+v", saves)
+	}
+	if content := fixture.Read(t); content != "server-content" {
+		t.Fatalf("expected the chosen save applied, got %q", content)
+	}
+	if bound, _ := fixture.State.BindingFor(fixture.Local()); bound.OmnisaveID != original.OmnisaveID {
+		t.Fatalf("expected the binding on the adopted save, got %+v", bound)
 	}
 }
 
