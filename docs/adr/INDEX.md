@@ -25,3 +25,4 @@ Architecture Decision Records capture Omnisave's cross-cutting technical decisio
 | [ADR-017](ADR-017-client-user-service.md) | Run the client as a service the player owns | 2026-08-13 |
 | [ADR-018](ADR-018-embedded-save-profiles.md) | Compile save-location knowledge into the client | 2026-08-13 |
 | [ADR-019](ADR-019-versioned-replayable-data-migrations.md) | Evolve durable data through versioned, replayable migrations | 2026-08-23 |
+| [ADR-020](ADR-020-domains-own-their-contracts.md) | Domains own their contracts | 2026-09-30 |

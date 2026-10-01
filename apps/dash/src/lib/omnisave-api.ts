@@ -69,6 +69,10 @@ export class CurrentRevisionConflictError extends Error {
   }
 }
 
+/**
+ * An error response body. The codes and fields mirror the server's wire
+ * contract in internal/httpapi/contract, which is their source of truth.
+ */
 type ErrorResponse = {
   error?: string;
   reason?: string;

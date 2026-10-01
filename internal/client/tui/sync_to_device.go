@@ -4,40 +4,30 @@ import (
 	"errors"
 
 	"github.com/charmbracelet/huh"
+
+	"github.com/krisbaumgartner/omnisave/internal/client/savesync"
 )
-
-// SyncToDeviceOption identifies one server save that can be placed on a Device
-// with no local save.
-type SyncToDeviceOption struct {
-	OmnisaveID string
-	Name       string
-}
-
-// SyncToDeviceChoice is empty when the user decides not to place a save.
-type SyncToDeviceChoice struct {
-	OmnisaveID string
-}
 
 const syncToDeviceLeaveWithoutSave = ":leave-without-save"
 
 // PromptSyncToDevice asks which server save should be placed on a Device that
 // has no local save for the game.
-func PromptSyncToDevice(gameTitle string, options []SyncToDeviceOption) (SyncToDeviceChoice, error) {
+func PromptSyncToDevice(gameTitle string, options []savesync.SyncToDeviceOption) (savesync.SyncToDeviceChoice, error) {
 	var selected string
 	form := syncToDeviceForm(gameTitle, options, &selected)
 	if err := form.Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
-			return SyncToDeviceChoice{}, ErrAborted
+			return savesync.SyncToDeviceChoice{}, ErrAborted
 		}
-		return SyncToDeviceChoice{}, err
+		return savesync.SyncToDeviceChoice{}, err
 	}
 	if selected == syncToDeviceLeaveWithoutSave {
-		return SyncToDeviceChoice{}, nil
+		return savesync.SyncToDeviceChoice{}, nil
 	}
-	return SyncToDeviceChoice{OmnisaveID: selected}, nil
+	return savesync.SyncToDeviceChoice{OmnisaveID: selected}, nil
 }
 
-func syncToDeviceForm(gameTitle string, options []SyncToDeviceOption, selected *string) *huh.Form {
+func syncToDeviceForm(gameTitle string, options []savesync.SyncToDeviceOption, selected *string) *huh.Form {
 	if *selected == "" && len(options) > 0 {
 		*selected = options[0].OmnisaveID
 	}

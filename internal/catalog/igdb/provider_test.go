@@ -58,7 +58,7 @@ func TestProviderResolvesSteamAndCachesSearches(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	match, err := provider.Resolve(context.Background(), catalog.ResolveGame{
+	match, err := provider.Resolve(context.Background(), catalog.Evidence{
 		Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "413150"}},
 	})
 	if err != nil {
@@ -134,7 +134,7 @@ func TestSteamResolutionAndMatcherAgreeOnPC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	match, err := provider.Resolve(context.Background(), catalog.ResolveGame{
+	match, err := provider.Resolve(context.Background(), catalog.Evidence{
 		Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "391540"}},
 	})
 	if err != nil {

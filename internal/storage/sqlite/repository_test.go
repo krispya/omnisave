@@ -13,12 +13,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krisbaumgartner/omnisave/internal/artifact"
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
+	"github.com/krisbaumgartner/omnisave/internal/device"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
-	"github.com/krisbaumgartner/omnisave/internal/storage"
 	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
-	"github.com/krisbaumgartner/omnisave/internal/storage/storagetest"
+	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite/sqlitetest"
 	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
@@ -32,6 +33,7 @@ func TestRecordsSurviveRepositoryRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "pokemon-emerald-usa")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
 	if err != nil {
@@ -121,6 +123,7 @@ func TestRevisionDatesDistinguishTheLatestSnapshotFromTheSelectedSnapshot(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "pokemon-emerald-usa")
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 
@@ -196,6 +199,7 @@ func TestSavedAtRoundTripsThroughCommitAndRebuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "pokemon-emerald-usa")
 	saves := omnisaveservice.New(repository)
 
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald-usa"})
@@ -269,6 +273,7 @@ func TestDeletingASourceKeepsTheRevisionGraphSharedByAFork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "pokemon-emerald")
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 
@@ -320,6 +325,7 @@ func TestDeletingASourceKeepsAForkPointTheForkRewoundBelow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "pokemon-emerald")
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 
@@ -397,6 +403,7 @@ func TestCommitAndRefMovementAreAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "pokemon-emerald")
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "pokemon-emerald"})
@@ -450,20 +457,13 @@ func TestCatalogMediaSurvivesRepositoryRestart(t *testing.T) {
 		}},
 		RefreshedAt: time.Now().UTC(),
 	}
-	rom := catalog.GameROM{
-		ID:       "smw-usa",
-		GameID:   game.ID,
-		SHA1:     "6b47bb75d16514b6a476aa0c73a683a2a4c18765",
-		Source:   "no-intro",
-		SourceID: "1628019",
-	}
-	if err := repository.SaveGame(ctx, game, &rom); err != nil {
+	if err := repository.SaveGame(ctx, game); err != nil {
 		t.Fatal(err)
 	}
 	contents := []byte("cover image")
 	sum := sha256.Sum256(contents)
 	hash := hex.EncodeToString(sum[:])
-	if err := repository.StoreArtifact(ctx, storage.Artifact{
+	if err := repository.StoreArtifact(ctx, artifact.Artifact{
 		Format: "image/png", SHA256: hash, Size: int64(len(contents)),
 	}, bytes.NewReader(contents)); err != nil {
 		t.Fatal(err)
@@ -515,7 +515,7 @@ func TestCatalogIdentityClaimsAreAtomic(t *testing.T) {
 		ID: "first", Title: "First", MetadataSource: "client", RefreshedAt: time.Now().UTC(),
 		Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "10"}},
 	}
-	if err := repository.SaveGame(ctx, first, nil); err != nil {
+	if err := repository.SaveGame(ctx, first); err != nil {
 		t.Fatal(err)
 	}
 	conflicting := catalog.Game{
@@ -525,13 +525,13 @@ func TestCatalogIdentityClaimsAreAtomic(t *testing.T) {
 			{Namespace: "steam.app", Value: "10"},
 		},
 	}
-	if err := repository.SaveGame(ctx, conflicting, nil); !errors.Is(err, storage.ErrConflict) {
+	if err := repository.SaveGame(ctx, conflicting); !errors.Is(err, catalog.ErrConflict) {
 		t.Fatalf("expected an identity conflict, got %v", err)
 	}
-	if _, err := repository.GetGame(ctx, conflicting.ID); !errors.Is(err, storage.ErrNotFound) {
+	if _, err := repository.GetGame(ctx, conflicting.ID); !errors.Is(err, catalog.ErrNotFound) {
 		t.Fatalf("conflicting game was partially saved: %v", err)
 	}
-	if _, err := repository.FindGameByIdentifier(ctx, conflicting.Identifiers[0]); !errors.Is(err, storage.ErrNotFound) {
+	if _, err := repository.FindGameByIdentifier(ctx, conflicting.Identifiers[0]); !errors.Is(err, catalog.ErrNotFound) {
 		t.Fatalf("non-conflicting claim escaped the rolled back transaction: %v", err)
 	}
 }
@@ -548,6 +548,7 @@ func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "another-game")
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 
@@ -555,13 +556,13 @@ func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 		ID: "super-metroid", Title: "Super Metroid",
 		MetadataSource: "hasheous", RefreshedAt: time.Now().UTC(),
 	}
-	if err := repository.SaveGame(ctx, game, nil); err != nil {
+	if err := repository.SaveGame(ctx, game); err != nil {
 		t.Fatal(err)
 	}
 	cover := []byte("cover image")
 	coverSum := sha256.Sum256(cover)
 	coverHash := hex.EncodeToString(coverSum[:])
-	if err := repository.StoreArtifact(ctx, storage.Artifact{
+	if err := repository.StoreArtifact(ctx, artifact.Artifact{
 		Format: "image/png", SHA256: coverHash, Size: int64(len(cover)),
 	}, bytes.NewReader(cover)); err != nil {
 		t.Fatal(err)
@@ -599,7 +600,7 @@ func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 	}
 	repository.WaitForCleanup()
 
-	if _, err := repository.GetGame(ctx, game.ID); !errors.Is(err, storage.ErrNotFound) {
+	if _, err := repository.GetGame(ctx, game.ID); !errors.Is(err, catalog.ErrNotFound) {
 		t.Fatalf("deleted game should be gone, got %v", err)
 	}
 	if _, err := saves.Get(ctx, doomed.ID); !errors.Is(err, omnisave.ErrNotFound) {
@@ -622,7 +623,7 @@ func TestDeleteGameRemovesSavesAndArtifacts(t *testing.T) {
 	if err := repository.DeleteGame(ctx, game.ID); err != nil {
 		t.Fatalf("repeating a committed game deletion should be idempotent, got %v", err)
 	}
-	if err := repository.DeleteGame(ctx, "never-existed"); !errors.Is(err, storage.ErrNotFound) {
+	if err := repository.DeleteGame(ctx, "never-existed"); !errors.Is(err, catalog.ErrNotFound) {
 		t.Fatalf("deleting a game that never existed should report not found, got %v", err)
 	}
 }
@@ -647,7 +648,7 @@ func TestADeletedGameStaysDeletedWhenAForkOutlivedItsSource(t *testing.T) {
 		ID: "super-metroid", Title: "Super Metroid",
 		MetadataSource: "hasheous", RefreshedAt: time.Now().UTC(),
 	}
-	if err := repository.SaveGame(ctx, game, nil); err != nil {
+	if err := repository.SaveGame(ctx, game); err != nil {
 		t.Fatal(err)
 	}
 	source, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: game.ID})
@@ -692,7 +693,7 @@ func TestADeletedGameStaysDeletedWhenAForkOutlivedItsSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repository.Close()
-	if _, err := repository.GetGame(ctx, game.ID); !errors.Is(err, storage.ErrNotFound) {
+	if _, err := repository.GetGame(ctx, game.ID); !errors.Is(err, catalog.ErrNotFound) {
 		t.Fatalf("the deleted game was resurrected by the rebuild: %v", err)
 	}
 	all, err := repository.ListOmnisaves(ctx)
@@ -714,6 +715,7 @@ func TestRestoreWithAStaleExpectationReportsTheActualCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "pokemon-emerald")
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 
@@ -736,7 +738,7 @@ func TestRestoreWithAStaleExpectationReportsTheActualCurrent(t *testing.T) {
 	}
 
 	err = repository.RestoreOmnisave(ctx, save.ID, first.ID, &first.ID)
-	var conflict *storage.CurrentRevisionConflict
+	var conflict *omnisave.CurrentRevisionConflict
 	if !errors.As(err, &conflict) {
 		t.Fatalf("expected a current revision conflict, got %v", err)
 	}
@@ -762,6 +764,7 @@ func TestCommitAfterARestoreBranchesTheHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "pokemon-emerald")
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 
@@ -821,56 +824,40 @@ func TestCommitAfterARestoreBranchesTheHistory(t *testing.T) {
 // name it as their creator; sqlite and the memory fake have to agree.
 func TestADeletedSavesRevisionsAreUnreachableThroughItsID(t *testing.T) {
 	ctx := context.Background()
-	directory := t.TempDir()
-	sqliteRepository, err := sqlite.Open(
-		filepath.Join(directory, "omnisave.db"),
-		filepath.Join(directory, "store"),
-	)
-	if err != nil {
+	repository := sqlitetest.Open(t)
+	sqlitetest.AddGame(t, repository, "game-1")
+	now := time.Now().UTC()
+	source := omnisave.Omnisave{ID: "source", GameID: "game-1", CreatedAt: now}
+	if err := repository.InsertOmnisave(ctx, source); err != nil {
 		t.Fatal(err)
 	}
-	defer sqliteRepository.Close()
-
-	repositories := map[string]storage.OmnisaveRepository{
-		"sqlite": sqliteRepository,
-		"memory": storagetest.NewMemoryRepository(),
+	revision := omnisave.Revision{ID: "revision", OmnisaveID: source.ID, CreatedAt: now}
+	if err := repository.CommitRevision(ctx, nil, revision, false); err != nil {
+		t.Fatal(err)
 	}
-	for name, repository := range repositories {
-		t.Run(name, func(t *testing.T) {
-			now := time.Now().UTC()
-			source := omnisave.Omnisave{ID: "source-" + name, GameID: "game-1", CreatedAt: now}
-			if err := repository.InsertOmnisave(ctx, source); err != nil {
-				t.Fatal(err)
-			}
-			revision := omnisave.Revision{ID: "revision-" + name, OmnisaveID: source.ID, CreatedAt: now}
-			if err := repository.CommitRevision(ctx, nil, revision, false); err != nil {
-				t.Fatal(err)
-			}
-			fork := omnisave.Omnisave{
-				ID: "fork-" + name, GameID: "game-1", CurrentRevisionID: &revision.ID,
-				ForkedFrom: &omnisave.ForkOrigin{OmnisaveID: source.ID, RevisionID: revision.ID},
-				CreatedAt:  now,
-			}
-			if err := repository.ForkOmnisave(ctx, fork); err != nil {
-				t.Fatal(err)
-			}
-			if err := repository.DeleteOmnisave(ctx, source.ID); err != nil {
-				t.Fatal(err)
-			}
+	fork := omnisave.Omnisave{
+		ID: "fork", GameID: "game-1", CurrentRevisionID: &revision.ID,
+		ForkedFrom: &omnisave.ForkOrigin{OmnisaveID: source.ID, RevisionID: revision.ID},
+		CreatedAt:  now,
+	}
+	if err := repository.ForkOmnisave(ctx, fork); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.DeleteOmnisave(ctx, source.ID); err != nil {
+		t.Fatal(err)
+	}
 
-			if _, err := repository.GetRevision(ctx, source.ID, revision.ID); !errors.Is(err, storage.ErrNotFound) {
-				t.Fatalf("a deleted save's revision stayed readable: %v", err)
-			}
-			if _, err := repository.ListRevisions(ctx, source.ID); !errors.Is(err, storage.ErrNotFound) {
-				t.Fatalf("a deleted save's history stayed listable: %v", err)
-			}
-			if err := repository.UpdateRevisionDisplayName(ctx, source.ID, revision.ID, "renamed"); !errors.Is(err, storage.ErrNotFound) {
-				t.Fatalf("a deleted save's revision stayed renamable: %v", err)
-			}
-			if _, err := repository.GetRevision(ctx, fork.ID, revision.ID); err != nil {
-				t.Fatalf("the fork should still reach the shared node: %v", err)
-			}
-		})
+	if _, err := repository.GetRevision(ctx, source.ID, revision.ID); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("a deleted save's revision stayed readable: %v", err)
+	}
+	if _, err := repository.ListRevisions(ctx, source.ID); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("a deleted save's history stayed listable: %v", err)
+	}
+	if err := repository.UpdateRevisionDisplayName(ctx, source.ID, revision.ID, "renamed"); !errors.Is(err, omnisave.ErrNotFound) {
+		t.Fatalf("a deleted save's revision stayed renamable: %v", err)
+	}
+	if _, err := repository.GetRevision(ctx, fork.ID, revision.ID); err != nil {
+		t.Fatalf("the fork should still reach the shared node: %v", err)
 	}
 }
 
@@ -894,16 +881,16 @@ func TestProvenanceSurvivesUntrackAndSaveDeletion(t *testing.T) {
 		ID: "super-metroid", Title: "Super Metroid",
 		MetadataSource: "hasheous", RefreshedAt: time.Now().UTC(),
 	}
-	if err := repository.SaveGame(ctx, game, nil); err != nil {
+	if err := repository.SaveGame(ctx, game); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	device := catalog.Device{ID: "device-1", Name: "Steam Deck", Platform: "linux", CreatedAt: now, LastSeenAt: now}
-	if err := repository.UpsertDevice(ctx, device); err != nil {
+	steamDeck := device.Device{ID: "device-1", Name: "Steam Deck", Platform: "linux", CreatedAt: now, LastSeenAt: now}
+	if err := repository.UpsertDevice(ctx, steamDeck); err != nil {
 		t.Fatal(err)
 	}
 	if err := repository.TrackGame(ctx, game.ID, catalog.GameTracking{
-		DeviceID: device.ID, Adapter: "retroarch", Installed: true,
+		DeviceID: steamDeck.ID, Adapter: "retroarch", Installed: true,
 		FirstTrackedAt: now, LastSeenAt: now,
 	}); err != nil {
 		t.Fatal(err)
@@ -925,7 +912,7 @@ func TestProvenanceSurvivesUntrackAndSaveDeletion(t *testing.T) {
 		t.Fatalf("provenance should survive save deletion: %+v", stored.Provenance)
 	}
 
-	if err := repository.UntrackGame(ctx, game.ID, device.ID, time.Now().UTC()); err != nil {
+	if err := repository.UntrackGame(ctx, game.ID, steamDeck.ID, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	stored, err = repository.GetGame(ctx, game.ID)
@@ -938,7 +925,7 @@ func TestProvenanceSurvivesUntrackAndSaveDeletion(t *testing.T) {
 	firstTracked := stored.Provenance[0].FirstTrackedAt
 
 	if err := repository.TrackGame(ctx, game.ID, catalog.GameTracking{
-		DeviceID: device.ID, Adapter: "retroarch", Installed: true,
+		DeviceID: steamDeck.ID, Adapter: "retroarch", Installed: true,
 		FirstTrackedAt: time.Now().UTC(), LastSeenAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
@@ -956,11 +943,11 @@ func TestProvenanceSurvivesUntrackAndSaveDeletion(t *testing.T) {
 	}
 	if err := repository.SaveGame(ctx, catalog.Game{
 		ID: "another-game", Title: "Another", MetadataSource: "client", RefreshedAt: time.Now().UTC(),
-	}, nil); err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := repository.TrackGame(ctx, "another-game", catalog.GameTracking{
-		DeviceID: device.ID, FirstTrackedAt: time.Now().UTC(), LastSeenAt: time.Now().UTC(),
+		DeviceID: steamDeck.ID, FirstTrackedAt: time.Now().UTC(), LastSeenAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("the device should outlive its deleted games: %v", err)
 	}
@@ -1025,6 +1012,7 @@ func TestRevisionNamesRememberWhoSetThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "game-spire2")
 	namer := &fixedNamer{name: "Necro A5, flr 12"}
 	saves := omnisaveservice.NewWithNamer(repository, namer)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "game-spire2"})
@@ -1119,6 +1107,7 @@ func TestDeleteRevisionPrunesAnUnneededTip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "pokemon-emerald-usa")
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 
@@ -1190,6 +1179,7 @@ func TestDeleteRevisionRefusesWhatTheGraphStillNeeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "pokemon-emerald-usa")
 	defer repository.Close()
 	saves := omnisaveservice.New(repository)
 

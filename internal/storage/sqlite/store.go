@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
-	"github.com/krisbaumgartner/omnisave/internal/storage"
 	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
@@ -57,7 +56,7 @@ func (r *Repository) buildRevisionFrom(
 		&gameTitle, &platform,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return store.Revision{}, storage.ErrNotFound
+		return store.Revision{}, omnisave.ErrNotFound
 	}
 	if err != nil {
 		return store.Revision{}, err
@@ -118,7 +117,7 @@ func (r *Repository) buildOmnisaveFrom(
 		&record.CurrentRevisionID, &forkedSave, &forkedRev, &createdAt, &metadata,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return store.Omnisave{}, storage.ErrNotFound
+		return store.Omnisave{}, omnisave.ErrNotFound
 	}
 	if err != nil {
 		return store.Omnisave{}, err

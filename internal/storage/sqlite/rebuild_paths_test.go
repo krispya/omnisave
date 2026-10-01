@@ -13,6 +13,7 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 	omnisaveservice "github.com/krisbaumgartner/omnisave/internal/omnisave/service"
 	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
+	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite/sqlitetest"
 )
 
 func removeDatabase(t *testing.T, databasePath string) {
@@ -37,6 +38,7 @@ func TestALocationMigrationSurvivesDatabaseLoss(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "chrono-trigger")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "chrono-trigger"})
 	if err != nil {
@@ -105,6 +107,7 @@ func TestRecoveryClassifiesLineagesFromTheirHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "chrono-trigger")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "chrono-trigger"})
 	if err != nil {
@@ -165,6 +168,7 @@ func TestRecoveryHoldsAnUnreplayableMigrationFact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sqlitetest.AddGame(t, repository, "future-game")
 	saves := omnisaveservice.New(repository)
 	save, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "future-game"})
 	if err != nil {

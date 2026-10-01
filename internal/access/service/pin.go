@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/access"
-	"github.com/krisbaumgartner/omnisave/internal/storage"
 )
 
 const (
@@ -60,7 +59,7 @@ func (c *attemptCounter) succeed() {
 
 func (s *service) HasPIN(ctx context.Context) (bool, error) {
 	_, err := s.repository.GetOwnerPIN(ctx)
-	if errors.Is(err, storage.ErrNotFound) {
+	if errors.Is(err, access.ErrNoPIN) {
 		return false, nil
 	}
 	return err == nil, err
@@ -89,7 +88,7 @@ func (s *service) SetPIN(ctx context.Context, pin string) error {
 	s.allSignInAttempts = attemptCounter{}
 	s.mu.Unlock()
 
-	return s.repository.SetOwnerPIN(ctx, storage.OwnerPIN{
+	return s.repository.SetOwnerPIN(ctx, access.OwnerPIN{
 		Salt:       base64.RawStdEncoding.EncodeToString(salt),
 		Hash:       hash,
 		Iterations: pinIterations,
@@ -100,9 +99,6 @@ func (s *service) SetPIN(ctx context.Context, pin string) error {
 // SignIn exchanges the owner PIN for a credential and rate-limits failures per source and server.
 func (s *service) SignIn(ctx context.Context, input access.SignIn) (*access.IssuedCredential, error) {
 	stored, err := s.repository.GetOwnerPIN(ctx)
-	if errors.Is(err, storage.ErrNotFound) {
-		return nil, access.ErrNoPIN
-	}
 	if err != nil {
 		return nil, err
 	}

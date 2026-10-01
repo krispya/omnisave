@@ -18,10 +18,11 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/client"
 	"github.com/krisbaumgartner/omnisave/internal/client/remote"
 	"github.com/krisbaumgartner/omnisave/internal/client/running"
+	"github.com/krisbaumgartner/omnisave/internal/client/savesync"
+	"github.com/krisbaumgartner/omnisave/internal/client/savesync/savesynctest"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/client/tui"
-	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
 func sentences(events []tui.Event) []string {
@@ -125,42 +126,6 @@ func TestARunWideFailureIsAnnouncedOnce(t *testing.T) {
 	}
 }
 
-// fixtureAdapter serves a binding fixture's target and game through the real
-// Scanner, statting save files fresh each scan so a pull's changes are seen.
-type fixtureAdapter struct {
-	fixture *bindingFixture
-}
-
-func (a fixtureAdapter) Name() string { return "retroarch" }
-
-func (a fixtureAdapter) DiscoverTargets(context.Context) ([]target.Target, error) {
-	return []target.Target{a.fixture.scans[0].Target}, nil
-}
-
-func (a fixtureAdapter) DiscoverGames(_ context.Context, _ target.Target) ([]target.InstalledGame, error) {
-	return []target.InstalledGame{a.fixture.scans[0].Games[0].Game}, nil
-}
-
-func (a fixtureAdapter) DiscoverSaves(_ context.Context, _ target.Target, _ target.InstalledGame) ([]target.Save, error) {
-	save := a.fixture.save
-	files := make([]target.File, len(save.Files))
-	copy(files, save.Files)
-	for index, file := range files {
-		info, err := os.Stat(file.Path)
-		if err != nil {
-			return nil, err
-		}
-		files[index].Size = info.Size()
-		files[index].Modified = info.ModTime()
-	}
-	save.Files = files
-	return []target.Save{save}, nil
-}
-
-func (a fixtureAdapter) DiscoverSaveDestinations(context.Context, target.Target, target.InstalledGame) ([]target.SaveDestination, error) {
-	return nil, nil
-}
-
 // passSink records finished passes, playing markers, and the games passes
 // took in hand, so a test can wait for them.
 type passSink struct {
@@ -255,27 +220,27 @@ func pendingSave(t *testing.T, result tui.PassResult) tui.GameStatus {
 
 // divergedLoop seeds a divergence and returns a loop watching it, so the
 // tests below start where a user actually meets the question.
-func divergedLoop(t *testing.T, server *remote.Client, fixture *bindingFixture) watchLoop {
+func divergedLoop(t *testing.T, server *remote.Client, fixture *savesynctest.Fixture) watchLoop {
 	t.Helper()
-	if outcome := syncOnce(t, server, fixture, nil, 0); outcome.Seeded != 1 {
+	if outcome := savesynctest.SyncOnce(t, server, fixture, savesync.Options{}); outcome.Seeded != 1 {
 		t.Fatalf("expected the first pass to seed, got %+v", outcome)
 	}
-	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
-	bound, ok := fixture.state.BindingFor(local)
+	local := fixture.Local()
+	bound, ok := fixture.State.BindingFor(local)
 	if !ok {
 		t.Fatal("expected a binding after seeding")
 	}
-	if err := os.WriteFile(fixture.localPath, []byte("local-divergence"), 0o600); err != nil {
+	if err := os.WriteFile(fixture.LocalPath, []byte("local-divergence"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	otherDeviceCommit(t, server, bound.OmnisaveID, "deck-divergence")
+	savesynctest.OtherDeviceCommit(t, server, bound.OmnisaveID, "deck-divergence")
 
 	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Save(fixture.state); err != nil {
+	if err := store.Save(fixture.State); err != nil {
 		t.Fatal(err)
 	}
 	return watchLoop{
-		scanner: client.NewScanner(nil, fixtureAdapter{fixture: fixture}),
+		scanner: client.NewScanner(nil, savesynctest.Adapter{Fixture: fixture}),
 		server:  server,
 		store:   store,
 		poll:    time.Hour,
@@ -290,8 +255,8 @@ func divergedLoop(t *testing.T, server *remote.Client, fixture *bindingFixture) 
 // watching can answer it in place: the answer replays into the next pass,
 // which runs the same reconcile an interactive track run would have.
 func TestAnAnsweredDivergenceResolvesWithoutLeavingWatch(t *testing.T) {
-	server := newRealServer(t)
-	fixture := newSyncFixture(t, "first-progress")
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
 	loop := divergedLoop(t, server, &fixture)
 
 	sink := newPassSink()
@@ -304,7 +269,7 @@ func TestAnAnsweredDivergenceResolvesWithoutLeavingWatch(t *testing.T) {
 	if waiting.Pending.Kind != tui.PendingDiverged {
 		t.Fatalf("expected the opening pass to report a divergence, got %+v", waiting.Pending)
 	}
-	content, _ := os.ReadFile(fixture.localPath)
+	content, _ := os.ReadFile(fixture.LocalPath)
 	if string(content) != "local-divergence" {
 		t.Fatalf("expected the reported divergence to leave local content, got %q", content)
 	}
@@ -313,14 +278,14 @@ func TestAnAnsweredDivergenceResolvesWithoutLeavingWatch(t *testing.T) {
 		Kind:     tui.WatchAnswered,
 		Title:    waiting.Title,
 		Omnisave: waiting.Pending.OmnisaveName,
-		Diverged: tui.DivergedBindingJump,
+		Diverged: savesync.DivergedJump,
 	}
 
 	answered := waitForPass(t, sink)
 	if answered.Err != nil {
 		t.Fatalf("expected the replayed answer to reconcile, got %v", answered.Err)
 	}
-	content, _ = os.ReadFile(fixture.localPath)
+	content, _ = os.ReadFile(fixture.LocalPath)
 	if string(content) != "deck-divergence" {
 		t.Fatalf("expected the answer to adopt the current revision, got %q", content)
 	}
@@ -353,8 +318,8 @@ func TestAnAnsweredDivergenceResolvesWithoutLeavingWatch(t *testing.T) {
 // spent, so a later divergence waits to be asked about rather than
 // inheriting a decision the user made about a different one.
 func TestAReplayedAnswerIsSpentAndDoesNotResolveTheNextDivergence(t *testing.T) {
-	server := newRealServer(t)
-	fixture := newSyncFixture(t, "first-progress")
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
 	loop := divergedLoop(t, server, &fixture)
 
 	sink := newPassSink()
@@ -367,7 +332,7 @@ func TestAReplayedAnswerIsSpentAndDoesNotResolveTheNextDivergence(t *testing.T) 
 		Kind:     tui.WatchAnswered,
 		Title:    waiting.Title,
 		Omnisave: waiting.Pending.OmnisaveName,
-		Diverged: tui.DivergedBindingJump,
+		Diverged: savesync.DivergedJump,
 	}
 	if answered := waitForPass(t, sink); answered.Err != nil {
 		t.Fatalf("expected the first answer to reconcile, got %v", answered.Err)
@@ -378,15 +343,15 @@ func TestAReplayedAnswerIsSpentAndDoesNotResolveTheNextDivergence(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	local := tracking.LocalSaveFrom(fixture.scans[0], fixture.scans[0].Games[0], fixture.save)
+	local := fixture.Local()
 	bound, ok := state.BindingFor(local)
 	if !ok {
 		t.Fatal("expected the binding to survive the answer")
 	}
-	if err := os.WriteFile(fixture.localPath, []byte("later-local"), 0o600); err != nil {
+	if err := os.WriteFile(fixture.LocalPath, []byte("later-local"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	otherDeviceCommit(t, server, bound.OmnisaveID, "later-deck")
+	savesynctest.OtherDeviceCommit(t, server, bound.OmnisaveID, "later-deck")
 
 	sink.requests <- tui.WatchRequest{Kind: tui.WatchSyncNow}
 
@@ -394,24 +359,24 @@ func TestAReplayedAnswerIsSpentAndDoesNotResolveTheNextDivergence(t *testing.T) 
 	if pendingSave(t, next).Pending.Kind != tui.PendingDiverged {
 		t.Fatal("expected the new divergence to wait for its own answer")
 	}
-	content, _ := os.ReadFile(fixture.localPath)
+	content, _ := os.ReadFile(fixture.LocalPath)
 	if string(content) != "later-local" {
 		t.Fatalf("expected the unanswered divergence to leave local content, got %q", content)
 	}
 }
 
 func TestAServerEventTriggersAPassThatAppliesADashRewind(t *testing.T) {
-	server := newRealServer(t)
-	fixture := newSyncFixture(t, "first-progress")
-	seed, bound := pushSecondRevision(t, server, &fixture, "second-progress")
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
+	seed, bound := savesynctest.PushSecondRevision(t, server, &fixture, "second-progress")
 
 	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Save(fixture.state); err != nil {
+	if err := store.Save(fixture.State); err != nil {
 		t.Fatal(err)
 	}
 	movement := make(chan string)
 	loop := watchLoop{
-		scanner: client.NewScanner(nil, fixtureAdapter{fixture: &fixture}),
+		scanner: client.NewScanner(nil, savesynctest.Adapter{Fixture: &fixture}),
 		server:  server,
 		store:   store,
 		poll:    time.Hour,
@@ -424,7 +389,7 @@ func TestAServerEventTriggersAPassThatAppliesADashRewind(t *testing.T) {
 		},
 		// Seeding watched files skips the loop's opening pass, so the pass
 		// under test is the one the event triggers.
-		watched: []string{fixture.localPath},
+		watched: []string{fixture.LocalPath},
 	}
 	sink := newPassSink()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -433,12 +398,7 @@ func TestAServerEventTriggersAPassThatAppliesADashRewind(t *testing.T) {
 
 	// The Dash rewinds current to the seed; only the event stream can tell
 	// the loop, since nothing local changed and the tickers are hours out.
-	if _, err := server.RestoreCurrentRevision(context.Background(), bound.OmnisaveID, omnisave.RestoreRevision{
-		ExpectedCurrentRevisionID: bound.LastSyncedRevisionID,
-		RevisionID:                seed.ID,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	savesynctest.Rewind(t, server, bound, seed)
 	movement <- remote.LibraryChangedEvent
 
 	select {
@@ -449,7 +409,7 @@ func TestAServerEventTriggersAPassThatAppliesADashRewind(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for the server event to trigger a pass")
 	}
-	content, err := os.ReadFile(fixture.localPath)
+	content, err := os.ReadFile(fixture.LocalPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,14 +431,14 @@ func TestAServerEventTriggersAPassThatAppliesADashRewind(t *testing.T) {
 // game it has in hand as it goes, so the live view can spin that row, and
 // hands back an empty title when it is done holding one.
 func TestAPassNamesTheGameItHasInHand(t *testing.T) {
-	server := newRealServer(t)
-	fixture := newSyncFixture(t, "first-progress")
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
 	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Save(fixture.state); err != nil {
+	if err := store.Save(fixture.State); err != nil {
 		t.Fatal(err)
 	}
 	loop := watchLoop{
-		scanner: client.NewScanner(nil, fixtureAdapter{fixture: &fixture}),
+		scanner: client.NewScanner(nil, savesynctest.Adapter{Fixture: &fixture}),
 		server:  server,
 		store:   store,
 		poll:    time.Hour,
@@ -537,16 +497,16 @@ func TestABranchIsAnnouncedOnceAndLeavesNoCondition(t *testing.T) {
 // track. Branching keeps the loop flowing without a prompt (FDR-005,
 // decision 15).
 func TestARewoundCurrentUnderLocalProgressKeepsWatchFlowing(t *testing.T) {
-	server := newRealServer(t)
-	fixture := newSyncFixture(t, "first-progress")
-	seed, bound := pushSecondRevision(t, server, &fixture, "second-progress")
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
+	seed, bound := savesynctest.PushSecondRevision(t, server, &fixture, "second-progress")
 
 	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Save(fixture.state); err != nil {
+	if err := store.Save(fixture.State); err != nil {
 		t.Fatal(err)
 	}
 	loop := watchLoop{
-		scanner: client.NewScanner(nil, fixtureAdapter{fixture: &fixture}),
+		scanner: client.NewScanner(nil, savesynctest.Adapter{Fixture: &fixture}),
 		server:  server,
 		store:   store,
 		// The local write is the trigger under test, so the poll path — the
@@ -556,7 +516,7 @@ func TestARewoundCurrentUnderLocalProgressKeepsWatchFlowing(t *testing.T) {
 		floor:   0,
 		settle:  time.Millisecond,
 		events:  newAnnouncer(),
-		watched: []string{fixture.localPath},
+		watched: []string{fixture.LocalPath},
 	}
 	sink := newPassSink()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -565,13 +525,8 @@ func TestARewoundCurrentUnderLocalProgressKeepsWatchFlowing(t *testing.T) {
 
 	// The game wrote while the Dash rewound underneath it, so the pass finds
 	// progress on both sides with current below the baseline.
-	if _, err := server.RestoreCurrentRevision(context.Background(), bound.OmnisaveID, omnisave.RestoreRevision{
-		ExpectedCurrentRevisionID: bound.LastSyncedRevisionID,
-		RevisionID:                seed.ID,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(fixture.localPath, []byte("kept-playing"), 0o600); err != nil {
+	savesynctest.Rewind(t, server, bound, seed)
+	if err := os.WriteFile(fixture.LocalPath, []byte("kept-playing"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -585,7 +540,7 @@ func TestARewoundCurrentUnderLocalProgressKeepsWatchFlowing(t *testing.T) {
 	if len(result.Events) != 1 || !strings.Contains(result.Events[0].Sentence, "branched from") {
 		t.Fatalf("expected one branch event, got %v", sentences(result.Events))
 	}
-	content, err := os.ReadFile(fixture.localPath)
+	content, err := os.ReadFile(fixture.LocalPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +549,7 @@ func TestARewoundCurrentUnderLocalProgressKeepsWatchFlowing(t *testing.T) {
 	}
 
 	// The loop is not stuck: the next write commits the ordinary way.
-	if err := os.WriteFile(fixture.localPath, []byte("still-playing"), 0o600); err != nil {
+	if err := os.WriteFile(fixture.LocalPath, []byte("still-playing"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	next := awaitPass(t, sink)
@@ -648,10 +603,10 @@ func (p *stubProcesses) Processes(context.Context) ([]running.Process, error) {
 func (p *stubProcesses) Cmdline(context.Context, int32) ([]string, error)   { return nil, nil }
 func (p *stubProcesses) OpenPaths(context.Context, int32) ([]string, error) { return nil, nil }
 
-// failingScans wraps fixtureAdapter so a test can break scanning mid-run,
-// the way an unreadable target fails a pass.
+// failingScans wraps the fixture's adapter so a test can break scanning
+// mid-run, the way an unreadable target fails a pass.
 type failingScans struct {
-	fixtureAdapter
+	savesynctest.Adapter
 	mu     sync.Mutex
 	broken bool
 	// heals clears the break as the scan it fails is attempted.
@@ -684,13 +639,13 @@ func (a *failingScans) DiscoverTargets(ctx context.Context) ([]target.Target, er
 	if broken {
 		return nil, errors.New("target unreadable")
 	}
-	return a.fixtureAdapter.DiscoverTargets(ctx)
+	return a.Adapter.DiscoverTargets(ctx)
 }
 
-// playingFixtureAdapter is a fixtureAdapter whose games always read as
-// playing, giving presence sweeps a matcher to consult.
+// playingFixtureAdapter is the fixture's adapter with its games always
+// reading as playing, giving presence sweeps a matcher to consult.
 type playingFixtureAdapter struct {
-	fixtureAdapter
+	savesynctest.Adapter
 }
 
 func (a playingFixtureAdapter) RunningGames(_ context.Context, _ *running.Snapshot, _ target.Target, games []target.InstalledGame) (map[string]bool, error) {
@@ -702,13 +657,13 @@ func (a playingFixtureAdapter) RunningGames(_ context.Context, _ *running.Snapsh
 }
 
 func TestAFailedScanKeepsTheStandingPresenceReaffirming(t *testing.T) {
-	server := newRealServer(t)
-	fixture := newSyncFixture(t, "first-progress")
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
 	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Save(fixture.state); err != nil {
+	if err := store.Save(fixture.State); err != nil {
 		t.Fatal(err)
 	}
-	adapter := &failingScans{fixtureAdapter: fixtureAdapter{fixture: &fixture}}
+	adapter := &failingScans{Adapter: savesynctest.Adapter{Fixture: &fixture}}
 	movement := make(chan string)
 	loop := watchLoop{
 		scanner:  client.NewScanner(nil, adapter),
@@ -766,20 +721,20 @@ func TestAFailedScanKeepsTheStandingPresenceReaffirming(t *testing.T) {
 
 func TestADetectorErrorSkipsTheReportInsteadOfClearingIt(t *testing.T) {
 	var statusReports atomic.Int32
-	server := newObservedServer(t, func(request *http.Request) {
+	server := savesynctest.NewObservedServer(t, func(request *http.Request) {
 		if request.Method == http.MethodPut && strings.HasSuffix(request.URL.Path, "/status") {
 			statusReports.Add(1)
 		}
 	})
-	fixture := newSyncFixture(t, "first-progress")
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
 	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Save(fixture.state); err != nil {
+	if err := store.Save(fixture.State); err != nil {
 		t.Fatal(err)
 	}
 	processes := &stubProcesses{}
 	movement := make(chan string)
 	loop := watchLoop{
-		scanner:  client.NewScanner(nil, playingFixtureAdapter{fixtureAdapter{fixture: &fixture}}),
+		scanner:  client.NewScanner(nil, playingFixtureAdapter{savesynctest.Adapter{Fixture: &fixture}}),
 		server:   server,
 		store:    store,
 		detector: running.NewDetector(processes),
@@ -840,10 +795,10 @@ func TestADetectorErrorSkipsTheReportInsteadOfClearingIt(t *testing.T) {
 	}
 }
 
-// toggledPlaying is a fixtureAdapter whose games read as playing only while
-// the switch is on, so a test can close a game mid-run.
+// toggledPlaying is the fixture's adapter with its games reading as playing
+// only while the switch is on, so a test can close a game mid-run.
 type toggledPlaying struct {
-	fixtureAdapter
+	savesynctest.Adapter
 	mu      sync.Mutex
 	playing bool
 }
@@ -865,22 +820,17 @@ func (a *toggledPlaying) RunningGames(_ context.Context, _ *running.Snapshot, _ 
 }
 
 func TestAHandedOffDeferredPullAppliesOnceTheGameCloses(t *testing.T) {
-	server := newRealServer(t)
-	fixture := newSyncFixture(t, "first-progress")
-	seed, bound := pushSecondRevision(t, server, &fixture, "second-progress")
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
+	seed, bound := savesynctest.PushSecondRevision(t, server, &fixture, "second-progress")
 	// The Dash rewound current to the seed while the game was being played:
 	// the track run held the pull and handed the waiting game to the loop.
-	if _, err := server.RestoreCurrentRevision(context.Background(), bound.OmnisaveID, omnisave.RestoreRevision{
-		ExpectedCurrentRevisionID: bound.LastSyncedRevisionID,
-		RevisionID:                seed.ID,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	savesynctest.Rewind(t, server, bound, seed)
 	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Save(fixture.state); err != nil {
+	if err := store.Save(fixture.State); err != nil {
 		t.Fatal(err)
 	}
-	adapter := &toggledPlaying{fixtureAdapter: fixtureAdapter{fixture: &fixture}, playing: true}
+	adapter := &toggledPlaying{Adapter: savesynctest.Adapter{Fixture: &fixture}, playing: true}
 	scanner := client.NewScanner(nil, adapter)
 	loop := watchLoop{
 		scanner:  scanner,
@@ -895,8 +845,8 @@ func TestAHandedOffDeferredPullAppliesOnceTheGameCloses(t *testing.T) {
 		// The hand-off seeds everything the run established, skipping the
 		// opening pass: the files to watch, the presence picture, and the
 		// game whose exit resolves the held pull.
-		watched:  []string{fixture.localPath},
-		presence: trackedPresence(scanner, &fixture.state, fixture.scans),
+		watched:  []string{fixture.LocalPath},
+		presence: savesync.TrackedPresence(scanner, &fixture.State, fixture.Scans),
 		deferred: []string{"local-game-1"},
 	}
 	sink := newPassSink()
@@ -935,7 +885,7 @@ func TestAHandedOffDeferredPullAppliesOnceTheGameCloses(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for the game's exit to trigger a pass")
 	}
-	content, err := os.ReadFile(fixture.localPath)
+	content, err := os.ReadFile(fixture.LocalPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -976,20 +926,15 @@ func (b *brokenLibrarySync) intercept(response http.ResponseWriter, request *htt
 
 func TestAPassThatNeverReconciledKeepsTheHeldPullsExitTrigger(t *testing.T) {
 	broken := &brokenLibrarySync{}
-	server := newInterceptedServer(t, broken.intercept)
-	fixture := newSyncFixture(t, "first-progress")
-	seed, bound := pushSecondRevision(t, server, &fixture, "second-progress")
-	if _, err := server.RestoreCurrentRevision(context.Background(), bound.OmnisaveID, omnisave.RestoreRevision{
-		ExpectedCurrentRevisionID: bound.LastSyncedRevisionID,
-		RevisionID:                seed.ID,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	server := savesynctest.NewInterceptedServer(t, broken.intercept)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
+	seed, bound := savesynctest.PushSecondRevision(t, server, &fixture, "second-progress")
+	savesynctest.Rewind(t, server, bound, seed)
 	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Save(fixture.state); err != nil {
+	if err := store.Save(fixture.State); err != nil {
 		t.Fatal(err)
 	}
-	adapter := &toggledPlaying{fixtureAdapter: fixtureAdapter{fixture: &fixture}, playing: true}
+	adapter := &toggledPlaying{Adapter: savesynctest.Adapter{Fixture: &fixture}, playing: true}
 	scanner := client.NewScanner(nil, adapter)
 	movement := make(chan string)
 	loop := watchLoop{
@@ -1005,8 +950,8 @@ func TestAPassThatNeverReconciledKeepsTheHeldPullsExitTrigger(t *testing.T) {
 		movement: func(context.Context) <-chan string {
 			return movement
 		},
-		watched:  []string{fixture.localPath},
-		presence: trackedPresence(scanner, &fixture.state, fixture.scans),
+		watched:  []string{fixture.LocalPath},
+		presence: savesync.TrackedPresence(scanner, &fixture.State, fixture.Scans),
 		deferred: []string{"local-game-1"},
 	}
 	sink := newPassSink()
@@ -1047,7 +992,7 @@ func TestAPassThatNeverReconciledKeepsTheHeldPullsExitTrigger(t *testing.T) {
 			if result.Err != nil {
 				t.Fatalf("expected the exit-triggered pass to succeed, got %v", result.Err)
 			}
-			content, err := os.ReadFile(fixture.localPath)
+			content, err := os.ReadFile(fixture.LocalPath)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1085,17 +1030,17 @@ func (a *brokenScans) DiscoverTargets(ctx context.Context) ([]target.Target, err
 }
 
 func TestAFailingExitTriggeredPassRunsOnceAndRearmsOnRelaunch(t *testing.T) {
-	server := newRealServer(t)
-	fixture := newSyncFixture(t, "first-progress")
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
 	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Save(fixture.state); err != nil {
+	if err := store.Save(fixture.State); err != nil {
 		t.Fatal(err)
 	}
 	adapter := &brokenScans{
-		toggledPlaying: &toggledPlaying{fixtureAdapter: fixtureAdapter{fixture: &fixture}, playing: true},
+		toggledPlaying: &toggledPlaying{Adapter: savesynctest.Adapter{Fixture: &fixture}, playing: true},
 	}
 	scanner := client.NewScanner(nil, adapter)
-	presence := trackedPresence(scanner, &fixture.state, fixture.scans)
+	presence := savesync.TrackedPresence(scanner, &fixture.State, fixture.Scans)
 	adapter.breakScans()
 	loop := watchLoop{
 		scanner:  scanner,
@@ -1107,7 +1052,7 @@ func TestAFailingExitTriggeredPassRunsOnceAndRearmsOnRelaunch(t *testing.T) {
 		floor:    0,
 		settle:   time.Millisecond,
 		events:   newAnnouncer(),
-		watched:  []string{fixture.localPath},
+		watched:  []string{fixture.LocalPath},
 		presence: presence,
 		deferred: []string{"local-game-1"},
 	}
@@ -1166,16 +1111,16 @@ func TestAFailingExitTriggeredPassRunsOnceAndRearmsOnRelaunch(t *testing.T) {
 }
 
 func TestSteadyServerEventsCoalesceIntoAPassInsteadOfStarvingIt(t *testing.T) {
-	server := newRealServer(t)
-	fixture := newSyncFixture(t, "first-progress")
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
 
 	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Save(fixture.state); err != nil {
+	if err := store.Save(fixture.State); err != nil {
 		t.Fatal(err)
 	}
 	movement := make(chan string)
 	loop := watchLoop{
-		scanner: client.NewScanner(nil, fixtureAdapter{fixture: &fixture}),
+		scanner: client.NewScanner(nil, savesynctest.Adapter{Fixture: &fixture}),
 		server:  server,
 		store:   store,
 		poll:    time.Hour,
@@ -1186,7 +1131,7 @@ func TestSteadyServerEventsCoalesceIntoAPassInsteadOfStarvingIt(t *testing.T) {
 		movement: func(context.Context) <-chan string {
 			return movement
 		},
-		watched: []string{fixture.localPath},
+		watched: []string{fixture.LocalPath},
 	}
 	sink := newPassSink()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1224,13 +1169,13 @@ func TestSteadyServerEventsCoalesceIntoAPassInsteadOfStarvingIt(t *testing.T) {
 // worth less than the pull interval — which is the fallback for a quiet
 // server, not the answer to a broken pass.
 func TestAFailedPassIsRetriedWithoutWaitingForThePullInterval(t *testing.T) {
-	server := newRealServer(t)
-	fixture := newSyncFixture(t, "first-progress")
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
 	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Save(fixture.state); err != nil {
+	if err := store.Save(fixture.State); err != nil {
 		t.Fatal(err)
 	}
-	adapter := &failingScans{fixtureAdapter: fixtureAdapter{fixture: &fixture}}
+	adapter := &failingScans{Adapter: savesynctest.Adapter{Fixture: &fixture}}
 	adapter.failOnce()
 	loop := watchLoop{
 		scanner: client.NewScanner(nil, adapter),
@@ -1262,13 +1207,13 @@ func TestAFailedPassIsRetriedWithoutWaitingForThePullInterval(t *testing.T) {
 // list would leave the poll with nothing to compare, so a save written while
 // the server was unreachable would go unnoticed even after it came back.
 func TestAFailedPassKeepsTheFilesItWasAlreadyWatching(t *testing.T) {
-	server := newRealServer(t)
-	fixture := newSyncFixture(t, "first-progress")
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
 	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Save(fixture.state); err != nil {
+	if err := store.Save(fixture.State); err != nil {
 		t.Fatal(err)
 	}
-	adapter := &failingScans{fixtureAdapter: fixtureAdapter{fixture: &fixture}}
+	adapter := &failingScans{Adapter: savesynctest.Adapter{Fixture: &fixture}}
 	movement := make(chan string)
 	loop := watchLoop{
 		scanner: client.NewScanner(nil, adapter),
@@ -1317,13 +1262,13 @@ func TestAFailedPassKeepsTheFilesItWasAlreadyWatching(t *testing.T) {
 // the failure it carries is not forgotten — the first quiet poll runs the
 // pass instead.
 func TestTheRetryWaitsOutASaveStillBeingWritten(t *testing.T) {
-	server := newRealServer(t)
-	fixture := newSyncFixture(t, "first-progress")
+	server := savesynctest.NewServer(t)
+	fixture := savesynctest.NewSyncFixture(t, "first-progress")
 	store := tracking.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Save(fixture.state); err != nil {
+	if err := store.Save(fixture.State); err != nil {
 		t.Fatal(err)
 	}
-	adapter := &failingScans{fixtureAdapter: fixtureAdapter{fixture: &fixture}}
+	adapter := &failingScans{Adapter: savesynctest.Adapter{Fixture: &fixture}}
 	adapter.failOnce()
 	movement := make(chan string)
 	loop := watchLoop{
@@ -1342,7 +1287,7 @@ func TestTheRetryWaitsOutASaveStillBeingWritten(t *testing.T) {
 		movement: func(context.Context) <-chan string {
 			return movement
 		},
-		watched: []string{fixture.localPath},
+		watched: []string{fixture.LocalPath},
 	}
 	sink := newPassSink()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1358,7 +1303,7 @@ func TestTheRetryWaitsOutASaveStillBeingWritten(t *testing.T) {
 	// The game writes after the failed pass rebased its signature, so the
 	// retry finds the save moving.
 	time.Sleep(50 * time.Millisecond)
-	if err := os.WriteFile(fixture.localPath, []byte("mid-write"), 0o600); err != nil {
+	if err := os.WriteFile(fixture.LocalPath, []byte("mid-write"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

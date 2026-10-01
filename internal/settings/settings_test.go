@@ -7,12 +7,12 @@ import (
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/settings"
-	"github.com/krisbaumgartner/omnisave/internal/storage/storagetest"
+	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite/sqlitetest"
 )
 
 func TestAnnouncingIsOnUntilTheOwnerSaysOtherwise(t *testing.T) {
 	ctx := context.Background()
-	service := settings.New(storagetest.NewMemoryRepository(), nil)
+	service := settings.New(sqlitetest.Open(t), nil)
 
 	setting, err := service.Get(ctx, settings.AnnounceDiscovery)
 	if err != nil {
@@ -25,7 +25,7 @@ func TestAnnouncingIsOnUntilTheOwnerSaysOtherwise(t *testing.T) {
 
 func TestAnOwnersChoiceIsStoredAndAppliesImmediately(t *testing.T) {
 	ctx := context.Background()
-	service := settings.New(storagetest.NewMemoryRepository(), nil)
+	service := settings.New(sqlitetest.Open(t), nil)
 	applied := []settings.Setting{}
 	service.OnChange(func(changed settings.Setting) { applied = append(applied, changed) })
 
@@ -46,7 +46,7 @@ func TestAnOwnersChoiceIsStoredAndAppliesImmediately(t *testing.T) {
 
 func TestADeploymentPinWinsAndIsNotOffered(t *testing.T) {
 	ctx := context.Background()
-	repository := storagetest.NewMemoryRepository()
+	repository := sqlitetest.Open(t)
 	// An owner who set this before the operator pinned it: the stored value
 	// stays, and stops being what the server does.
 	if err := repository.SetOwnerSetting(ctx, settings.AnnounceDiscovery, "true", time.Time{}); err != nil {
@@ -71,7 +71,7 @@ func TestADeploymentPinWinsAndIsNotOffered(t *testing.T) {
 
 func TestUnknownSettingsAreRefusedRatherThanInvented(t *testing.T) {
 	ctx := context.Background()
-	service := settings.New(storagetest.NewMemoryRepository(), nil)
+	service := settings.New(sqlitetest.Open(t), nil)
 	if _, err := service.Get(ctx, "discovery.broadcast"); !errors.Is(err, settings.ErrNotFound) {
 		t.Fatalf("an undeclared setting answered: %v", err)
 	}

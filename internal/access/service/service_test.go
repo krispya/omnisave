@@ -9,7 +9,7 @@ import (
 
 	"github.com/krisbaumgartner/omnisave/internal/access"
 	accessservice "github.com/krisbaumgartner/omnisave/internal/access/service"
-	"github.com/krisbaumgartner/omnisave/internal/storage/storagetest"
+	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite/sqlitetest"
 )
 
 const ownerToken = "owner-token-with-enough-length-0123456789"
@@ -40,7 +40,7 @@ func (c *clock) advance(by time.Duration) {
 func newService(t *testing.T) (access.Service, *clock) {
 	t.Helper()
 	time := newClock()
-	return accessservice.NewWithClock(storagetest.NewMemoryRepository(), ownerToken, time.Now), time
+	return accessservice.NewWithClock(sqlitetest.Open(t), ownerToken, time.Now), time
 }
 
 func requestPairing(t *testing.T, ctx context.Context, service access.Service, name string) *access.PairingTicket {

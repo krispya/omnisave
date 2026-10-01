@@ -10,7 +10,6 @@ import (
 	"github.com/krisbaumgartner/omnisave/internal/access"
 	accessservice "github.com/krisbaumgartner/omnisave/internal/access/service"
 	"github.com/krisbaumgartner/omnisave/internal/settings"
-	"github.com/krisbaumgartner/omnisave/internal/storage"
 	"github.com/krisbaumgartner/omnisave/internal/storage/sqlite"
 )
 
@@ -63,7 +62,7 @@ func TestAPairingTokenIsTakenOnlyOnce(t *testing.T) {
 	ctx := context.Background()
 	repository := openRepository(t)
 	now := time.Now()
-	record := storage.PairingRecord{
+	record := access.PairingRecord{
 		PairingRequest: access.PairingRequest{
 			ID:         "request-1",
 			Code:       "4F2KQP",
@@ -107,7 +106,7 @@ func TestAPairingTokenIsTakenOnlyOnce(t *testing.T) {
 	if len(pending) != 0 {
 		t.Fatalf("an approved request is still pending: %+v", pending)
 	}
-	if err := repository.ResolvePairingRequest(ctx, record.ID, access.PairingDenied, "", ""); !errors.Is(err, storage.ErrNotFound) {
+	if err := repository.ResolvePairingRequest(ctx, record.ID, access.PairingDenied, "", ""); !errors.Is(err, access.ErrNotFound) {
 		t.Fatalf("an approved request was resolvable again: %v", err)
 	}
 }
@@ -117,7 +116,7 @@ func TestExpiredRequestsAreCountedUntilTheyAreSweptAway(t *testing.T) {
 	repository := openRepository(t)
 	now := time.Now()
 	for index, id := range []string{"a", "b"} {
-		if err := repository.InsertPairingRequest(ctx, storage.PairingRecord{
+		if err := repository.InsertPairingRequest(ctx, access.PairingRecord{
 			PairingRequest: access.PairingRequest{
 				ID:            id,
 				Code:          "CODE" + id,
@@ -167,8 +166,8 @@ func TestOwnerSettingsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	repository := openRepository(t)
 
-	if _, err := repository.GetOwnerSetting(ctx, settings.AnnounceDiscovery); !errors.Is(err, storage.ErrNotFound) {
-		t.Fatalf("an unset setting answered %v", err)
+	if _, ok, err := repository.GetOwnerSetting(ctx, settings.AnnounceDiscovery); err != nil || ok {
+		t.Fatalf("an unset setting answered ok=%t (%v)", ok, err)
 	}
 	if err := repository.SetOwnerSetting(ctx, settings.AnnounceDiscovery, "false", time.Now()); err != nil {
 		t.Fatal(err)
@@ -176,7 +175,7 @@ func TestOwnerSettingsRoundTrip(t *testing.T) {
 	if err := repository.SetOwnerSetting(ctx, settings.AnnounceDiscovery, "true", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	value, err := repository.GetOwnerSetting(ctx, settings.AnnounceDiscovery)
+	value, _, err := repository.GetOwnerSetting(ctx, settings.AnnounceDiscovery)
 	if err != nil {
 		t.Fatal(err)
 	}

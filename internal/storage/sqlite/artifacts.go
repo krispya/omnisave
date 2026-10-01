@@ -8,7 +8,7 @@ import (
 	"io"
 	"sort"
 
-	"github.com/krisbaumgartner/omnisave/internal/storage"
+	"github.com/krisbaumgartner/omnisave/internal/artifact"
 	"github.com/krisbaumgartner/omnisave/internal/storage/store"
 )
 
@@ -17,17 +17,17 @@ import (
 // reference may be created only while a matching row says the object is
 // available. Portable manifests independently carry sizes for recovery.
 
-func (r *Repository) storeArtifact(artifact storage.Artifact, payload io.Reader) error {
-	if !store.ValidHash(artifact.SHA256) || artifact.Size < 0 {
-		return fmt.Errorf("%w: invalid descriptor", storage.ErrArtifactMismatch)
+func (r *Repository) storeArtifact(descriptor artifact.Artifact, payload io.Reader) error {
+	if !store.ValidHash(descriptor.SHA256) || descriptor.Size < 0 {
+		return fmt.Errorf("%w: invalid descriptor", artifact.ErrMismatch)
 	}
 	// The streaming write happens outside the mutation lock — an upload lasts
 	// as long as the client's connection, and objects are content-addressed,
 	// so concurrent writers of the same bytes are harmless.
-	_, err := r.store.PutObject(artifact.SHA256, payload)
+	_, err := r.store.PutObject(descriptor.SHA256, payload)
 	if err != nil {
 		if errors.Is(err, store.ErrContentMismatch) {
-			return fmt.Errorf("%w: payload does not match descriptor", storage.ErrArtifactMismatch)
+			return fmt.Errorf("%w: payload does not match descriptor", artifact.ErrMismatch)
 		}
 		return err
 	}
@@ -47,21 +47,21 @@ func (r *Repository) storeArtifact(artifact storage.Artifact, payload io.Reader)
 	// Reclamation uses the same order, so another process cannot remove the
 	// object between this proof and publication of the capability.
 	if _, err := tx.Exec(`INSERT INTO artifacts(sha256, size, available) VALUES (?, ?, 0)
-		ON CONFLICT(sha256) DO NOTHING`, artifact.SHA256, artifact.Size); err != nil {
+		ON CONFLICT(sha256) DO NOTHING`, descriptor.SHA256, descriptor.Size); err != nil {
 		return err
 	}
-	measured, err := r.store.VerifyObject(artifact.SHA256)
+	measured, err := r.store.VerifyObject(descriptor.SHA256)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return storage.ErrNotFound
+			return artifact.ErrNotFound
 		}
 		return err
 	}
-	if measured != artifact.Size {
-		return fmt.Errorf("%w: payload does not match descriptor", storage.ErrArtifactMismatch)
+	if measured != descriptor.Size {
+		return fmt.Errorf("%w: payload does not match descriptor", artifact.ErrMismatch)
 	}
 	if _, err := tx.Exec(`UPDATE artifacts SET size = ?, available = 1 WHERE sha256 = ?`,
-		measured, artifact.SHA256); err != nil {
+		measured, descriptor.SHA256); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -70,7 +70,7 @@ func (r *Repository) storeArtifact(artifact storage.Artifact, payload io.Reader)
 func (r *Repository) openArtifact(hash string) (io.ReadCloser, error) {
 	reader, err := r.store.OpenObject(hash)
 	if errors.Is(err, store.ErrNotFound) {
-		return nil, storage.ErrNotFound
+		return nil, artifact.ErrNotFound
 	}
 	return reader, err
 }
@@ -102,7 +102,7 @@ func (r *Repository) statArtifact(hash string) (int64, error) {
 	}
 	size, err = r.store.VerifyObject(hash)
 	if errors.Is(err, store.ErrNotFound) {
-		return 0, storage.ErrNotFound
+		return 0, artifact.ErrNotFound
 	}
 	if err != nil {
 		return 0, err
@@ -138,7 +138,7 @@ func (r *Repository) requireAvailableArtifacts(
 		return nil
 	}
 	sort.Strings(missing)
-	return &storage.ArtifactsUnavailable{SHA256: missing}
+	return &artifact.Unavailable{SHA256: missing}
 }
 
 // reclaimArtifacts rechecks liveness under the mutation lock before best-effort removal.
