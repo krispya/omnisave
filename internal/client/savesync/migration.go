@@ -66,7 +66,7 @@ func (r *reconciliation) historyLoader(ctx context.Context, c candidate) func(st
 		if held[omnisaveID] {
 			return nil, errMigrationHeld
 		}
-		title, name := local.GameTitle, omnisaveDisplayName(remoteSave)
+		title, name := local.DisplayTitle(), omnisaveDisplayName(remoteSave)
 		hold := func(reason error) ([]omnisave.Revision, error) {
 			r.Report.MigrationHeld(title, name, reason)
 			r.outcome.Held++

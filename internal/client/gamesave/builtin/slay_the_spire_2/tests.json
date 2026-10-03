@@ -1,0 +1,66 @@
+{
+  "game_key": "steam.app:2868840",
+  "adapter_id": "sts2.vanilla",
+  "cloud_files": ["saves/progress.save", "saves/prefs.save", "saves/current_run.save", "saves/current_run_mp.save"],
+  "cloud_directories": [{"Path": "saves/history", "Extension": ".run"}],
+  "cases": [
+    {
+      "name": "complete profile includes backups and history while shared files stay local",
+      "target": "steam:fixture",
+      "roots": ["[saves]/SlayTheSpire2/steam"],
+      "files": [
+        "[saves]/SlayTheSpire2/steam/100/profile1/saves/progress.save",
+        "[saves]/SlayTheSpire2/steam/100/profile1/saves/progress.save.backup",
+        "[saves]/SlayTheSpire2/steam/100/profile1/saves/current_run.save",
+        "[saves]/SlayTheSpire2/steam/100/profile1/saves/current_run.save.backup",
+        "[saves]/SlayTheSpire2/steam/100/profile1/saves/history/completed.run",
+        "[saves]/SlayTheSpire2/steam/100/profile1/saves/unknown-sidecar",
+        "[saves]/SlayTheSpire2/steam/100/profile2/saves/progress.save",
+        "[saves]/SlayTheSpire2/steam/100/profile.save",
+        "[saves]/SlayTheSpire2/steam/100/settings.save",
+        "[saves]/SlayTheSpire2/steam/100/modded/profile1/saves/progress.save",
+        "[saves]/SlayTheSpire2/steam/not-an-account/profile1/saves/progress.save"
+      ],
+      "symlinks": {"[saves]/SlayTheSpire2/steam/100/profile1/saves/linked": "[saves]/SlayTheSpire2/steam/100/profile1/saves/progress.save"},
+      "slots": [
+        {"directory": "[saves]/SlayTheSpire2/steam/100/profile1", "label": "Profile 1", "files": ["saves/current_run.save", "saves/current_run.save.backup", "saves/history/completed.run", "saves/progress.save", "saves/progress.save.backup", "saves/unknown-sidecar"], "cloud_prefix": "profile1", "cloud_account": "100"},
+        {"directory": "[saves]/SlayTheSpire2/steam/100/profile2", "label": "Profile 2", "files": ["saves/progress.save"], "cloud_prefix": "profile2", "cloud_account": "100"},
+        {"directory": "[saves]/SlayTheSpire2/steam/100/profile3", "label": "Profile 3", "files": [], "cloud_prefix": "profile3", "cloud_account": "100"}
+      ]
+    },
+    {
+      "name": "empty profiles on multiple accounts stay distinct without account labels",
+      "target": "steam:fixture",
+      "roots": ["SlayTheSpire2/steam"],
+      "directories": ["SlayTheSpire2/steam/100", "SlayTheSpire2/steam/200", "SlayTheSpire2/steam/0", "SlayTheSpire2/steam/18446744073709551616", "SlayTheSpire2/steam/١٠٠"],
+      "slots": [
+        {"directory": "SlayTheSpire2/steam/100/profile1", "label": "Profile 1 (account 1)", "files": [], "cloud_prefix": "profile1", "cloud_account": "100"},
+        {"directory": "SlayTheSpire2/steam/100/profile2", "label": "Profile 2 (account 1)", "files": [], "cloud_prefix": "profile2", "cloud_account": "100"},
+        {"directory": "SlayTheSpire2/steam/100/profile3", "label": "Profile 3 (account 1)", "files": [], "cloud_prefix": "profile3", "cloud_account": "100"},
+        {"directory": "SlayTheSpire2/steam/200/profile1", "label": "Profile 1 (account 2)", "files": [], "cloud_prefix": "profile1", "cloud_account": "200"},
+        {"directory": "SlayTheSpire2/steam/200/profile2", "label": "Profile 2 (account 2)", "files": [], "cloud_prefix": "profile2", "cloud_account": "200"},
+        {"directory": "SlayTheSpire2/steam/200/profile3", "label": "Profile 3 (account 2)", "files": [], "cloud_prefix": "profile3", "cloud_account": "200"}
+      ]
+    },
+    {
+      "name": "no native account is no placement destination",
+      "target": "steam:fixture",
+      "roots": ["SlayTheSpire2/steam"],
+      "slots": []
+    },
+    {
+      "name": "a launcher mirror is not a native anchor",
+      "target": "steam:fixture",
+      "roots": ["userdata/100/2868840/remote"],
+      "directories": ["userdata/100/2868840/remote/profile1"],
+      "slots": []
+    },
+    {
+      "name": "GameHub is not verified for independent profiles, so it keeps the whole save",
+      "target": "gamehub:fixture",
+      "roots": ["SlayTheSpire2/steam"],
+      "directories": ["SlayTheSpire2/steam/100"],
+      "slots": []
+    }
+  ]
+}

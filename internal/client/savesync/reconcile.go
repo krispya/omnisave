@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"reflect"
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
@@ -29,8 +31,8 @@ type Options struct {
 
 // Reconcile works every save of the confirmed games in scans. It binds
 // unbound saves — seeding, rebinding by content, or asking — syncs bound
-// saves three ways against their baseline, offers server saves to games with
-// no local save, and then reports achievements for every bound save. It adds
+// saves three ways against their baseline, offers server saves to empty
+// native destinations, and then reports achievements for every bound save. It adds
 // what it did to outcome and records bindings, baselines, and remembered
 // verdicts in state.
 //
@@ -53,7 +55,27 @@ func Reconcile(
 	// Saves are worked one game at a time; however this pass leaves, it
 	// leaves no game marked as being worked on.
 	defer ports.Report.Idle()
-	candidates, empties := saveCandidates(state, scans, confirmed)
+	previousSelections := maps.Clone(state.SaveSelections)
+	// Only games confirmed on the server record their slot default or report
+	// unavailable slots: their saves are the only ones this pass works.
+	selected, err := selectSaveScopes(state, scans, scopeOptions{
+		record: confirmed,
+		failed: func(gameID, title string, err error) {
+			if confirmed[gameID] {
+				outcome.Failed++
+				ports.Report.SaveFailed(title, err)
+			}
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if ports.Checkpoint != nil && !reflect.DeepEqual(previousSelections, state.SaveSelections) {
+		if err := ports.Checkpoint(*state); err != nil {
+			return err
+		}
+	}
+	candidates, empties := saveCandidates(state, selected, confirmed)
 	if len(candidates) == 0 && len(empties) == 0 {
 		return nil
 	}
@@ -69,6 +91,7 @@ func Reconcile(
 		state:    state,
 		outcome:  outcome,
 		lineages: newLineagePass(ports.Server, remoteSaves),
+		scans:    selected,
 	}
 	for _, c := range candidates {
 		if _, tracked := state.Games[c.local.GameID]; !tracked {
@@ -84,7 +107,7 @@ func Reconcile(
 	// so a save seeded or committed a moment ago is already a revision the
 	// server can place an unlock on.
 	for _, c := range candidates {
-		if bound, isBound := state.BindingFor(c.local); isBound {
+		if bound, isBound := state.BindingFor(c.local); isBound && c.save.Scope == (omnisave.SaveScope{}) {
 			reportAchievements(ctx, ports, state, c.local, c.save, c.discovered, c.game, bound.OmnisaveID)
 		}
 	}
@@ -108,6 +131,9 @@ type reconciliation struct {
 	state    *tracking.State
 	outcome  *Outcome
 	lineages *lineagePass
+	// scans is the pass's scope-selected view, which says which bound saves
+	// still exist when deciding who owns a history.
+	scans []client.TargetScan
 }
 
 // candidate is one local save with content, and what working it needs.
@@ -145,7 +171,7 @@ func saveCandidates(state *tracking.State, scans []client.TargetScan, confirmed 
 	for _, scan := range scans {
 		for _, discovered := range scan.Games {
 			game := state.Games[discovered.Game.ID]
-			if !confirmed[discovered.Game.ID] || game.ServerGameID == "" {
+			if !confirmed[discovered.Game.ID] || game.ServerGameID == "" || discovered.ScopeUnavailable {
 				continue
 			}
 			hasSave := false
@@ -162,7 +188,22 @@ func saveCandidates(state *tracking.State, scans []client.TargetScan, confirmed 
 					serverGameID: game.ServerGameID,
 				})
 			}
-			if !hasSave {
+			emptyDestinations := []target.SaveDestination{}
+			occupied := map[string]bool{}
+			for _, save := range discovered.Saves {
+				if len(save.Files) > 0 {
+					occupied[save.ID] = true
+				}
+			}
+			for _, destination := range discovered.Destinations {
+				if !occupied[destination.ID] {
+					emptyDestinations = append(emptyDestinations, destination)
+				}
+			}
+			if !hasSave || len(emptyDestinations) > 0 {
+				if hasSave {
+					discovered.Destinations = emptyDestinations
+				}
 				empties = append(empties, emptyCandidate{
 					scan: scan, discovered: discovered, serverGameID: game.ServerGameID,
 				})
@@ -206,13 +247,17 @@ func (r *reconciliation) bindSynced(local tracking.LocalSave, omnisaveID, revisi
 func (r *reconciliation) reconcileSave(ctx context.Context, c candidate) error {
 	c.readManifest = memoManifest(ctx, c.save)
 	c.loadHistory = r.historyLoader(ctx, c)
-	c.finish = finishPlacement(r.Adapters, c.discovered, c.game, c.local.GameTitle, r.Report)
+	c.finish = finishPlacement(r.Adapters, c.discovered, c.game, c.local.DisplayTitle(), r.Report)
 	if pending, ok := r.state.PlacementFor(c.local); ok {
 		r.retryPlacement(ctx, c, pending)
 		return nil
 	}
 	if bound, isBound := r.state.BindingFor(c.local); isBound {
 		if remoteSave, exists := r.lineages.save(bound.OmnisaveID); exists {
+			if remoteSave.Scope != c.save.Scope {
+				r.failed(c.local.DisplayTitle(), errors.New("history scope differs"))
+				return nil
+			}
 			return r.syncBound(ctx, c, bound, remoteSave)
 		}
 		if len(r.lineages.byGame[c.serverGameID]) == 0 {
@@ -230,7 +275,7 @@ func (r *reconciliation) reconcileSave(ctx context.Context, c candidate) error {
 // syncs back as untracking — reseeding here would resurrect the deleted
 // content. Re-tracking starts fresh.
 func (r *reconciliation) untrackDeleted(ctx context.Context, c candidate) {
-	title := c.local.GameTitle
+	title := c.local.DisplayTitle()
 	working(ctx, r.Report, title)
 	r.state.Untrack(c.local.GameID)
 	if err := r.Server.UntrackGame(ctx, c.serverGameID, r.state.Device.ID); err != nil && !errors.Is(err, catalog.ErrNotFound) {
@@ -243,11 +288,12 @@ func (r *reconciliation) untrackDeleted(ctx context.Context, c candidate) {
 }
 
 // bindUnbound decides which lineage an unbound save belongs to: a new one
-// when the game has none, the one whose Current Revision it already equals,
-// or — when content alone cannot decide — the one a person chooses.
+// when the game has none it may join, the one whose Current Revision it
+// already equals, or — when content alone cannot decide — the one a person
+// chooses. Histories of another scope, or owned by a sibling save, never join.
 func (r *reconciliation) bindUnbound(ctx context.Context, c candidate) error {
-	title := c.local.GameTitle
-	gameSaves := r.lineages.gameSaves(c.serverGameID)
+	title := c.local.DisplayTitle()
+	gameSaves := unowned(r.state, r.scans, c.local, compatibleSaves(r.lineages.gameSaves(c.serverGameID), c.save.Scope))
 	// Matching content against every lineage reads the save in full.
 	working(ctx, r.Report, title)
 	if len(gameSaves) == 0 {
@@ -298,7 +344,7 @@ func (r *reconciliation) bindUnbound(ctx context.Context, c candidate) error {
 // the local content current, and forking at the matched revision. The fork
 // answer names the save it would create, and creates exactly that one.
 func (r *reconciliation) resolveStale(ctx context.Context, c candidate, match binding.ContentMatch) error {
-	title, name := c.local.GameTitle, omnisaveDisplayName(match.Omnisave)
+	title, name := c.local.DisplayTitle(), omnisaveDisplayName(match.Omnisave)
 	current, currentFound := revisionByID(r.lineages.histories[match.Omnisave.ID], match.Omnisave.CurrentRevisionID)
 	if !currentFound {
 		r.failed(title, errors.New("matching Omnisave has no readable current revision"))
@@ -359,7 +405,7 @@ func (r *reconciliation) chooseLineage(
 	matchable []binding.Lineage,
 	held int,
 ) error {
-	title := c.local.GameTitle
+	title := c.local.DisplayTitle()
 	matchedRevisions := make(map[string]string, len(matches))
 	for _, match := range matches {
 		matchedRevisions[match.Omnisave.ID] = match.Revisions[len(match.Revisions)-1].ID
@@ -459,10 +505,12 @@ func (r *reconciliation) chooseLineage(
 }
 
 // seed creates a new Omnisave from one local save and records the seed
-// revision as the binding's sync baseline.
+// revision as the binding's sync baseline. A save slot's history is named
+// after its slot, such as "Profile 1"; a whole save takes the server's
+// default name. Either name stays editable and is never identity.
 func (r *reconciliation) seed(ctx context.Context, c candidate) {
-	title := c.local.GameTitle
-	created, revision, err := binding.Seed(ctx, r.Server, c.serverGameID, c.save, "")
+	title := c.local.DisplayTitle()
+	created, revision, err := binding.Seed(ctx, r.Server, c.serverGameID, c.save, c.save.Slot)
 	if err != nil {
 		r.failed(title, err)
 		return
@@ -482,7 +530,7 @@ func (r *reconciliation) seed(ctx context.Context, c candidate) {
 // needs no record: the retry finds the local content in the chosen save's
 // history and is asked as a stale match, whose jump finishes this answer.
 func (r *reconciliation) syncUnmatched(ctx context.Context, c candidate, selected omnisave.Omnisave, current omnisave.Revision) {
-	title, name := c.local.GameTitle, omnisaveDisplayName(selected)
+	title, name := c.local.DisplayTitle(), omnisaveDisplayName(selected)
 	// Adoption ends by applying the chosen save's Current Revision to this
 	// save's files, so prove the layout can take it before local progress is
 	// preserved toward it.
@@ -503,4 +551,15 @@ func (r *reconciliation) syncUnmatched(ctx context.Context, c candidate, selecte
 	}
 	r.outcome.Pulled++
 	r.Report.SyncedWith(title, name, time.Now())
+}
+
+// Compatible scopes are compared before fetching history or examining layouts.
+func compatibleSaves(saves []omnisave.Omnisave, scope omnisave.SaveScope) []omnisave.Omnisave {
+	var compatible []omnisave.Omnisave
+	for _, save := range saves {
+		if save.Scope == scope {
+			compatible = append(compatible, save)
+		}
+	}
+	return compatible
 }

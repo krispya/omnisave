@@ -1,6 +1,9 @@
 package savesync
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 // Prompts put the questions only a person can answer. Each is optional: a
 // nil prompt leaves its question for a later interactive run, which is what
@@ -11,8 +14,9 @@ import "errors"
 // An error a prompt returns ends the pass unchanged, so a caller can tell a
 // person calling off the run from a failure.
 type Prompts struct {
-	// SyncToDevice picks which server save to place on a Device that has no
-	// local save for the game (FDR-003). An empty choice places nothing.
+	// SyncToDevice picks which server save to place at which empty native
+	// destination: a game with no local save, or an empty save slot (FDR-003).
+	// An empty choice places nothing.
 	SyncToDevice func(gameTitle string, options []SyncToDeviceOption) (SyncToDeviceChoice, error)
 	// Stale resolves a Local Save matching exactly one Omnisave at a
 	// revision that is not its Current Revision.
@@ -34,16 +38,21 @@ type Prompts struct {
 // prompts at all does with every question it meets.
 var ErrUnanswered = errors.New("no answer for this save")
 
-// SyncToDeviceOption is one server save that can be placed on a Device with
-// no local save.
+// SyncToDeviceOption is one server save and the empty destination it can be
+// placed at. DestinationLabel names a save slot; it is empty for a whole save.
+// SavedAt is when the save's Current Revision was written.
 type SyncToDeviceOption struct {
-	OmnisaveID string
-	Name       string
+	OmnisaveID       string
+	Name             string
+	SavedAt          time.Time
+	DestinationID    string
+	DestinationLabel string
 }
 
 // SyncToDeviceChoice is empty when the person decides not to place a save.
 type SyncToDeviceChoice struct {
-	OmnisaveID string
+	OmnisaveID    string
+	DestinationID string
 }
 
 // StaleQuestion is one stale save put to a person: the game, the Omnisave it
@@ -107,4 +116,23 @@ const (
 	// DivergedUseLocal commits this Device's content on top of the Current
 	// Revision and makes it current, leaving local files untouched.
 	DivergedUseLocal DivergedChoice = "use-local"
+)
+
+// ScopeQuestion revisits whether a game keeps a history per save slot or one
+// whole save. Slots are the game's own labels; Current is the scope in effect.
+type ScopeQuestion struct {
+	GameTitle string
+	Slots     []string
+	Current   ScopeChoice
+}
+
+// ScopeChoice answers a ScopeQuestion. The empty choice keeps the current scope.
+type ScopeChoice string
+
+const (
+	// ScopeSaveSlots tracks every slot the game's adapter finds, each with its
+	// own history. It is the default wherever slots are offered.
+	ScopeSaveSlots ScopeChoice = "slots"
+	// ScopeWholeSave tracks every file in the game's save as one history.
+	ScopeWholeSave ScopeChoice = "whole"
 )

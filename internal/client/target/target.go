@@ -8,6 +8,7 @@ import (
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
 	"github.com/krisbaumgartner/omnisave/internal/client/running"
+	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
 // Target is one application installation resolved on this machine.
@@ -87,6 +88,12 @@ type File struct {
 
 // Save is one adapter-defined native save set, which may contain multiple files.
 type Save struct {
+	// Scope identifies portable history compatibility; Slot names only
+	// this machine's save slot, such as "Profile 1", and is empty for a
+	// whole save. Neither is inferred from file names by sync.
+	Scope    omnisave.SaveScope
+	Slot     string
+	Cloud    *CloudScope
 	ID       string
 	TargetID string
 	GameID   string
@@ -128,6 +135,9 @@ type SaveLocation struct {
 // SaveDestination describes where an adapter-native save would live before any of
 // its files exist. Its ID is the Local Save identity used after placement.
 type SaveDestination struct {
+	Scope omnisave.SaveScope
+	Slot  string
+	Cloud *CloudScope
 	// ID remains the Local Save identity after the current revision is materialized.
 	ID        string
 	TargetID  string
@@ -138,6 +148,24 @@ type SaveDestination struct {
 	// LocationAliases mirrors Save.LocationAliases for a save that does not
 	// exist yet, so a revision spelled by another OS can still be placed.
 	LocationAliases []string
+}
+
+// CloudScope is game-provided store membership for one independently owned
+// directory. Root is the account anchor; Prefix is the owned store namespace.
+// AccountID is private local placement context and must never be logged.
+type CloudScope struct {
+	Root        string
+	Prefix      string
+	AccountID   string
+	Files       []string
+	Directories []CloudDirectory
+}
+
+// CloudDirectory admits only Extension files directly inside Path, relative to
+// the selected slot. It does not recursively authorize neighboring content.
+type CloudDirectory struct {
+	Path      string
+	Extension string
 }
 
 // Adapter discovers application targets, their games, current saves, and the

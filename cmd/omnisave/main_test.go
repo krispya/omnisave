@@ -30,7 +30,7 @@ func TestManualBindingOffersOnlySavesForTheSelectedGame(t *testing.T) {
 		{ID: "undertale-main", GameID: "server-undertale", DisplayName: "Main"},
 	}
 
-	destinations, err := bindingDestinations(state, local, remote)
+	destinations, err := bindingDestinations(state, nil, local, remote)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestManualBindingRequiresAResolvedGameIdentity(t *testing.T) {
 		ID: "local-save", Adapter: "steam", TargetID: "steam", GameID: "local-zomboid",
 	}
 
-	if _, err := bindingDestinations(state, local, nil); err == nil {
+	if _, err := bindingDestinations(state, nil, local, nil); err == nil {
 		t.Fatal("expected an unresolved game to have no manual binding destinations")
 	}
 }

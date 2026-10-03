@@ -24,3 +24,4 @@ Architecture Decision Records capture Omnisave's cross-cutting technical decisio
 | [ADR-018](ADR-018-embedded-save-profiles.md) | Compile save-location knowledge into the client | 2026-08-13 |
 | [ADR-019](ADR-019-versioned-replayable-data-migrations.md) | Evolve durable data through versioned, replayable migrations | 2026-08-23 |
 | [ADR-020](ADR-020-domains-own-their-contracts.md) | Domains own their contracts | 2026-09-30 |
+| [ADR-021](ADR-021-independent-save-boundaries.md) | Track save slots through Game Save Adapters, and whole saves otherwise | 2026-10-01 |

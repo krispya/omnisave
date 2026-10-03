@@ -945,3 +945,37 @@ func storeBlob(t *testing.T, ctx context.Context, saves omnisave.Service, conten
 	}
 	return artifact
 }
+
+func TestSlotScopeIsImmutableAndForksInheritIt(t *testing.T) {
+	ctx := context.Background()
+	saves := omnisaveservice.New(sqlitetest.Open(t, "sts2"))
+	scope := omnisave.SaveScope{Kind: omnisave.ScopeSlot, Adapter: "sts2.vanilla"}
+	slot, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "sts2", Scope: scope})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := storeBlob(t, ctx, saves, "slot progress")
+	revision, err := saves.CommitRevision(ctx, slot.ID, omnisave.CreateRevision{Upserts: []omnisave.RevisionFile{{Path: "sts2-profile/saves/progress.save", Artifact: artifact}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fork, err := saves.Fork(ctx, slot.ID, omnisave.ForkOmnisave{RevisionID: revision.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "Renamed slot history"
+	renamed, err := saves.Update(ctx, slot.ID, omnisave.UpdateOmnisave{DisplayName: &name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, err := saves.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Scope != scope || fork.Omnisave.Scope != scope || len(listed) != 2 || listed[0].Scope != scope || listed[1].Scope != scope {
+		t.Fatal("scope was lost during persistence or fork")
+	}
+	if _, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "sts2", Scope: omnisave.SaveScope{Kind: omnisave.ScopeSlot}}); !errors.Is(err, omnisave.ErrInvalid) {
+		t.Fatal("partial scope was accepted as whole-save compatibility")
+	}
+}

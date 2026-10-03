@@ -390,7 +390,11 @@ func localBindingChoices(local []tracking.LocalSave, remote []omnisave.Omnisave,
 	}
 	localChoices := make([]bindingChoice, 0, len(local))
 	for index, save := range local {
-		parts := []string{displayName(save.Adapter), save.GameTitle, save.Kind, count(save.FileCount, "file"), formatBytes(save.Size)}
+		parts := []string{displayName(save.Adapter), save.DisplayTitle()}
+		if save.Slot == "" {
+			parts = append(parts, save.Kind)
+		}
+		parts = append(parts, count(save.FileCount, "file"), formatBytes(save.Size))
 		for _, binding := range bindings {
 			if binding.Adapter == save.Adapter && binding.TargetID == save.TargetID && binding.LocalSaveID == save.ID {
 				name := remoteNames[binding.OmnisaveID]

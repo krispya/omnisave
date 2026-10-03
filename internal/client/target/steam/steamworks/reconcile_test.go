@@ -12,10 +12,11 @@ import (
 )
 
 type fakeRegistry struct {
-	files   map[string][]byte
-	writes  []string
-	deletes []string
-	refuse  map[string]bool
+	accountID string
+	files     map[string][]byte
+	writes    []string
+	deletes   []string
+	refuse    map[string]bool
 }
 
 func (f *fakeRegistry) Registry() []RegistryFile {
@@ -342,4 +343,11 @@ func TestReconcileDeletesWithDifferentCloudAndLocalCasing(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (f *fakeRegistry) AccountID() (string, error) {
+	if f.accountID != "" {
+		return f.accountID, nil
+	}
+	return "fixture", nil
 }

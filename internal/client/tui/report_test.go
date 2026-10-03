@@ -259,3 +259,25 @@ func TestTrackReportSpeaksMigrationsAndStoreRegistration(t *testing.T) {
 		}
 	}
 }
+
+func TestSaveSlotsKeepDistinctStandingRows(t *testing.T) {
+	report := &TrackReport{}
+	report.SyncedWith("Slay the Spire 2 · Profile 1", "Run A", time.Now())
+	report.SyncedWith("Slay the Spire 2 · Profile 2", "Run B", time.Now())
+	lines := strings.Join(report.Lines(), "\n")
+	for _, text := range []string{"Profile 1", "Profile 2", "Run A", "Run B"} {
+		if !strings.Contains(lines, text) {
+			t.Fatalf("missing %s from slot report", text)
+		}
+	}
+}
+
+func TestASlotNamesItsSaveOnlyWhenTheNamesDiffer(t *testing.T) {
+	report := &TrackReport{}
+	report.SyncedWith("Slay the Spire 2 · Profile 1", "Profile 1", time.Now())
+	report.SyncedWith("Slay the Spire 2 · Profile 2", "Profile 3", time.Now())
+	lines := strings.Join(report.Lines(), "\n")
+	if strings.Count(lines, "Profile 1") != 1 || !strings.Contains(lines, "Profile 2  Profile 3 · synced") {
+		t.Fatalf("expected each save named once, and a moved save named, got:\n%s", lines)
+	}
+}

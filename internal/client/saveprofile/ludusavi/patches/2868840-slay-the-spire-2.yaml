@@ -1,0 +1,9 @@
+steamId: "2868840"
+title: "Slay the Spire 2"
+reason: "Upstream saves the whole Steam account folder on macOS and Windows but only profile1 on Linux, tagging the account folder config there. A Linux save then lacks profile.save and settings.save, and cannot take a revision minted on the other platforms without overwriting those files."
+upstream: "https://www.pcgamingwiki.com/wiki/Slay_the_Spire_2"
+addFiles:
+  <xdgData>/SlayTheSpire2/steam/<storeUserId>:
+    tags: [save]
+    when:
+      - os: linux

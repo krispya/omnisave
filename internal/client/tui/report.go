@@ -519,10 +519,21 @@ func rowStatus(game GameStatus, marks Marks, now time.Time) string {
 	// The Omnisave keeps its place at the head of the status, so a row mid
 	// sync reads like every other line about it — "Save 1 · downloading"
 	// beside "Save 1 · waiting for game to close".
-	if game.SyncedWith != "" {
-		return game.SyncedWith + " · " + phase
+	if name := SyncedName(game); name != "" {
+		return name + " · " + phase
 	}
 	return phase
+}
+
+// SyncedName is the Omnisave a row syncs with, as the row names it. It is
+// left out when the row's title already ends with it, as for a save slot
+// whose Omnisave keeps the slot's name; a slot bound to another slot's
+// Omnisave still names it.
+func SyncedName(game GameStatus) string {
+	if strings.HasSuffix(game.Title, " · "+game.SyncedWith) {
+		return ""
+	}
+	return game.SyncedWith
 }
 
 // RowPhase is a phase as a row says it. The work names the game it is doing
@@ -603,12 +614,19 @@ func gameLine(game GameStatus, glyph, status string, width int) string {
 	return line + padding + "  " + mutedStyle.Render(status)
 }
 
+func withSyncedName(game GameStatus, state string) string {
+	if name := SyncedName(game); name != "" {
+		return name + " · " + state
+	}
+	return capitalized(state)
+}
+
 func standingState(game GameStatus, now time.Time) string {
 	switch {
 	case game.SyncedWith != "" && !game.SyncedAt.IsZero():
-		return game.SyncedWith + " · synced " + ago(now, game.SyncedAt)
+		return withSyncedName(game, "synced "+ago(now, game.SyncedAt))
 	case game.SyncedWith != "":
-		return game.SyncedWith + " · up to date"
+		return withSyncedName(game, "up to date")
 	case len(game.Events) == 0:
 		// A game the pass never had to touch still says so.
 		return "Up to date"

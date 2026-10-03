@@ -97,7 +97,7 @@ func (a *announcer) diff(snapshot tui.ReportSnapshot, started, at time.Time, emi
 				events = append(events, tui.Event{
 					Glyph:    game.Glyph,
 					Title:    game.Title,
-					Sentence: "synced with " + game.SyncedWith,
+					Sentence: syncedSentence(game),
 					At:       at,
 				})
 			}
@@ -639,4 +639,13 @@ func (plainWatchSink) PassFinished(result tui.PassResult) {
 
 func (plainWatchSink) Requests() <-chan tui.WatchRequest {
 	return nil
+}
+
+// syncedSentence names the Omnisave a row synced with unless its title already
+// does, as for a save slot whose Omnisave keeps the slot's name.
+func syncedSentence(game tui.GameStatus) string {
+	if name := tui.SyncedName(game); name != "" {
+		return "synced with " + name
+	}
+	return "synced"
 }

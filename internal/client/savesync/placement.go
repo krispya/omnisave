@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/client/binding"
@@ -76,21 +77,28 @@ func removedPaths(save target.Save, current omnisave.Revision) []string {
 	return removed
 }
 
-// syncToDevice offers a game's server saves to a Device with no local save
-// for it, and places the one a person picks at the game's only compatible
-// destination (FDR-003). A pass without the prompt reports the offer and
-// leaves the game untouched; it never writes into a game unasked.
+// syncToDevice offers server saves for empty native destinations and places
+// the explicitly selected compatible history and destination (FDR-003). A
+// history another save of this game owns is never offered, so placement
+// cannot make two slots share one history. A pass without the prompt
+// reports the offer and leaves the game untouched; it never writes into a
+// game unasked. Empty slots beside occupied ones stay quiet when there is
+// nothing to offer: their occupied siblings already report the game.
 func (r *reconciliation) syncToDevice(ctx context.Context, empty emptyCandidate) error {
 	discovered := empty.discovered
 	title := discovered.Game.Identity.DisplayTitle(discovered.Game.ID)
+	occupied := slices.ContainsFunc(discovered.Saves, func(save target.Save) bool { return len(save.Files) > 0 })
 	// Resume a journaled first placement even if no files landed before exit.
 	for _, pending := range r.state.PendingPlacements {
-		if pending.Save.GameID == discovered.Game.ID && pending.Save.TargetID == empty.scan.Target.ID {
+		if pending.Save.GameID == discovered.Game.ID && pending.Save.TargetID == empty.scan.Target.ID && slices.ContainsFunc(discovered.Destinations, func(destination target.SaveDestination) bool {
+			return destination.ID == pending.Save.ID && destination.Scope == pending.Save.Scope
+		}) {
 			save := pending.Save
 			save.Files = nil
-			c := candidate{local: LocalSaveFrom(empty.scan, discovered, save), save: save,
+			local := LocalSaveFrom(empty.scan, discovered, save)
+			c := candidate{local: local, save: save,
 				discovered: empty.scan.Target, game: discovered.Game, serverGameID: empty.serverGameID,
-				finish: finishPlacement(r.Adapters, empty.scan.Target, discovered.Game, title, r.Report)}
+				finish: finishPlacement(r.Adapters, empty.scan.Target, discovered.Game, local.DisplayTitle(), r.Report)}
 			r.retryPlacement(ctx, c, pending)
 			return nil
 		}
@@ -98,7 +106,9 @@ func (r *reconciliation) syncToDevice(ctx context.Context, empty emptyCandidate)
 	if len(r.lineages.byGame[empty.serverGameID]) == 0 {
 		// A game with nothing local and nothing on the server is one line
 		// in the report and no work at all.
-		r.Report.NoSave(title)
+		if !occupied {
+			r.Report.NoSave(title)
+		}
 		return nil
 	}
 	working(ctx, r.Report, title)
@@ -113,9 +123,12 @@ func (r *reconciliation) syncToDevice(ctx context.Context, empty emptyCandidate)
 	}
 	gameSaves := r.lineages.gameSaves(empty.serverGameID)
 	options := make([]SyncToDeviceOption, 0, len(gameSaves))
-	available := make(map[string]availableSave, len(gameSaves))
+	available := make(map[string][]availableSave, len(gameSaves))
 	for _, save := range gameSaves {
-		if save.CurrentRevisionID == nil {
+		// A history no destination shares a scope with is never offered, so
+		// it is neither fetched nor reported as held here.
+		sameScope := func(destination target.SaveDestination) bool { return destination.Scope == save.Scope }
+		if save.CurrentRevisionID == nil || !slices.ContainsFunc(discovered.Destinations, sameScope) {
 			continue
 		}
 		if save.PathFormatVersion != omnisave.PathFormatNative {
@@ -138,18 +151,28 @@ func (r *reconciliation) syncToDevice(ctx context.Context, empty emptyCandidate)
 		}
 		var compatible []target.SaveDestination
 		for _, destination := range discovered.Destinations {
-			if binding.CanMaterialize(destination, current) == nil {
+			owner := tracking.LocalSave{ID: destination.ID, TargetID: empty.scan.Target.ID, GameID: discovered.Game.ID}
+			if save.Scope == destination.Scope && !OwnedElsewhere(r.state, r.scans, owner, save.ID) &&
+				binding.CanMaterialize(destination, current) == nil {
 				compatible = append(compatible, destination)
 			}
 		}
-		if len(compatible) != 1 {
+		if save.Scope == (omnisave.SaveScope{}) && len(compatible) != 1 {
 			continue
 		}
-		available[save.ID] = availableSave{save: save, current: current, destination: compatible[0]}
-		options = append(options, SyncToDeviceOption{OmnisaveID: save.ID, Name: omnisaveDisplayName(save)})
+		savedAt := current.CreatedAt
+		if current.SavedAt != nil {
+			savedAt = *current.SavedAt
+		}
+		for _, destination := range compatible {
+			available[save.ID] = append(available[save.ID], availableSave{save: save, current: current, destination: destination})
+			options = append(options, SyncToDeviceOption{OmnisaveID: save.ID, Name: omnisaveDisplayName(save), SavedAt: savedAt, DestinationID: destination.ID, DestinationLabel: destination.Slot})
+		}
 	}
 	if len(options) == 0 {
-		r.Report.SaveLocationUnavailable(title)
+		if !occupied {
+			r.Report.SaveLocationUnavailable(title)
+		}
 		return nil
 	}
 	if r.Prompts.SyncToDevice == nil {
@@ -164,9 +187,21 @@ func (r *reconciliation) syncToDevice(ctx context.Context, empty emptyCandidate)
 		r.Report.SaveAvailable(title)
 		return nil
 	}
-	selected, exists := available[choice.OmnisaveID]
-	if !exists {
-		return fmt.Errorf("unknown sync-to-device choice %q", choice.OmnisaveID)
+	choices := available[choice.OmnisaveID]
+	var selected availableSave
+	found := false
+	for _, option := range choices {
+		if choice.DestinationID == option.destination.ID || choice.DestinationID == "" && len(choices) == 1 {
+			selected = option
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("unknown placement choice")
+	}
+	if selected.destination.Slot != "" {
+		title += " · " + selected.destination.Slot
 	}
 	materialized, err := binding.PlannedMaterialization(selected.destination, selected.current)
 	if err != nil {
@@ -175,6 +210,12 @@ func (r *reconciliation) syncToDevice(ctx context.Context, empty emptyCandidate)
 	}
 	local := LocalSaveFrom(empty.scan, discovered, materialized)
 	pending := tracking.PendingPlacement{OmnisaveID: selected.save.ID, Save: materialized, Current: selected.current, Destination: &selected.destination}
+	// An emptied slot can still be bound, such as a profile deleted in game.
+	// The journal records that binding, as place does, so the restore can
+	// finish and rebind instead of reading as a changed binding forever.
+	if bound, ok := r.state.BindingFor(local); ok {
+		pending.BindingID = bound.OmnisaveID
+	}
 	r.state.RecordPlacement(local, pending)
 	emptySave := materialized
 	emptySave.Files = nil

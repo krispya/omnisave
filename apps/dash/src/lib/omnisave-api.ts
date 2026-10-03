@@ -1,4 +1,8 @@
+/** Portable content boundary; accounts and slot numbers remain Device-local. */
+export type SaveScope = { kind?: 'slot'; adapter?: string };
+
 export type Omnisave = {
+  scope?: SaveScope;
   id: string;
   game_id: string;
   display_name: string;
