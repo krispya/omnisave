@@ -2,6 +2,7 @@ package binding_test
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/krisbaumgartner/omnisave/internal/client/binding"
@@ -184,5 +185,68 @@ func TestCanMaterializeAcceptsAliasedSpellings(t *testing.T) {
 	}}
 	if err := binding.CanMaterialize(destination, unknown); err == nil {
 		t.Fatal("expected an unknown spelling to be refused")
+	}
+}
+
+// Rules may give one directory several identities. First placement accepts
+// another OS's spelling while keeping revisions using the original IDs valid.
+func TestMaterializationUsesOneRootAcrossRepeatedDirectoryLocations(t *testing.T) {
+	root := t.TempDir()
+	destination := target.SaveDestination{
+		ID: "save-1", TargetID: "target-1", GameID: "game-1", Kind: "local",
+		Locations: []target.SaveLocation{
+			{ID: "linux-account", Path: root, Kind: target.SaveLocationDirectory},
+			{ID: "linux-profile", Path: root, Kind: target.SaveLocationDirectory},
+		},
+		LocationAliases: []string{"linux-account", "linux-profile", "mac-account"},
+	}
+	foreign := omnisave.Revision{ID: "revision-1", Files: []omnisave.RevisionFile{
+		revisionFile("mac-account/profile.save", "profile", "application/octet-stream"),
+		revisionFile("mac-account/profile1/run.save", "run", "application/octet-stream"),
+	}}
+	placed, err := binding.PlannedMaterialization(destination, foreign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(placed.Files) != 2 || placed.Files[0].Path != filepath.Join(root, "profile.save") ||
+		placed.Files[1].Path != filepath.Join(root, "profile1", "run.save") {
+		t.Fatalf("expected both files under the shared root, got %+v", placed.Files)
+	}
+	previous := omnisave.Revision{ID: "revision-0", Files: []omnisave.RevisionFile{
+		revisionFile("linux-account/profile.save", "profile", "application/octet-stream"),
+		revisionFile("linux-profile/profile1/run.save", "run", "application/octet-stream"),
+	}}
+	if err := binding.CanMaterialize(destination, previous); err != nil {
+		t.Fatalf("expected original location identities to remain valid, got %v", err)
+	}
+}
+
+func TestMaterializationRefusesAmbiguousAliasDestinations(t *testing.T) {
+	for _, story := range []struct {
+		name      string
+		kind      target.SaveLocationKind
+		otherPath string
+	}{
+		{name: "different directory roots", kind: target.SaveLocationDirectory, otherPath: "other"},
+		{name: "same path with unknown shape", kind: target.SaveLocationUnknown},
+		{name: "same path as a file", kind: target.SaveLocationFile},
+	} {
+		t.Run(story.name, func(t *testing.T) {
+			root := t.TempDir()
+			destination := target.SaveDestination{
+				ID: "save-1", TargetID: "target-1", GameID: "game-1", Kind: "local",
+				Locations: []target.SaveLocation{
+					{ID: "linux1", Path: root, Kind: target.SaveLocationDirectory},
+					{ID: "linux2", Path: filepath.Join(root, story.otherPath), Kind: story.kind},
+				},
+				LocationAliases: []string{"linux1", "linux2", "mac1"},
+			}
+			revision := omnisave.Revision{ID: "revision-1", Files: []omnisave.RevisionFile{
+				revisionFile("mac1/progress.save", "progress", "application/octet-stream"),
+			}}
+			if err := binding.CanMaterialize(destination, revision); err == nil {
+				t.Fatal("expected an ambiguous destination to refuse translation")
+			}
+		})
 	}
 }

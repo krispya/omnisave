@@ -1,6 +1,6 @@
 # FDR-008: Achievement Marks
 
-**Status:** Experimental **Last reviewed:** 2026-09-30
+**Status:** Experimental **Last reviewed:** 2026-10-03
 
 ## Overview
 
@@ -8,6 +8,7 @@ Achievement marks place observed unlocks on the save history surrounding them, h
 
 ## Behavior
 
+- Account-wide store achievements are not assigned to save slot histories without evidence identifying which slot earned them. The initial save slot implementation therefore leaves those histories unmarked.
 - A Device observing an unlock reports the store's unlock time. The server places it on the earliest revision committed at or after that time; if none exists yet, the next commit on that omnisave claims it.
 - Only unlocks observed after Omnisave begins watching a binding are marked. Earlier account history is not backfilled.
 - Repeated reports never move a mark, whatever their order or Device.
@@ -36,7 +37,7 @@ Achievement marks place observed unlocks on the save history surrounding them, h
 
 ## Related
 
-- **ADRs:** [ADR-012](../adr/ADR-012-portable-save-store.md) — the portable omnisave records that carry marks; [ADR-014](../adr/ADR-014-durable-proof-before-forgetting.md) — deleting a marked revision.
+- **ADRs:** [ADR-021](../adr/ADR-021-independent-save-boundaries.md) — save slot ownership excludes unsupported account-wide claims; [ADR-012](../adr/ADR-012-portable-save-store.md) — the portable omnisave records that carry marks; [ADR-014](../adr/ADR-014-durable-proof-before-forgetting.md) — deleting a marked revision.
 - **FDRs:** [FDR-005](FDR-005-save-sync.md) — synchronization commits the history marks attach to; [FDR-007](FDR-007-revision-labeling.md) — labels derive from content while achievement marks deliberately do not.
 
 ## Open Questions

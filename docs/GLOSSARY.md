@@ -42,7 +42,9 @@ User-facing concepts. If a user might say the word, it goes here.
 
 **Tracking**. A Device's choice of which discovered games to protect. Tracking a game is what adds it to the Library. See [FDR-002](fdr/FDR-002-game-lifecycle.md).
 
-**Local Save**. One game's save as it exists natively on a Device, possibly several files.
+**Local Save**. One selected native save boundary on a Device, possibly several files; it may be a whole save or a save slot.
+
+**Save Scope**. The content boundary one history protects: a whole save, or one **save slot**, a part of a game's save that can be restored on its own, such as an STS2 profile or a Dark Souls character. The slot number is local destination context, never the history's identity. Distinct from a _Save Profile_, which describes file locations. See [ADR-021](adr/ADR-021-independent-save-boundaries.md).
 
 **Binding**. A Device-local link from one Local Save to one omnisave. Its **sync baseline** is the revision the Local Save is known to equal. See [FDR-003](fdr/FDR-003-automatic-save-binding.md).
 
@@ -70,7 +72,7 @@ Infrastructure jargon. If only contributors say the word, it goes here.
 
 **Portable Store**. The tool-independent directory of artifacts, manifests, and records from which save history can be recovered without the server database. A committed deletion is recorded there as an immutable **deletion marker**, so restoring an older copy cannot undo it. See [ADR-012](adr/ADR-012-portable-save-store.md) and [ADR-014](adr/ADR-014-durable-proof-before-forgetting.md).
 
-**Adapter**. The Client's knowledge of one application, such as Steam or RetroArch: it finds that application's installations (**targets**), their games, and their Local Saves.
+**Adapter**. The Client's knowledge of one application, such as Steam or RetroArch: it finds that application's installations (**targets**), their games, and their Local Saves. A **Game Save Adapter** is the game-specific counterpart: a sandboxed client extension that finds a game's save slots inside its whole save. See [ADR-021](adr/ADR-021-independent-save-boundaries.md).
 
 **Save Profile**. Where one game keeps its saves, as path rules for each operating system and runtime they apply to. See [ADR-018](adr/ADR-018-embedded-save-profiles.md).
 

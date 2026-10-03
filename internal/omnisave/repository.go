@@ -17,12 +17,13 @@ type Repository interface {
 
 	// InsertOmnisave stores a new save. Its GameID must name a Library game
 	// (ErrInvalid otherwise), checked in the same transaction so a save can
-	// never outlive the game it belongs to.
+	// never outlive the game it belongs to. Scope must be valid and is immutable.
 	InsertOmnisave(ctx context.Context, save Omnisave) error
 	ListOmnisaves(ctx context.Context) ([]Omnisave, error)
 	GetOmnisave(ctx context.Context, id string) (*Omnisave, error)
 	UpdateOmnisaveDisplayName(ctx context.Context, id, displayName string) error
 	DeleteOmnisave(ctx context.Context, id string) error
+	// ForkOmnisave inherits the source scope atomically with ancestry checks.
 	ForkOmnisave(ctx context.Context, save Omnisave) error
 	// RestoreOmnisave moves the save's Current Revision to revisionID after
 	// verifying it still equals expectedCurrentRevisionID

@@ -15,7 +15,7 @@ import (
 // pushes, current moved alone pulls, and both moving is a branch when current
 // did not descend from the baseline and a divergence when it did.
 func (r *reconciliation) syncBound(ctx context.Context, c candidate, bound tracking.Binding, remoteSave omnisave.Omnisave) error {
-	title, name := c.local.GameTitle, omnisaveDisplayName(remoteSave)
+	title, name := c.local.DisplayTitle(), omnisaveDisplayName(remoteSave)
 	// Summarized before the save is read, so a write landing mid-pass leaves
 	// a summary that no longer describes the content this pass verified;
 	// the next pass then reads the save rather than trusting the summary.
@@ -178,7 +178,7 @@ type divergence struct {
 // unsynced progress is committed anywhere, and only "fork" creates a new
 // Omnisave (FDR-005, decision 4).
 func (r *reconciliation) resolveDivergence(ctx context.Context, c candidate, d divergence) error {
-	title, name := c.local.GameTitle, omnisaveDisplayName(d.remoteSave)
+	title, name := c.local.DisplayTitle(), omnisaveDisplayName(d.remoteSave)
 	d.matched, d.contentKnown = matchHistory(d.manifest, c.save.LocationAliases, d.history)
 	if d.contentKnown && d.matched.ID == d.current.ID {
 		// Only reachable without a baseline: the local content is the Current
@@ -250,7 +250,7 @@ func (r *reconciliation) resolveDivergence(ctx context.Context, c candidate, d d
 // bound when it already holds the content, pushed onto when its push never
 // landed — instead of created again.
 func (r *reconciliation) forkDiverged(ctx context.Context, c candidate, d divergence) {
-	title := c.local.GameTitle
+	title := c.local.DisplayTitle()
 	forkName := deconflictName(d.remoteSave, d.deviceName)
 	var preserved *omnisave.Omnisave
 	var preservedRevision *omnisave.Revision
@@ -349,7 +349,7 @@ func (r *reconciliation) useLocalDiverged(ctx context.Context, c candidate, d di
 // (FDR-005, decisions 4 and 10). It settles any preservation a failed
 // earlier answer recorded, and reports false when it failed and said so.
 func (r *reconciliation) makeLocalCurrent(ctx context.Context, c candidate, remoteSave omnisave.Omnisave, current omnisave.Revision) bool {
-	title, name := c.local.GameTitle, omnisaveDisplayName(remoteSave)
+	title, name := c.local.DisplayTitle(), omnisaveDisplayName(remoteSave)
 	// A save that cannot take this lineage's current cannot speak its
 	// layout either, and its commit would mix two vocabularies in one tree.
 	if err := binding.CanApply(c.save, current); err != nil {
@@ -387,7 +387,7 @@ func (r *reconciliation) makeLocalCurrent(ctx context.Context, c candidate, remo
 // failed earlier answer recorded stands in for the branch, so a repeated
 // answer creates nothing new.
 func (r *reconciliation) jumpDiverged(ctx context.Context, c candidate, d divergence) {
-	title, name := c.local.GameTitle, omnisaveDisplayName(d.remoteSave)
+	title, name := c.local.DisplayTitle(), omnisaveDisplayName(d.remoteSave)
 	// The jump ends by applying the Current Revision over this save's files,
 	// so prove the layout can take it before the answer preserves or commits
 	// anything toward an adoption that cannot happen.

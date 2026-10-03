@@ -373,6 +373,7 @@ func serverConnection(state tracking.State, flagURL, flagToken string) (string, 
 
 func runBind(ctx context.Context, scanner *client.Scanner, arguments []string) error {
 	flags := flag.NewFlagSet("bind", flag.ContinueOnError)
+	chooseScope := flags.Bool("choose-scope", false, "choose save slots or whole save")
 	statePath := flags.String("state", "", "path to local tracking state")
 	serverURL := flags.String("server", environmentOr("OMNISAVE_SERVER_URL", ""), "Omnisave server URL")
 	token := flags.String("token", os.Getenv("OMNISAVE_API_TOKEN"), "Omnisave API token")
@@ -403,6 +404,25 @@ func runBind(ctx context.Context, scanner *client.Scanner, arguments []string) e
 	if err != nil {
 		return err
 	}
+	if *chooseScope {
+		asked, err := savesync.ChooseSaveScopes(&state, scans, tui.PromptSaveScope)
+		if errors.Is(err, tui.ErrAborted) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !asked {
+			fmt.Println("No tracked game has save slots here.")
+			return nil
+		}
+		if err := store.Save(state); err != nil {
+			return err
+		}
+		fmt.Println("Saved. Run omnisave track to apply.")
+		return nil
+	}
+	scans = savesync.SelectSaveScopes(&state, scans)
 	local := trackedLocalSaves(state, savesync.LocalSaves(scans))
 	if len(local) == 0 {
 		fmt.Println("No saves were discovered for tracked games. Run track first or create a save in the game.")
@@ -423,19 +443,19 @@ func runBind(ctx context.Context, scanner *client.Scanner, arguments []string) e
 	if err != nil {
 		return err
 	}
-	destinations, err := bindingDestinations(state, selectedLocal, remoteSaves)
+	destinations, err := bindingDestinations(state, scans, selectedLocal, remoteSaves)
 	if err != nil {
 		return err
 	}
 	if len(destinations) == 0 {
-		fmt.Printf("The server has no Omnisaves for %s to bind.\n", selectedLocal.GameTitle)
+		fmt.Printf("The server has no Omnisaves for %s to bind.\n", selectedLocal.DisplayTitle())
 		return nil
 	}
 	currentID := ""
 	if current, exists := state.BindingFor(selectedLocal); exists {
 		currentID = current.OmnisaveID
 	}
-	selectedOmnisave, err := tui.SelectOmnisaveForBinding(selectedLocal.GameTitle, destinations, currentID)
+	selectedOmnisave, err := tui.SelectOmnisaveForBinding(selectedLocal.DisplayTitle(), destinations, currentID)
 	if errors.Is(err, tui.ErrAborted) {
 		return nil
 	}
@@ -447,7 +467,7 @@ func runBind(ctx context.Context, scanner *client.Scanner, arguments []string) e
 		return errors.New("cannot bind a local save to an Omnisave from another game")
 	}
 	if currentID == selectedOmnisave.ID {
-		fmt.Printf("✓ %s (%s) already syncs with %s.\n", selectedLocal.GameTitle, selectedLocal.Kind, selectedOmnisave.DisplayName)
+		fmt.Printf("✓ %s (%s) already syncs with %s.\n", selectedLocal.DisplayTitle(), selectedLocal.Kind, selectedOmnisave.DisplayName)
 		return nil
 	}
 	if err := state.Bind(selectedLocal, selectedOmnisave.ID); err != nil {
@@ -456,20 +476,21 @@ func runBind(ctx context.Context, scanner *client.Scanner, arguments []string) e
 	if err := store.Save(state); err != nil {
 		return err
 	}
-	fmt.Printf("✓ %s (%s) will sync with %s.\n", selectedLocal.GameTitle, selectedLocal.Kind, selectedOmnisave.DisplayName)
+	fmt.Printf("✓ %s (%s) will sync with %s.\n", selectedLocal.DisplayTitle(), selectedLocal.Kind, selectedOmnisave.DisplayName)
 	return nil
 }
 
 // bindingDestinations limits a manual mapping to the selected Local Save's
-// resolved Library game. A binding is never meaningful across game identities.
-func bindingDestinations(state tracking.State, local tracking.LocalSave, remote []omnisave.Omnisave) ([]omnisave.Omnisave, error) {
+// resolved Library game and save scope. A binding is never meaningful across
+// game identities, and a history another save of the game owns stays there.
+func bindingDestinations(state tracking.State, scans []client.TargetScan, local tracking.LocalSave, remote []omnisave.Omnisave) ([]omnisave.Omnisave, error) {
 	game, tracked := state.Games[local.GameID]
 	if !tracked || game.ServerGameID == "" {
 		return nil, errors.New("local save has no resolved server game; run omnisave track first")
 	}
 	destinations := make([]omnisave.Omnisave, 0, len(remote))
 	for _, save := range remote {
-		if save.GameID == game.ServerGameID {
+		if save.GameID == game.ServerGameID && save.Scope == local.Scope && !savesync.OwnedElsewhere(&state, scans, local, save.ID) {
 			destinations = append(destinations, save)
 		}
 	}

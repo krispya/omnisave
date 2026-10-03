@@ -562,6 +562,9 @@ var migrations = []string{
 	// A matched ROM's hashes already live on its Game as fingerprints, and
 	// nothing ever read the rest of the record back.
 	`DROP TABLE game_roms;`,
+	// Existing histories retain their whole-save boundary. Scope is also
+	// projected into portable records so rebuilding cannot lose it.
+	`ALTER TABLE omnisaves ADD COLUMN scope TEXT NOT NULL DEFAULT '{}';`,
 }
 
 func migrate(db *sql.DB) error {

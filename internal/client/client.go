@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/krisbaumgartner/omnisave/internal/client/gamesave"
 	"github.com/krisbaumgartner/omnisave/internal/client/running"
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
@@ -15,12 +16,19 @@ import (
 
 // Scanner performs one read-only pass across local target adapters.
 type Scanner struct {
-	adapters []target.Adapter
-	profiles saveprofile.Provider
+	adapters       []target.Adapter
+	profiles       saveprofile.Provider
+	saveAdapters   []gamesave.Adapter
+	saveAdapterErr error
 }
 
 // GameScan reports the native saves found for one installed game.
 type GameScan struct {
+	// ScopeUnavailable hides a game whose recorded save slots its adapter can
+	// no longer find, so nothing is matched under a broader boundary.
+	ScopeUnavailable bool
+	// Slots are optional game-specific boundaries alongside the whole save.
+	Slots gamesave.Discovery
 	Game  target.InstalledGame
 	Saves []target.Save
 	// Destinations describe native save destinations whether or not files exist.
@@ -80,7 +88,8 @@ type ScanProgress struct {
 
 // NewScanner creates a one-shot scanner from save profiles and target adapters.
 func NewScanner(profiles saveprofile.Provider, adapters ...target.Adapter) *Scanner {
-	return &Scanner{adapters: adapters, profiles: profiles}
+	saveAdapters, err := gamesave.Builtins()
+	return &Scanner{adapters: adapters, profiles: profiles, saveAdapters: saveAdapters, saveAdapterErr: err}
 }
 
 // Adapter returns the configured adapter with the given name, so flows
@@ -114,6 +123,9 @@ func (s *Scanner) Scan(ctx context.Context) ([]TargetScan, error) {
 
 // ScanWithProgress runs a scan and reports each adapter as it starts and finishes.
 func (s *Scanner) ScanWithProgress(ctx context.Context, report func(ScanProgress)) ([]TargetScan, error) {
+	if s.saveAdapterErr != nil {
+		return nil, s.saveAdapterErr
+	}
 	var scans []TargetScan
 	for _, adapter := range s.adapters {
 		progress(report, ScanProgress{Adapter: adapter.Name(), Stage: ScanStarted})
@@ -156,8 +168,16 @@ func (s *Scanner) scanAdapter(ctx context.Context, adapter target.Adapter) ([]Ta
 			}
 			saves = append(saves, profileSaves...)
 			destinations = append(destinations, profileDestinations...)
+			slots := gamesave.Discovery{}
+			for _, saveAdapter := range s.saveAdapters {
+				if saveAdapter.Supports(game.Identity) {
+					slots.Adapter = saveAdapter.ID()
+					slots.Found, slots.Err = saveAdapter.Discover(ctx, game, destinations)
+					break
+				}
+			}
 			scan.Games = append(scan.Games, GameScan{
-				Game: game, Saves: saves, Destinations: destinations, Profile: trace,
+				Game: game, Saves: saves, Destinations: destinations, Profile: trace, Slots: slots,
 			})
 		}
 		scans = append(scans, scan)
@@ -482,4 +502,12 @@ func (s *Scanner) PlayingMatchers(scans []TargetScan, tracked func(gameID string
 		})
 	}
 	return matchers
+}
+
+// WithSaveAdapters replaces game interpreters, including with none. Persisted
+// independent selections remain unavailable when their interpreter disappears.
+func (s *Scanner) WithSaveAdapters(adapters ...gamesave.Adapter) *Scanner {
+	s.saveAdapters = adapters
+	s.saveAdapterErr = nil
+	return s
 }

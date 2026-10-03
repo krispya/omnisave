@@ -1,6 +1,6 @@
 # FDR-005: Save Sync
 
-**Status:** Experimental **Last reviewed:** 2026-10-01
+**Status:** Experimental **Last reviewed:** 2026-10-03
 
 ## Overview
 
@@ -8,6 +8,8 @@ Save Sync keeps a bound Local Save and its omnisave aligned. Each pass compares 
 
 ## Behavior
 
+- Save slots synchronize only their selected native boundary. Restoring one preserves sibling slots and shared settings. STS2 runs, backups, and dependent history are restored together.
+- Save slot cloud reconciliation preserves shared and sibling registry entries, uses game-provided eligibility for empty slots, matches registry names in any case, and verifies the connected account before mutation. Unknown cloud extras inside the selected slot keep restoration pending; deliberately local-only files remain in snapshots.
 - When local content, baseline, and Current Revision all agree, nothing changes.
 - When only local content moved, it commits as a new revision and becomes current. When only the Current Revision moved, it is applied locally and becomes the new baseline.
 - When both moved, a Current Revision descending from the baseline holds progress this Device has not seen, which is divergence. One at an ancestor or sibling of the baseline holds none, so local progress commits as a branch of the baseline (decision 10).
@@ -91,5 +93,5 @@ Save Sync keeps a bound Local Save and its omnisave aligned. Each pass compares 
 
 ## Related
 
-- **ADRs:** [ADR-001](../adr/ADR-001-server-authority.md) — server arbitration and the Current Revision check; [ADR-002](../adr/ADR-002-sse-view-invalidation.md) — server-side movement notifications; [ADR-012](../adr/ADR-012-portable-save-store.md) — recoverable revision storage; [ADR-014](../adr/ADR-014-durable-proof-before-forgetting.md) — safe deletion; [ADR-017](../adr/ADR-017-client-user-service.md) — unattended continuous sync; [ADR-019](../adr/ADR-019-versioned-replayable-data-migrations.md) — versioned, replayable path-format migrations; [ADR-020](../adr/ADR-020-domains-own-their-contracts.md) — Save Sync as a client domain behind its own ports.
+- **ADRs:** [ADR-021](../adr/ADR-021-independent-save-boundaries.md) — independent ownership and scoped cloud placement; [ADR-001](../adr/ADR-001-server-authority.md) — server arbitration and the Current Revision check; [ADR-002](../adr/ADR-002-sse-view-invalidation.md) — server-side movement notifications; [ADR-012](../adr/ADR-012-portable-save-store.md) — recoverable revision storage; [ADR-014](../adr/ADR-014-durable-proof-before-forgetting.md) — safe deletion; [ADR-017](../adr/ADR-017-client-user-service.md) — unattended continuous sync; [ADR-019](../adr/ADR-019-versioned-replayable-data-migrations.md) — versioned, replayable path-format migrations; [ADR-020](../adr/ADR-020-domains-own-their-contracts.md) — Save Sync as a client domain behind its own ports.
 - **FDRs:** [FDR-003](FDR-003-automatic-save-binding.md) — establishing the baseline, and placement onto a Device with no Local Save; [FDR-002](FDR-002-game-lifecycle.md) — Device identity; [FDR-007](FDR-007-revision-labeling.md) — revision names; [FDR-008](FDR-008-achievement-marks.md) — achievement marks on the history sync builds.

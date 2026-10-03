@@ -38,9 +38,12 @@ func (r *reconciliation) place(ctx context.Context, c candidate, before, current
 // completePlacement can resume before or after local placement. Any unrelated
 // change holds the restore rather than writing stale content over new progress.
 func (r *reconciliation) completePlacement(ctx context.Context, c candidate, p tracking.PendingPlacement) error {
+	if c.save.ID != p.Save.ID || c.save.Scope != p.Save.Scope {
+		return errors.New("pending restore held: scope changed")
+	}
 	if r.Gate.holdPull(c.local.GameID) {
 		r.outcome.Deferred++
-		r.Report.PullDeferred(c.local.GameTitle, "pending restore")
+		r.Report.PullDeferred(c.local.DisplayTitle(), "pending restore")
 		return errPlacementDeferred
 	}
 	bound, isBound := r.state.BindingFor(c.local)
@@ -60,7 +63,7 @@ func (r *reconciliation) completePlacement(ctx context.Context, c candidate, p t
 	}
 	currentStillSelected := false
 	for _, save := range saves {
-		if save.ID == p.OmnisaveID && save.CurrentRevisionID != nil && *save.CurrentRevisionID == p.Current.ID {
+		if save.ID == p.OmnisaveID && save.Scope == c.save.Scope && save.CurrentRevisionID != nil && *save.CurrentRevisionID == p.Current.ID {
 			currentStillSelected = true
 		}
 	}
@@ -142,12 +145,12 @@ func (r *reconciliation) retryPlacement(ctx context.Context, c candidate, p trac
 		r.untrackDeleted(ctx, c)
 		return
 	}
-	working(ctx, r.Report, c.local.GameTitle)
+	working(ctx, r.Report, c.local.DisplayTitle())
 	if err := r.completePlacement(ctx, c, p); err != nil {
-		r.failed(c.local.GameTitle, err)
+		r.failed(c.local.DisplayTitle(), err)
 		return
 	}
 	r.outcome.Pulled++
 	remoteSave, _ := r.lineages.save(p.OmnisaveID)
-	r.Report.SyncedWith(c.local.GameTitle, omnisaveDisplayName(remoteSave), time.Now())
+	r.Report.SyncedWith(c.local.DisplayTitle(), omnisaveDisplayName(remoteSave), time.Now())
 }

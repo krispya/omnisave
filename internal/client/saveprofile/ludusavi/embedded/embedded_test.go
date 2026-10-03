@@ -7,9 +7,11 @@ import (
 	"testing"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
+	"github.com/krisbaumgartner/omnisave/internal/client/binding"
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile"
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/ludusavi/embedded"
 	"github.com/krisbaumgartner/omnisave/internal/client/target"
+	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
 
 // The community manifest splits Lisa across wiki pages that share one Steam
@@ -58,16 +60,29 @@ func TestEmbeddedManifestResolvesEveryPatchedSave(t *testing.T) {
 			// Steam nests the original game two levels beneath its install root.
 			saveFiles: []string{"Lisa_1/Lisa_1/Save01.lsd"},
 		},
+		{
+			name:    "Slay the Spire 2 Linux account folder",
+			patch:   "2868840-slay-the-spire-2.yaml",
+			steamID: "2868840",
+			hostOS:  saveprofile.OSLinux,
+			// The account folder's own files, not just profile1, as on macOS and Windows.
+			saveFiles: []string{
+				".local/share/SlayTheSpire2/steam/76561198000000000/profile.save",
+				".local/share/SlayTheSpire2/steam/76561198000000000/settings.save",
+			},
+		},
 	}
 
 	coveredPatches := make(map[string]bool, len(tests))
 	for _, test := range tests {
 		coveredPatches[test.patch] = true
 		t.Run(test.name, func(t *testing.T) {
-			installRoot := t.TempDir()
+			// One directory serves as both install root and home, so a patch
+			// may anchor its saves at either.
+			root := t.TempDir()
 			expected := make(map[string]bool, len(test.saveFiles))
 			for _, relativePath := range test.saveFiles {
-				path := filepath.Join(installRoot, filepath.FromSlash(relativePath))
+				path := filepath.Join(root, filepath.FromSlash(relativePath))
 				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 					t.Fatal(err)
 				}
@@ -80,11 +95,11 @@ func TestEmbeddedManifestResolvesEveryPatchedSave(t *testing.T) {
 			game := target.InstalledGame{
 				ID:          "steam:" + test.steamID,
 				TargetID:    "steam",
-				InstallRoot: installRoot,
+				InstallRoot: root,
 				Identity: target.GameIdentity{
 					Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: test.steamID}},
 				},
-				Environment: target.Environment{HostOS: test.hostOS, Runtime: target.RuntimeNative},
+				Environment: target.Environment{HostOS: test.hostOS, Runtime: target.RuntimeNative, Home: root},
 			}
 			profile, err := embedded.Provider().Find(context.Background(), game.Identity)
 			if err != nil {
@@ -130,6 +145,106 @@ func requireEveryPatchHasAResolutionStory(t *testing.T, covered map[string]bool)
 	for patch := range covered {
 		if !patches[patch] {
 			t.Errorf("resolution story references missing patch %s", patch)
+		}
+	}
+}
+
+// A revision minted on macOS names Slay the Spire 2's account folder as one
+// location, and a Linux save can only take it when the whole folder resolves
+// under one root too. Split across the upstream profile1 rule and the patched
+// account-folder rule, the alias would have no single root to land in.
+func TestEmbeddedManifestKeepsSlayTheSpire2LinuxSaveInOneLocation(t *testing.T) {
+	home := t.TempDir()
+	account := filepath.Join(home, ".local", "share", "SlayTheSpire2", "steam", "76561198000000000")
+	for _, relativePath := range []string{"profile.save", "settings.save", "profile1/saves/current_run.save"} {
+		path := filepath.Join(account, filepath.FromSlash(relativePath))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("save"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	game := target.InstalledGame{
+		ID:       "steam:deck:2868840",
+		TargetID: "steam:deck",
+		Identity: target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "2868840"}}},
+		Environment: target.Environment{
+			HostOS:  saveprofile.OSLinux,
+			Runtime: target.RuntimeNative,
+			Home:    home,
+		},
+	}
+	profile, err := embedded.Provider().Find(context.Background(), game.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves, err := saveprofile.Resolve(game, *profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saves) != 1 || len(saves[0].Files) != 3 {
+		t.Fatalf("expected one save holding all three files, got %+v", saves)
+	}
+	locations := map[string]bool{}
+	for _, file := range saves[0].Files {
+		locations[file.LocationID] = true
+	}
+	if len(locations) != 1 {
+		t.Fatalf("expected the save in one location, got %+v", saves[0].Files)
+	}
+}
+
+// Overlapping Linux rules must still let a fresh Device place a macOS
+// revision, including the account files outside profile1.
+func TestEmbeddedManifestPlacesSlayTheSpire2MacRevisionOnFreshLinux(t *testing.T) {
+	game := target.InstalledGame{
+		ID: "steam:2868840", TargetID: "steam",
+		Identity:    target.GameIdentity{Identifiers: []catalog.GameIdentifier{{Namespace: "steam.app", Value: "2868840"}}},
+		Environment: target.Environment{HostOS: saveprofile.OSMacOS, Runtime: target.RuntimeNative, Home: t.TempDir()},
+	}
+	profile, err := embedded.Provider().Find(context.Background(), game.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mac, err := saveprofile.ResolveDestinations(game, *profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mac) != 1 || len(mac[0].Locations) != 1 {
+		t.Fatalf("expected one macOS account location, got %+v", mac)
+	}
+	revision := omnisave.Revision{ID: "mac-revision"}
+	paths := []string{
+		"76561198000000000/profile.save",
+		"76561198000000000/settings.save",
+		"76561198000000000/profile1/saves/current_run.save",
+	}
+	for _, path := range paths {
+		revision.Files = append(revision.Files, omnisave.RevisionFile{Path: mac[0].Locations[0].ID + "/" + path})
+	}
+
+	game.Environment.HostOS = saveprofile.OSLinux
+	game.Environment.Home = t.TempDir()
+	linux, err := saveprofile.ResolveDestinations(game, *profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(linux) != 1 {
+		t.Fatalf("expected one Linux destination, got %+v", linux)
+	}
+	placed, err := binding.PlannedMaterialization(linux[0], revision)
+	if err != nil {
+		t.Fatalf("expected the macOS revision to fit fresh Linux, got %v", err)
+	}
+	if len(placed.Files) != len(paths) {
+		t.Fatalf("expected all account files to be placed, got %+v", placed.Files)
+	}
+	for i, path := range paths {
+		expected := filepath.Join(game.Environment.Home, ".local", "share", "SlayTheSpire2", "steam", filepath.FromSlash(path))
+		if placed.Files[i].Path != expected {
+			t.Fatalf("expected file at %q, got %+v", expected, placed.Files[i])
 		}
 	}
 }

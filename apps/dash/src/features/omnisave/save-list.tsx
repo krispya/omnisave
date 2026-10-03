@@ -1,6 +1,6 @@
 import type { Achievement, Omnisave, Revision } from '../../lib/omnisave-api.js';
 import { OptionsMenu } from '../../components/options-menu.js';
-import { defaultSaveName, displaySaveName } from './save-name.js';
+import { defaultSaveName, displaySaveName, saveScopeLabel } from './save-name.js';
 import { ForkIcon } from './fork-icon.js';
 import { formatDate } from '../../lib/format.js';
 import { RevisionLog, type RevisionFocus } from './revision-log.js';
@@ -146,6 +146,10 @@ export function SaveList({
                     <SaveNameEditor save={save} fallbackName={fallbackName} onSave={onRenameSave} />
                   </div>
                   <p className="mt-1 text-xs text-muted">
+                    <span title="The content protected by this save history">
+                      {saveScopeLabel(save)}
+                    </span>
+                    {' · '}
                     {save.current_revision_id
                       ? `Current from ${formatDate(save.current_revision_saved_at ?? save.current_revision_created_at)}`
                       : 'No revisions yet'}

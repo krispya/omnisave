@@ -18,7 +18,9 @@ type Presence struct {
 	deviceID  string
 	matchers  []running.Matcher
 	serverIDs map[string]string
-	titles    map[string]string
+	// titles are every report row a local game owns: the game itself and
+	// each of its save slots.
+	titles map[string][]string
 }
 
 // TrackedPresence builds presence for the tracked games in scans. It is built
@@ -28,7 +30,7 @@ func TrackedPresence(adapters Adapters, state *tracking.State, scans []client.Ta
 	presence := Presence{
 		deviceID:  state.Device.ID,
 		serverIDs: make(map[string]string),
-		titles:    make(map[string]string),
+		titles:    make(map[string][]string),
 	}
 	tracked := func(gameID string) bool {
 		_, ok := state.Games[gameID]
@@ -43,7 +45,11 @@ func TrackedPresence(adapters Adapters, state *tracking.State, scans []client.Ta
 				continue
 			}
 			presence.serverIDs[discovered.Game.ID] = state.Games[discovered.Game.ID].ServerGameID
-			presence.titles[discovered.Game.ID] = discovered.Game.Identity.DisplayTitle(discovered.Game.ID)
+			titles := []string{discovered.Game.Identity.DisplayTitle(discovered.Game.ID)}
+			for _, slot := range discovered.Slots.Found {
+				titles = append(titles, LocalSaveFrom(scan, discovered, slot.Save).DisplayTitle())
+			}
+			presence.titles[discovered.Game.ID] = titles
 		}
 	}
 	return presence
@@ -67,10 +73,17 @@ func (p Presence) Sweep(ctx context.Context, detector *running.Detector) (map[st
 	return detector.Playing(ctx, p.matchers...)
 }
 
-// Titles is a sweep's running games by display title, sorted for a stable
-// view.
+// Titles is a sweep's running games by every report row they own — the game
+// and each of its save slots — sorted for a stable view.
 func (p Presence) Titles(playing map[string]bool) []string {
-	return mapPlaying(p.titles, playing)
+	var titles []string
+	for localID, isPlaying := range playing {
+		if isPlaying {
+			titles = append(titles, p.titles[localID]...)
+		}
+	}
+	slices.Sort(titles)
+	return titles
 }
 
 // Report tells the server which tracked games this Device sees being played.

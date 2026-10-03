@@ -20,6 +20,16 @@ Domain rules have one implementation: domain tests run against the real SQLite a
 
 On the client, Save Sync is its own package (`client/savesync`) behind ports it defines: the server surface it calls, the adapters it consults, a reporter for what happened, and prompts for decisions only a person can make. The CLI supplies the implementations and presents the results.
 
+Save history owns its immutable portable scope contract. Client tracking owns
+native save slot selections and local bindings; those account and slot identities
+are not server history identity. The client game-save domain owns the extension
+contract and validates native ownership; per-game extensions supply membership
+rules and fixtures. Launcher adapters consume the resulting placement contracts
+and perform store operations; they do not interpret game schemas. The initial
+extension capability is read-only directory discovery, not arbitrary restoration
+code or a shared runtime with server revision labelers.
+See [ADR-021](ADR-021-independent-save-boundaries.md).
+
 ## Consequences
 
 Easier:

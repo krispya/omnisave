@@ -47,7 +47,7 @@ func (a *Adapter) FinishPlacement(ctx context.Context, discovered target.Target,
 	if run == nil {
 		run = execHelper
 	}
-	result, err := run(ctx, steamworks.Request{Library: library, AppID: appID, Files: files, Removed: evidence.Removed, Before: evidence.Before})
+	result, err := run(ctx, steamworks.Request{Scope: save.Cloud, Library: library, AppID: appID, Files: files, Removed: evidence.Removed, Before: evidence.Before})
 	if err != nil {
 		return target.PlacementReport{}, err
 	}
@@ -62,6 +62,11 @@ func (a *Adapter) FinishPlacement(ctx context.Context, discovered target.Target,
 		Deleted:      result.Deleted,
 		Extras:       result.Extras,
 		Skipped:      result.Skipped,
+	}
+	if save.Cloud != nil {
+		// Explicit eligibility means these files are deliberately local-only,
+		// not failed uploads. Their bytes remain part of the slot's snapshot.
+		report.Unregistered = nil
 	}
 	if len(result.Failed) > 0 {
 		report.Failed = make(map[string]string, len(result.Failed))

@@ -68,7 +68,7 @@ func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, 
 		return fmt.Errorf("apply needs a matched and a current revision")
 	}
 	stillMatches, err := FindContentMatches(save, []Lineage{{
-		Omnisave:  omnisave.Omnisave{ID: matched.OmnisaveID},
+		Omnisave:  omnisave.Omnisave{ID: matched.OmnisaveID, Scope: save.Scope},
 		Revisions: []omnisave.Revision{matched},
 	}})
 	if err != nil {
@@ -306,6 +306,7 @@ func Materialize(ctx context.Context, source ArtifactSource, destination target.
 		})
 	}
 	return target.Save{
+		Scope: destination.Scope, Slot: destination.Slot, Cloud: destination.Cloud,
 		ID: destination.ID, TargetID: destination.TargetID, GameID: destination.GameID,
 		Kind: destination.Kind, Files: files, Metadata: destination.Metadata,
 	}, nil
@@ -408,7 +409,7 @@ func PlannedMaterialization(destination target.SaveDestination, current omnisave
 	if err != nil {
 		return target.Save{}, err
 	}
-	save := target.Save{ID: destination.ID, TargetID: destination.TargetID, GameID: destination.GameID,
+	save := target.Save{Scope: destination.Scope, Slot: destination.Slot, Cloud: destination.Cloud, ID: destination.ID, TargetID: destination.TargetID, GameID: destination.GameID,
 		Kind: destination.Kind, Metadata: destination.Metadata, LocationAliases: destination.LocationAliases}
 	for _, file := range planned {
 		location, relative, _ := strings.Cut(file.revision.Path, "/")
@@ -448,15 +449,16 @@ func planMaterialization(destination target.SaveDestination, current omnisave.Re
 		aliases[alias] = true
 	}
 	currentLocation := singleLocation(current.Files)
+	aliasDestination, hasAliasDestination := singleDestinationRoot(destination.Locations)
 	// resolveLocation honors another OS's spelling of the destination's one
-	// location (FDR-003, decision 11); several locations leave nothing to
-	// say which one an alias means.
+	// root (FDR-003, decision 11). Repeated directory roots are unambiguous;
+	// each original location ID still resolves directly for older revisions.
 	resolveLocation := func(locationID string) (target.SaveLocation, bool, bool) {
 		if location, exists := locations[locationID]; exists {
 			return location, false, true
 		}
-		if locationID == currentLocation && aliases[locationID] && len(destination.Locations) == 1 {
-			return destination.Locations[0], true, true
+		if locationID == currentLocation && aliases[locationID] && hasAliasDestination {
+			return aliasDestination, true, true
 		}
 		return target.SaveLocation{}, false, false
 	}
@@ -493,6 +495,22 @@ func planMaterialization(destination target.SaveDestination, current omnisave.Re
 		planned = append(planned, plannedFile{revision: file, target: targetPath})
 	}
 	return planned, nil
+}
+
+// singleDestinationRoot accepts one location or several known directories
+// sharing the same root. File and unknown shapes cannot be merged safely.
+func singleDestinationRoot(locations []target.SaveLocation) (target.SaveLocation, bool) {
+	if len(locations) == 0 {
+		return target.SaveLocation{}, false
+	}
+	first := locations[0]
+	for _, location := range locations[1:] {
+		if first.Kind != target.SaveLocationDirectory || location.Kind != target.SaveLocationDirectory ||
+			filepath.Clean(first.Path) != filepath.Clean(location.Path) {
+			return target.SaveLocation{}, false
+		}
+	}
+	return first, true
 }
 
 func splitCanonicalPath(canonical string) (string, string, error) {

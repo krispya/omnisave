@@ -72,6 +72,8 @@ type Server struct {
 
 // LocalSave identifies one adapter-native save discovered on this machine.
 type LocalSave struct {
+	Scope     omnisave.SaveScope
+	Slot      string
 	ID        string
 	Adapter   string
 	TargetID  string
@@ -84,13 +86,15 @@ type LocalSave struct {
 
 // Binding maps one local save to one independently versioned Omnisave.
 type Binding struct {
-	Adapter              string     `json:"adapter"`
-	TargetID             string     `json:"target_id"`
-	LocalSaveID          string     `json:"local_save_id"`
-	LocalGameID          string     `json:"local_game_id"`
-	OmnisaveID           string     `json:"omnisave_id"`
-	LastSyncedRevisionID *string    `json:"last_synced_revision_id"`
-	LastSyncedAt         *time.Time `json:"last_synced_at,omitempty"`
+	Scope                omnisave.SaveScope `json:"scope"`
+	Slot                 string             `json:"slot,omitempty"`
+	Adapter              string             `json:"adapter"`
+	TargetID             string             `json:"target_id"`
+	LocalSaveID          string             `json:"local_save_id"`
+	LocalGameID          string             `json:"local_game_id"`
+	OmnisaveID           string             `json:"omnisave_id"`
+	LastSyncedRevisionID *string            `json:"last_synced_revision_id"`
+	LastSyncedAt         *time.Time         `json:"last_synced_at,omitempty"`
 	// LocalSignature summarizes the local save's files as they stood when a
 	// pass last proved them equal to LastSyncedRevisionID. It is a hint that
 	// lets a later pass skip reading a save nothing has touched; empty means
@@ -129,6 +133,7 @@ type PendingPlacement struct {
 
 // State contains this machine's tracked games and save bindings.
 type State struct {
+	SaveSelections    map[string]SaveSelection    `json:"save_selections,omitempty"`
 	Device            Device                      `json:"device"`
 	Server            Server                      `json:"server"`
 	Games             map[string]Game             `json:"games"`
@@ -339,6 +344,9 @@ func (s *State) ApplyVisible(visible []Game, selectedIDs []string) ([]Game, erro
 		}
 	}
 	s.Bindings = bindings
+	for _, game := range removed {
+		delete(s.SaveSelections, game.ID)
+	}
 	for key, pending := range s.PendingPlacements {
 		if _, wasVisible := available[pending.Save.GameID]; wasVisible && !selected[pending.Save.GameID] {
 			delete(s.PendingPlacements, key)
@@ -354,6 +362,7 @@ func (s *State) Untrack(gameID string) bool {
 		return false
 	}
 	delete(s.Games, gameID)
+	delete(s.SaveSelections, gameID)
 	for key, pending := range s.PendingPlacements {
 		if pending.Save.GameID == gameID {
 			delete(s.PendingPlacements, key)
@@ -374,12 +383,26 @@ func (s *State) Bind(local LocalSave, omnisaveID string) error {
 	if local.ID == "" || local.Adapter == "" || local.TargetID == "" || local.GameID == "" || omnisaveID == "" {
 		return fmt.Errorf("binding identities must not be empty")
 	}
+	if !local.Scope.Valid() {
+		return fmt.Errorf("invalid local save scope")
+	}
+	if selection, ok := s.SaveSelections[local.GameID]; ok {
+		if local.Scope != selection.scope() {
+			return fmt.Errorf("outside the chosen scope")
+		}
+	}
 	binding := Binding{
+		Scope: local.Scope, Slot: local.Slot,
 		Adapter:     local.Adapter,
 		TargetID:    local.TargetID,
 		LocalSaveID: local.ID,
 		LocalGameID: local.GameID,
 		OmnisaveID:  omnisaveID,
+	}
+	for _, existing := range s.Bindings {
+		if existing.LocalGameID == local.GameID && existing.TargetID == local.TargetID && existing.LocalSaveID != local.ID && (existing.Scope.Kind != local.Scope.Kind && (existing.Scope == (omnisave.SaveScope{}) || local.Scope == (omnisave.SaveScope{}))) {
+			return fmt.Errorf("scopes overlap")
+		}
 	}
 	for index := range s.Bindings {
 		if sameLocalSave(s.Bindings[index], binding) {
@@ -582,6 +605,14 @@ func (s *State) RecordAchievementsSeen(local LocalSave, through time.Time, ids [
 }
 
 func (s State) validateBindings() error {
+	for gameID, selection := range s.SaveSelections {
+		if _, tracked := s.Games[gameID]; !tracked {
+			return fmt.Errorf("game is not tracked")
+		}
+		if err := selection.validate(); err != nil {
+			return err
+		}
+	}
 	seen := make(map[string]bool, len(s.Bindings))
 	for _, binding := range s.Bindings {
 		if binding.Adapter == "" || binding.TargetID == "" || binding.LocalSaveID == "" ||
@@ -594,6 +625,17 @@ func (s State) validateBindings() error {
 		key := localSaveKey(binding)
 		if seen[key] {
 			return fmt.Errorf("duplicate binding for local save")
+		}
+		if !binding.Scope.Valid() {
+			return fmt.Errorf("invalid binding scope")
+		}
+		if selection, selected := s.SaveSelections[binding.LocalGameID]; selected && binding.Scope != selection.scope() {
+			return fmt.Errorf("binding outside the chosen scope")
+		}
+		for _, other := range s.Bindings {
+			if other.LocalGameID == binding.LocalGameID && other.TargetID == binding.TargetID && other.LocalSaveID != binding.LocalSaveID && (other.Scope.Kind != binding.Scope.Kind && (other.Scope == (omnisave.SaveScope{}) || binding.Scope == (omnisave.SaveScope{}))) {
+				return fmt.Errorf("overlapping save bindings")
+			}
 		}
 		seen[key] = true
 	}

@@ -49,7 +49,7 @@ func LocalSaveFrom(scan client.TargetScan, discovered client.GameScan, save targ
 		TargetID:  scan.Target.ID,
 		GameID:    discovered.Game.ID,
 		GameTitle: discovered.Game.Identity.DisplayTitle(discovered.Game.ID),
-		Kind:      save.Kind,
+		Kind:      save.Kind, Scope: save.Scope, Slot: save.Slot,
 		FileCount: len(save.Files),
 	}
 	for _, file := range save.Files {
@@ -62,6 +62,7 @@ func LocalSaveFrom(scan client.TargetScan, discovered client.GameScan, save targ
 // save's files and their parent directories, so a new file is noticed, and
 // every prospective save location, so a game's first save is noticed too.
 func WatchedFiles(state *tracking.State, scans []client.TargetScan) []string {
+	scans = SelectSaveScopes(state, scans)
 	paths := make(map[string]bool)
 	for _, scan := range scans {
 		for _, discovered := range scan.Games {

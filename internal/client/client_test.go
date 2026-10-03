@@ -734,3 +734,28 @@ func TestARefusedMirrorLocationIsNoAliasEither(t *testing.T) {
 		t.Fatalf("expected one refused location, got %+v", game.Profile)
 	}
 }
+
+func TestScannerOffersSlotsAlongsideTheWholeSave(t *testing.T) {
+	root := t.TempDir()
+	install := writeSteamApp(t, root, "2868840", "Slay the Spire 2", "STS2")
+	saveRoot := filepath.Join(install, "SlayTheSpire2", "steam", "100", "profile1", "saves")
+	if err := os.MkdirAll(saveRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(saveRoot, "progress.save"), []byte("progress"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := ludusavi.New([]byte("Slay the Spire 2:\n  files:\n    <base>/SlayTheSpire2/steam/<storeUserId>:\n      tags: [save]\n  steam:\n    id: 2868840\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := client.NewScanner(profiles, steamtarget.New(steamlocator.NewInstaller(root)))
+	scans, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	game := scans[0].Games[0]
+	if len(game.Saves) != 1 || len(game.Slots.Found) != 3 || game.Slots.Found[0].Save.Slot != "Profile 1" {
+		t.Fatal("scanner replaced whole-save discovery instead of offering explicit slot boundaries")
+	}
+}

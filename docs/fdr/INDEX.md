@@ -6,9 +6,9 @@ Feature Decision Records describe Omnisave's supported behavior and the feature-
 | --- | --- | --- | --- |
 | [FDR-001](FDR-001-game-identity-resolution.md) | Game Identity Resolution | Active | 2026-09-30 |
 | [FDR-002](FDR-002-game-lifecycle.md) | Game Lifecycle | Active | 2026-09-30 |
-| [FDR-003](FDR-003-automatic-save-binding.md) | Automatic Save Binding | Experimental | 2026-10-01 |
-| [FDR-005](FDR-005-save-sync.md) | Save Sync | Experimental | 2026-10-01 |
+| [FDR-003](FDR-003-automatic-save-binding.md) | Automatic Save Binding | Experimental | 2026-10-03 |
+| [FDR-005](FDR-005-save-sync.md) | Save Sync | Experimental | 2026-10-03 |
 | [FDR-006](FDR-006-connecting-a-device.md) | Connecting a Device | Experimental | 2026-09-30 |
 | [FDR-007](FDR-007-revision-labeling.md) | Revision Labeling | Experimental | 2026-09-30 |
-| [FDR-008](FDR-008-achievement-marks.md) | Achievement Marks | Experimental | 2026-09-30 |
+| [FDR-008](FDR-008-achievement-marks.md) | Achievement Marks | Experimental | 2026-10-03 |
 | [FDR-009](FDR-009-save-discovery-reporting.md) | Save Discovery Reporting | Experimental | 2026-09-30 |
