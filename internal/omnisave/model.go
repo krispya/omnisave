@@ -10,6 +10,7 @@ import (
 // Omnisave identifies one independently versioned game save. Path-format
 // versions and the retired-location vocabulary live in pathformat.go.
 type Omnisave struct {
+	Scope             SaveScope   `json:"scope"`
 	ID                string      `json:"id"`
 	GameID            string      `json:"game_id"`
 	DisplayName       string      `json:"display_name"`
@@ -103,6 +104,7 @@ type Artifact = artifact.Artifact
 
 // CreateOmnisave describes a new logical game save.
 type CreateOmnisave struct {
+	Scope       SaveScope         `json:"scope"`
 	GameID      string            `json:"game_id"`
 	DisplayName string            `json:"display_name"`
 	Metadata    map[string]string `json:"metadata,omitempty"`

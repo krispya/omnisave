@@ -137,14 +137,7 @@ func PlanReconciliation(registry []RegistryFile, placed, removed []string) (Plan
 		}
 		plan.Extras = append(plan.Extras, entry.Name)
 	}
-	sort.Slice(plan.Writes, func(left, right int) bool {
-		return plan.Writes[left].Name < plan.Writes[right].Name
-	})
-	sort.Strings(plan.Ineligible)
-	sort.Slice(plan.Deletes, func(left, right int) bool {
-		return plan.Deletes[left].Name < plan.Deletes[right].Name
-	})
-	sort.Strings(plan.Extras)
+	sortPlan(&plan)
 	return plan, true
 }
 
@@ -186,4 +179,15 @@ func precedentKey(name string) string {
 
 func toSlash(p string) string {
 	return strings.ReplaceAll(p, "\\", "/")
+}
+
+func sortPlan(plan *Plan) {
+	sort.Slice(plan.Writes, func(left, right int) bool {
+		return plan.Writes[left].Name < plan.Writes[right].Name
+	})
+	sort.Strings(plan.Ineligible)
+	sort.Slice(plan.Deletes, func(left, right int) bool {
+		return plan.Deletes[left].Name < plan.Deletes[right].Name
+	})
+	sort.Strings(plan.Extras)
 }

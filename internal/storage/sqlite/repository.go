@@ -153,6 +153,9 @@ func (r *Repository) deferDeletionCleanup(what string, cleanup func(ctx context.
 }
 
 func (r *Repository) InsertOmnisave(ctx context.Context, save omnisave.Omnisave) error {
+	if !save.Scope.Valid() {
+		return omnisave.ErrInvalid
+	}
 	r.mutate.Lock()
 	defer r.mutate.Unlock()
 	if err := r.requireStoreReady(); err != nil {
@@ -187,11 +190,11 @@ func (r *Repository) InsertOmnisave(ctx context.Context, save omnisave.Omnisave)
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO omnisaves(
 			id, game_id, display_name, path_format_version, current_revision_id,
-			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			forked_from_omnisave_id, forked_from_revision_id, created_at, metadata, scope
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		save.ID, save.GameID, save.DisplayName, save.PathFormatVersion, save.CurrentRevisionID,
 		forkOmnisaveID(save.ForkedFrom), forkRevisionID(save.ForkedFrom),
-		save.CreatedAt.Format(time.RFC3339Nano), string(metadata),
+		save.CreatedAt.Format(time.RFC3339Nano), string(metadata), encodeScope(save.Scope),
 	)
 	if err != nil {
 		return translateUniqueViolation(err, errIdentifierTaken)
@@ -220,7 +223,7 @@ func (r *Repository) ListOmnisaves(ctx context.Context) ([]omnisave.Omnisave, er
 				created_at
 			),
 			(SELECT saved_at FROM revisions WHERE id = omnisaves.current_revision_id),
-			metadata
+			metadata, scope
 		FROM omnisaves ORDER BY created_at, id`,
 	)
 	if err != nil {
@@ -254,7 +257,7 @@ func (r *Repository) GetOmnisave(ctx context.Context, id string) (*omnisave.Omni
 				created_at
 			),
 			(SELECT saved_at FROM revisions WHERE id = omnisaves.current_revision_id),
-			metadata
+			metadata, scope
 		FROM omnisaves WHERE id = ?`, id,
 	))
 	return save, translateNotFound(err, omnisave.ErrNotFound)
@@ -412,9 +415,13 @@ func (r *Repository) ForkOmnisave(ctx context.Context, save omnisave.Omnisave) e
 	defer tx.Rollback()
 	var sourceGameID string
 	var sourcePathFormat int
-	if err := tx.QueryRowContext(ctx, `SELECT game_id, path_format_version FROM omnisaves WHERE id = ?`,
-		save.ForkedFrom.OmnisaveID).Scan(&sourceGameID, &sourcePathFormat); err != nil {
+	var sourceScope string
+	if err := tx.QueryRowContext(ctx, `SELECT game_id, path_format_version, scope FROM omnisaves WHERE id = ?`,
+		save.ForkedFrom.OmnisaveID).Scan(&sourceGameID, &sourcePathFormat, &sourceScope); err != nil {
 		return translateNotFound(err, omnisave.ErrNotFound)
+	}
+	if err := json.Unmarshal([]byte(sourceScope), &save.Scope); err != nil {
+		return err
 	}
 	if sourcePathFormat != omnisave.PathFormatNative {
 		return omnisave.ErrPathFormatMigrationRequired
@@ -428,10 +435,10 @@ func (r *Repository) ForkOmnisave(ctx context.Context, save omnisave.Omnisave) e
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO omnisaves(
 		id, game_id, display_name, path_format_version, current_revision_id,
-		forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, save.ID, save.GameID, save.DisplayName,
+		forked_from_omnisave_id, forked_from_revision_id, created_at, metadata, scope
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, save.ID, save.GameID, save.DisplayName,
 		sourcePathFormat, save.CurrentRevisionID, forkOmnisaveID(save.ForkedFrom), forkRevisionID(save.ForkedFrom),
-		save.CreatedAt.Format(time.RFC3339Nano), string(saveMetadata)); err != nil {
+		save.CreatedAt.Format(time.RFC3339Nano), string(saveMetadata), encodeScope(save.Scope)); err != nil {
 		return translateUniqueViolation(err, errIdentifierTaken)
 	}
 	if err := r.enqueueOmnisaveProjection(ctx, tx, save.ID); err != nil {
@@ -1247,13 +1254,16 @@ type scanner interface {
 
 func scanOmnisave(row scanner) (*omnisave.Omnisave, error) {
 	var save omnisave.Omnisave
-	var createdAt, currentRevisionCreatedAt, latestRevisionCreatedAt, metadata string
+	var createdAt, currentRevisionCreatedAt, latestRevisionCreatedAt, metadata, scope string
 	var current, forkSave, forkRevision, currentRevisionSavedAt sql.NullString
 	if err := row.Scan(
 		&save.ID, &save.GameID, &save.DisplayName, &save.PathFormatVersion, &current,
 		&forkSave, &forkRevision, &createdAt, &currentRevisionCreatedAt,
-		&latestRevisionCreatedAt, &currentRevisionSavedAt, &metadata,
+		&latestRevisionCreatedAt, &currentRevisionSavedAt, &metadata, &scope,
 	); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(scope), &save.Scope); err != nil {
 		return nil, err
 	}
 	save.CurrentRevisionID = nullableStringPointer(current)
@@ -1358,3 +1368,9 @@ var (
 	_ access.Repository   = (*Repository)(nil)
 	_ settings.Repository = (*Repository)(nil)
 )
+
+// Scope contains only strings; encoding cannot fail.
+func encodeScope(scope omnisave.SaveScope) string {
+	b, _ := json.Marshal(scope)
+	return string(b)
+}

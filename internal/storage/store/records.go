@@ -67,11 +67,12 @@ type RevisionFile struct {
 
 // Omnisave records a lineage's mutable identity, labels, and current pointer.
 type Omnisave struct {
-	Kind        string `json:"kind"`
-	Version     int    `json:"version"`
-	ID          string `json:"id"`
-	GameID      string `json:"game_id"`
-	DisplayName string `json:"display_name"`
+	Scope       omnisave.SaveScope `json:"scope"`
+	Kind        string             `json:"kind"`
+	Version     int                `json:"version"`
+	ID          string             `json:"id"`
+	GameID      string             `json:"game_id"`
+	DisplayName string             `json:"display_name"`
 	// PathFormatVersion is the lineage's explicit location-vocabulary state.
 	// Zero is accepted only while importing records written before version 5.
 	PathFormatVersion int `json:"path_format_version,omitempty"`

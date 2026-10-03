@@ -82,6 +82,9 @@ func FindContentMatchesContext(ctx context.Context, save target.Save, lineages [
 func FindManifestMatches(manifest []omnisave.RevisionFile, save target.Save, lineages []Lineage) []ContentMatch {
 	var matches []ContentMatch
 	for _, lineage := range lineages {
+		if lineage.Omnisave.Scope != save.Scope {
+			continue
+		}
 		match := ContentMatch{Omnisave: lineage.Omnisave}
 		for _, revision := range lineage.Revisions {
 			if sameManifest(respellManifest(manifest, save.LocationAliases, revision.Files), revision.Files) {
@@ -224,7 +227,7 @@ func Seed(ctx context.Context, server Server, serverGameID string, save target.S
 	if err != nil {
 		return nil, nil, err
 	}
-	created, err := server.CreateOmnisave(ctx, omnisave.CreateOmnisave{GameID: serverGameID, DisplayName: displayName})
+	created, err := server.CreateOmnisave(ctx, omnisave.CreateOmnisave{GameID: serverGameID, DisplayName: displayName, Scope: save.Scope})
 	if err != nil {
 		return nil, nil, fmt.Errorf("create Omnisave: %w", err)
 	}

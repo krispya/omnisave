@@ -5,6 +5,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/krisbaumgartner/omnisave/internal/client/target"
 )
 
 // HelperCommand names the client's hidden subcommand that runs one
@@ -16,6 +18,8 @@ const HelperCommand = "steam-cloud-helper"
 // It is the wire format between the client and the helper process that
 // holds the Steamworks connection.
 type Request struct {
+	// Scope is trusted game-adapter knowledge, never inferred from a restore payload.
+	Scope *target.CloudScope `json:"scope,omitempty"`
 	// Library is the game's own Steamworks library.
 	Library string `json:"library"`
 	// AppID is the Steam application the placement belongs to.
@@ -67,6 +71,8 @@ type Result struct {
 // registry is the store connection a reconciliation drives. *Client
 // implements it; tests substitute their own.
 type registry interface {
+	// AccountID is private proof that a selected save slot belongs to this connection.
+	AccountID() (string, error)
 	Registry() []RegistryFile
 	Holds(name string, content []byte) bool
 	Digest(name string) (string, error)
@@ -83,7 +89,17 @@ type registry interface {
 // launch, and the game may act on it. Entries no removal vouches for are
 // reported as extras and left.
 func Reconcile(store registry, request Request) Result {
-	plan, anchored := PlanReconciliation(store.Registry(), request.Files, request.Removed)
+	var plan Plan
+	var anchored bool
+	if request.Scope != nil {
+		account, err := store.AccountID()
+		if err != nil || account != request.Scope.AccountID {
+			return Result{Skipped: "different or unavailable Steam account"}
+		}
+		plan, anchored = PlanScopedReconciliation(store.Registry(), request.Files, request.Removed, *request.Scope)
+	} else {
+		plan, anchored = PlanReconciliation(store.Registry(), request.Files, request.Removed)
+	}
 	if !anchored {
 		return Result{Skipped: "the registry's names prove no anchor among the placed files"}
 	}

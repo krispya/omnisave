@@ -674,3 +674,41 @@ func recordPath(t *testing.T, storeDir, kind, id string) string {
 	}
 	return found
 }
+
+func TestPortableRecoveryPreservesSlotScope(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	db := filepath.Join(directory, "index.db")
+	storeDir := filepath.Join(directory, "store")
+	repository, err := sqlite.Open(db, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlitetest.AddGame(t, repository, "sts2")
+	saves := omnisaveservice.New(repository)
+	scope := omnisave.SaveScope{Kind: omnisave.ScopeSlot, Adapter: "sts2.vanilla"}
+	slot, err := saves.Create(ctx, omnisave.CreateOmnisave{GameID: "sts2", Scope: scope})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Remove(db + suffix); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	repository, err = sqlite.Open(db, storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	recovered, err := repository.GetOmnisave(ctx, slot.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Scope != scope {
+		t.Fatal("database rebuild reinterpreted slot history as a whole save")
+	}
+}

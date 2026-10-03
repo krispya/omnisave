@@ -143,11 +143,10 @@ def _file_named(snapshot, filename, profile):
 def _active_profile(snapshot):
     """The profile directory the game last had open, as a path segment.
 
-    A revision carries the whole cloud save tree, so every profile is present
-    at once and none of them is distinguishable by recency — profile.save is
-    the game's own record of which one is live. When it is missing or
-    unreadable there is nothing to scope by, and the single-profile tree that
-    is the common case needs no scoping anyway.
+    A whole-save revision can carry every profile at once; profile.save is
+    the game's own record of which one is live. Independently bound profiles
+    omit that shared selector and need no further scoping. When the selector
+    is missing or unreadable there is nothing to scope by.
     """
     pointer = _file_named(snapshot, "profile.save", None)
     if not pointer:

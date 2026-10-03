@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"sort"
 	"time"
@@ -340,6 +341,9 @@ func nullableID(id string) any {
 }
 
 func (r *Repository) importOmnisave(ctx context.Context, record store.Omnisave) error {
+	if !record.Scope.Valid() {
+		return fmt.Errorf("invalid save scope in portable record")
+	}
 	metadata, err := json.Marshal(record.Metadata)
 	if err != nil {
 		return err
@@ -354,8 +358,8 @@ func (r *Repository) importOmnisave(ctx context.Context, record store.Omnisave) 
 	// a rebuild that stops early leaves lineages held, never misfiled.
 	_, err = r.db.ExecContext(ctx, `INSERT INTO omnisaves(
 		id, game_id, display_name, path_format_version, path_migrations, current_revision_id,
-		forked_from_omnisave_id, forked_from_revision_id, created_at, metadata
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		forked_from_omnisave_id, forked_from_revision_id, created_at, metadata, scope
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		game_id = excluded.game_id, display_name = excluded.display_name,
 		path_format_version = excluded.path_format_version,
@@ -363,10 +367,10 @@ func (r *Repository) importOmnisave(ctx context.Context, record store.Omnisave) 
 		current_revision_id = excluded.current_revision_id,
 		forked_from_omnisave_id = excluded.forked_from_omnisave_id,
 		forked_from_revision_id = excluded.forked_from_revision_id,
-		created_at = excluded.created_at, metadata = excluded.metadata`,
+		created_at = excluded.created_at, metadata = excluded.metadata, scope = excluded.scope`,
 		record.ID, record.GameID, record.DisplayName, record.PathFormatVersion, migrations,
 		record.CurrentRevisionID, forkOmnisaveID(record.ForkedFrom), forkRevisionID(record.ForkedFrom),
-		record.CreatedAt.Format(time.RFC3339Nano), string(metadata))
+		record.CreatedAt.Format(time.RFC3339Nano), string(metadata), encodeScope(record.Scope))
 	return err
 }
 

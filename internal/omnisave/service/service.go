@@ -57,7 +57,7 @@ func NewWithNamer(repository omnisave.Repository, namer RevisionNamer) omnisave.
 }
 
 func (s *service) Create(ctx context.Context, input omnisave.CreateOmnisave) (*omnisave.Omnisave, error) {
-	if input.GameID == "" {
+	if input.GameID == "" || !input.Scope.Valid() {
 		return nil, omnisave.ErrInvalid
 	}
 	displayName, valid := normalizeDisplayName(input.DisplayName)
@@ -79,6 +79,7 @@ func (s *service) Create(ctx context.Context, input omnisave.CreateOmnisave) (*o
 	}
 	now := time.Now().UTC()
 	save := omnisave.Omnisave{
+		Scope:                    input.Scope,
 		ID:                       uuid.NewString(),
 		GameID:                   input.GameID,
 		DisplayName:              displayName,
@@ -147,6 +148,7 @@ func (s *service) Fork(ctx context.Context, saveID string, input omnisave.ForkOm
 	}
 	now := time.Now().UTC()
 	fork := omnisave.Omnisave{
+		Scope:             source.Scope,
 		ID:                uuid.NewString(),
 		GameID:            source.GameID,
 		DisplayName:       displayName,

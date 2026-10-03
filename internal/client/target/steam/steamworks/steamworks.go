@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
@@ -19,6 +20,7 @@ import (
 // is why reconciliation runs in a dedicated helper process rather than in
 // the client that requested it.
 type Client struct {
+	handle   uintptr
 	shutdown func()
 	storage  uintptr
 
@@ -52,7 +54,7 @@ func Connect(libraryPath, appID string) (*Client, error) {
 	if err := initialize(handle); err != nil {
 		return nil, err
 	}
-	client := &Client{}
+	client := &Client{handle: handle}
 	if err := register(&client.shutdown, handle, "SteamAPI_Shutdown"); err != nil {
 		return nil, err
 	}
@@ -220,4 +222,33 @@ func cString(raw []byte) string {
 		raw = raw[:end]
 	}
 	return string(raw)
+}
+
+// AccountID identifies the connected Steam account for a private placement check.
+// The caller must never log it or publish it as save-history identity.
+func (c *Client) AccountID() (string, error) {
+	var userAccessor func() uintptr
+	found := false
+	for _, version := range []string{"SteamAPI_SteamUser_v023", "SteamAPI_SteamUser_v022", "SteamAPI_SteamUser_v021"} {
+		if err := register(&userAccessor, c.handle, version); err == nil {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return "", fmt.Errorf("Steam user interface unavailable")
+	}
+	user := userAccessor()
+	if user == 0 {
+		return "", fmt.Errorf("Steam account unavailable")
+	}
+	var getID func(uintptr) uint64
+	if err := register(&getID, c.handle, "SteamAPI_ISteamUser_GetSteamID"); err != nil {
+		return "", fmt.Errorf("Steam account lookup unavailable")
+	}
+	id := getID(user)
+	if id == 0 {
+		return "", fmt.Errorf("Steam account unavailable")
+	}
+	return strconv.FormatUint(id, 10), nil
 }
