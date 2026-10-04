@@ -52,6 +52,18 @@ can be restored coherently while preserving unrelated progress. The portable
 scope kind is the generic `slot`; the adapter ID carries the game-specific
 meaning, so renaming how a game labels its slots never splits history.
 
+**Game Save Adapters can name ignored files.** Capture still starts from
+everything in the boundary. An adapter may name files there that the game never
+reads back as save state: diagnostics, interrupted writes, set-aside corrupt
+files, or redundant copies. Sync never captures, restores, replaces, or deletes
+an ignored file, in a whole save or a slot, so each Device keeps its own. The
+rule lists exclusions rather than the files to keep, so a file a game update
+adds is still protected. A copy the game falls back to is not redundant: STS2
+loads `current_run.save.backup` when `current_run.save` is missing. Comparison
+and restore disregard ignored paths in revisions minted before a rule existed,
+so changing an adapter's ignored files keeps its older revisions matchable and
+restorable; the next commit drops them.
+
 **The first implementation supports separate files or directories.** Each
 supported slot must own a separable, coherent file set; separate files alone
 do not prove safe restoration. Packed character slots remain whole-save histories
@@ -61,9 +73,10 @@ below describe future support, not a requirement for the first implementation.
 **Per-game rules are sandboxed extensions, with their own fixtures.** Like
 revision labelers, save extensions register by game identifiers through embedded
 Starlark modules. The client-side game-save domain owns their contract and host
-validation; scanner and sync code contain no per-game branches. The initial
-extension capability describes complete independent directories and explicit
-cloud eligibility. Extensions receive read-only directory discovery within
+validation; scanner and sync code contain no per-game branches. The extension
+capability describes ignored files, complete independent directories, and
+explicit cloud eligibility; a game without slots may declare only ignored files.
+Extensions receive read-only directory discovery within
 resolved native roots, with bounded execution and no write or network access.
 The host rejects escaping paths, symlink components, and overlapping slots before
 returning usable saves. Script output and error payloads cannot expose native
@@ -160,7 +173,8 @@ Easier:
 - Games without specialized support retain broad backup coverage and their
   existing whole-save workflow.
 - A Game Save Adapter can keep device settings and incidental files outside
-  individual playthrough histories without changing the generic fallback.
+  individual playthrough histories without changing the generic fallback, and
+  can leave diagnostics and redundant copies out of any history.
 - Discovery can explain the included content, its ownership, and the supported
   restore scope instead of presenting every rule match as equally meaningful.
 - Directory profiles and packed character slots fit the same user-facing model
@@ -179,9 +193,12 @@ More difficult:
   whole-save binding is switched to independent slots.
 - Game- or account-wide achievements cannot be assigned to every independent
   slot without evidence identifying which slot earned them.
-- Whole-save snapshots deliberately include settings and incidental files;
-  their changes can create revisions or divergence and restoration replaces
-  them with the selected snapshot's versions.
+- Whole-save snapshots deliberately include settings and incidental files the
+  game's adapter does not ignore; their changes can create revisions or
+  divergence and restoration replaces them with the selected snapshot's
+  versions.
+- An ignored file is never restored, so ignoring one the game reads back loses
+  it. Each ignored file needs evidence that the game never loads it.
 - Files outside every slot, such as STS2's device settings and profile
   selector, are not backed up by default. Full coverage is the explicit
   whole-save choice.
@@ -207,9 +224,10 @@ Each STS2 profile is a save slot. The implemented native boundary is the entire
 selected `profileN/` directory under one account, for fixed slots 1–3. Revision paths are relative to that directory;
 the account and slot number belong to destination context. Include progress,
 preferences, single-player and multiplayer active runs when present, their
-backups, run history, and other regular files beneath that profile. Exclude the
-account-level `profile.save` selector, `settings.save`, and sibling profiles.
-Capture membership is broader than the game's cloud upload list.
+backups, run history, and other regular files beneath that profile, except the
+ignored files below. Exclude the account-level `profile.save` selector,
+`settings.save`, and sibling profiles. Capture membership is broader than the
+game's cloud upload list.
 
 Evidence from the installed build:
 
@@ -300,6 +318,31 @@ Steam with Profile 2 selected. Everything was rolled back afterwards.
   launch. The main menu loaded the restored run's character.
 - No profile, progress, run, or history file names a profile number or Steam
   account, so a history placed into another slot number loads as that slot.
+
+### STS2 ignored files, 2026-10-03
+
+A live Profile 1 held 455 files: 224 runs, 224 run backups, six top-level
+saves and backups, and one replay. The
+[public decompiled source](https://github.com/Hexpion/Slay-the-spire-2/tree/main/Slay%20the%20Spire%202/src/Core)
+shows which of them the game reads back.
+
+- Every write copies the file's previous content to `<name>.backup`, then
+  writes `<name>.tmp` and renames it into place (`GodotFileIo.WriteFile`).
+  Loading falls back to `<name>.backup` when `<name>` is missing or unreadable
+  (`MigrationManager.LoadSave`), and `current_run.save.backup` alone counts as
+  an active run (`RunSaveManager.HasRunSave`). Top-level backups therefore stay.
+- History lists skip `.backup` names (`LoadAllRunHistoryNames`), and the
+  stale-run check looks only for `<start>.run`. All 224 history backups matched
+  their runs byte for byte. They are ignored. A rewind that removes a run
+  leaves its backup on disk, where the game neither lists nor loads it.
+- `replays/latest.mcr` holds the last combat, rewritten after each one
+  (`RunManager.WriteReplay`). Outside a developer test scene it is only
+  collected into bug-report logs. It is ignored.
+- An interrupted write leaves `<name>.tmp`, which nothing reads. An unreadable
+  save is renamed to `<name>.<time>.<reason>.corrupt` and skipped
+  (`CorruptFileHandler`). Both are ignored.
+
+Ignoring these brings that profile to 230 files.
 
 ### Remaining game-level validation
 

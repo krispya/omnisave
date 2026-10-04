@@ -171,6 +171,7 @@ func (s *Scanner) scanAdapter(ctx context.Context, adapter target.Adapter) ([]Ta
 			slots := gamesave.Discovery{}
 			for _, saveAdapter := range s.saveAdapters {
 				if saveAdapter.Supports(game.Identity) {
+					saves, destinations = withoutIgnored(saves, destinations, saveAdapter.Ignored())
 					slots.Adapter = saveAdapter.ID()
 					slots.Found, slots.Err = saveAdapter.Discover(ctx, game, destinations)
 					break
@@ -357,6 +358,31 @@ func withoutAliases(aliases []string, refused map[string]bool) []string {
 // one to exist, so the same refusal covers destinations: a Device that has
 // never played a game is offered the game's own folder and never the
 // mirror (FDR-003).
+// withoutIgnored applies a game's ignored files to its whole saves and
+// destinations: saves leave those files out, a save holding nothing else is
+// no save, and placement into a destination skips them.
+func withoutIgnored(
+	saves []target.Save,
+	destinations []target.SaveDestination,
+	ignored target.IgnoredFiles,
+) ([]target.Save, []target.SaveDestination) {
+	if len(ignored) == 0 {
+		return saves, destinations
+	}
+	kept := make([]target.Save, 0, len(saves))
+	for _, save := range saves {
+		save.Ignored = ignored
+		save.Files = ignored.Without(save.Files)
+		if len(save.Files) > 0 {
+			kept = append(kept, save)
+		}
+	}
+	for index := range destinations {
+		destinations[index].Ignored = ignored
+	}
+	return kept, destinations
+}
+
 func refuseMirrorPaths(saves []target.Save, roots []string) ([]target.Save, map[string]bool) {
 	refused := make(map[string]bool)
 	kept := make([]target.Save, 0, len(saves))

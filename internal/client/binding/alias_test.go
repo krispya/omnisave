@@ -18,19 +18,19 @@ func TestManifestsMatchAcrossAliasedSpellings(t *testing.T) {
 	revision := omnisave.Revision{ID: "revision-1", Files: []omnisave.RevisionFile{
 		revisionFile("mac1/file0", "progress", "application/octet-stream"),
 	}}
-	if !binding.MatchesManifest(manifest, []string{"linux1", "mac1"}, revision) {
+	if !binding.MatchesManifest(manifest, target.Save{LocationAliases: []string{"linux1", "mac1"}}, revision) {
 		t.Fatal("expected the aliased spelling to match")
 	}
-	if binding.MatchesManifest(manifest, nil, revision) {
+	if binding.MatchesManifest(manifest, target.Save{}, revision) {
 		t.Fatal("expected a foreign spelling without aliases to stay unmatched")
 	}
-	if binding.MatchesManifest(manifest, []string{"windows1"}, revision) {
+	if binding.MatchesManifest(manifest, target.Save{LocationAliases: []string{"windows1"}}, revision) {
 		t.Fatal("expected an unrelated alias set to stay unmatched")
 	}
 	several := append([]omnisave.RevisionFile{
 		revisionFile("other/config.ini", "settings", "application/octet-stream"),
 	}, manifest...)
-	if binding.MatchesManifest(several, []string{"linux1", "mac1", "other"}, revision) {
+	if binding.MatchesManifest(several, target.Save{LocationAliases: []string{"linux1", "mac1", "other"}}, revision) {
 		t.Fatal("expected a several-location manifest to refuse translation")
 	}
 }

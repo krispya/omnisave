@@ -1,9 +1,11 @@
 # Game Save Adapters
 
-Save-location providers find whole native saves. A Game Save Adapter optionally
-interprets the save slots inside those locations: the profiles, characters, or
-slots a game keeps independently. Each adapter is a sandboxed Starlark extension. Revision labelers remain a separate server
-capability; save extensions run on the client.
+Save-location providers find whole native saves, and capture everything in them.
+A Game Save Adapter refines that for one game. It names the files sync ignores,
+and it can interpret the save slots inside those locations: the profiles,
+characters, or slots a game keeps independently. Each adapter is a sandboxed
+Starlark extension. Revision labelers remain a separate server capability; save
+extensions run on the client.
 
 To add support, add `builtin/<game>/rules.star` and `tests.json`. Both are discovered
 by their embedded globs: no scanner branch or per-game Go registration is needed.
@@ -13,7 +15,18 @@ Each Starlark module declares:
 
 - `ADAPTER_ID`: stable portable compatibility identity, such as `sts2.vanilla`.
 - `GAME_KEYS`: game identifiers in `namespace:value` form, as labelers use.
-- `discover(snapshot)`: returns the save slots on this target. Return an empty
+- `IGNORED` (optional): patterns for files the game never reads back as save
+  state, such as diagnostics, interrupted writes, or redundant copies. Sync
+  never captures, restores, replaces, or deletes them, in the whole save or a
+  slot. Each pattern uses Go `path.Match` syntax on `/`-separated paths and
+  matches the end of a path within its save location: `*.tmp` matches at any
+  depth, and `saves/history/*.run.backup` matches wherever that directory sits.
+  List only files with evidence that the game never loads them: a copy the game
+  falls back to, such as STS2's `current_run.save.backup`, is save state.
+  Revisions minted before a pattern existed still compare and restore without
+  the files it ignores.
+- `discover(snapshot)` (optional): returns the save slots on this target. Without
+  it, the game keeps its whole save. Return an empty
   list when the game has no slots here, including on a launcher the extension
   does not support; the client then tracks the whole save. Fail only when
   discovery could not finish: the client holds the game and reports it rather
@@ -40,7 +53,7 @@ Each returned dictionary describes one complete save slot directory:
 
 Paths use `/`. The host rejects absolute paths, traversal, symlink components,
 duplicate identities, and overlapping slots. It captures every regular file in
-the slot; scripts cannot selectively omit dependencies or recovery copies.
+the slot that `IGNORED` does not name.
 Cloud membership authorizes only eligible files within the slot. The launcher
 still verifies the connected account and preserved baseline before mutation.
 Binding and restore policy remain in their respective domains.
