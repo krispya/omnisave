@@ -126,3 +126,16 @@ func TestFinishPlacementReportsAMissingLibrary(t *testing.T) {
 		t.Fatal("expected an error when the game ships no steamworks library")
 	}
 }
+
+// The Steamworks library prints the signed-in Steam ID while it starts. A
+// helper failure reports its last line of stderr, which must never be that ID.
+func TestHelperFailuresNeverCarryTheSteamID(t *testing.T) {
+	stderr := "Setting breakpad minidump AppID = 2868840\n" +
+		"SteamInternal_SetMinidumpSteamID:  Caching Steam ID:  76561198000000000 [API loaded no]\n"
+	if tail := stderrTail(stderr); tail != "" {
+		t.Fatalf("expected the library's diagnostics to be skipped, got %q", tail)
+	}
+	if tail := stderrTail(stderr + "connect failed for 76561198000000000\n"); tail != ": connect failed for <account>" {
+		t.Fatalf("expected the ID masked, got %q", tail)
+	}
+}
