@@ -87,7 +87,7 @@ func FindManifestMatches(manifest []omnisave.RevisionFile, save target.Save, lin
 		}
 		match := ContentMatch{Omnisave: lineage.Omnisave}
 		for _, revision := range lineage.Revisions {
-			if sameManifest(respellManifest(manifest, save.LocationAliases, revision.Files), revision.Files) {
+			if MatchesManifest(manifest, save, revision) {
 				match.Revisions = append(match.Revisions, revision)
 			}
 		}
@@ -242,12 +242,31 @@ func Seed(ctx context.Context, server Server, serverGameID string, save target.S
 	return created, revision, nil
 }
 
-// MatchesManifest reports whether a local manifest equals a revision's files.
-// aliases are the identities the local save's location is also known under,
-// so a revision spelled by another OS's rule still compares (FDR-003,
-// decision 11); nil keeps the comparison strict.
-func MatchesManifest(manifest []omnisave.RevisionFile, aliases []string, revision omnisave.Revision) bool {
-	return sameManifest(respellManifest(manifest, aliases, revision.Files), revision.Files)
+// MatchesManifest reports whether save's local manifest equals a revision's
+// files, less those the save ignores. The save's location aliases are the
+// identities its location is also known under, so a revision spelled by
+// another OS's rule still compares (FDR-003, decision 11).
+func MatchesManifest(manifest []omnisave.RevisionFile, save target.Save, revision omnisave.Revision) bool {
+	files := Tracked(save.Ignored, revision).Files
+	return sameManifest(respellManifest(manifest, save.LocationAliases, files), files)
+}
+
+// Tracked returns revision without the files ignored names. A revision minted
+// before its game's adapter ignored a file still carries it; comparing and
+// restoring without it keeps that revision matchable and restorable, while
+// Push still drops the file from the next revision (ADR-021).
+func Tracked(ignored target.IgnoredFiles, revision omnisave.Revision) omnisave.Revision {
+	if len(ignored) == 0 {
+		return revision
+	}
+	files := make([]omnisave.RevisionFile, 0, len(revision.Files))
+	for _, file := range revision.Files {
+		if _, relative, _ := strings.Cut(file.Path, "/"); !ignored.Ignores(relative) {
+			files = append(files, file)
+		}
+	}
+	revision.Files = files
+	return revision
 }
 
 // Push commits the local save's current content as a new revision on top of

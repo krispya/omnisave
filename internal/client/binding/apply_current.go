@@ -67,6 +67,7 @@ func ApplyCurrent(ctx context.Context, source ArtifactSource, save target.Save, 
 	if matched.ID == "" || current.ID == "" {
 		return fmt.Errorf("apply needs a matched and a current revision")
 	}
+	matched, current = Tracked(save.Ignored, matched), Tracked(save.Ignored, current)
 	stillMatches, err := FindContentMatches(save, []Lineage{{
 		Omnisave:  omnisave.Omnisave{ID: matched.OmnisaveID, Scope: save.Scope},
 		Revisions: []omnisave.Revision{matched},
@@ -306,7 +307,7 @@ func Materialize(ctx context.Context, source ArtifactSource, destination target.
 		})
 	}
 	return target.Save{
-		Scope: destination.Scope, Slot: destination.Slot, Cloud: destination.Cloud,
+		Scope: destination.Scope, Slot: destination.Slot, Cloud: destination.Cloud, Ignored: destination.Ignored,
 		ID: destination.ID, TargetID: destination.TargetID, GameID: destination.GameID,
 		Kind: destination.Kind, Files: files, Metadata: destination.Metadata,
 	}, nil
@@ -319,6 +320,7 @@ func Materialize(ctx context.Context, source ArtifactSource, destination target.
 // a restored revision can carry files the local save had lost, and anything
 // acting on the placement (registering it with a store, say) must see them.
 func AppliedFiles(save target.Save, current omnisave.Revision) ([]target.File, error) {
+	current = Tracked(save.Ignored, current)
 	layout, err := describeLocalLayout(save)
 	if err != nil {
 		return nil, err
@@ -351,6 +353,7 @@ func AppliedFiles(save target.Save, current omnisave.Revision) ([]target.File, e
 // from history — which is what entitles anything acting on the placement to
 // also retire those files from a store's registry (FDR-005, decision 13).
 func RemovedFiles(save target.Save, current omnisave.Revision) ([]string, error) {
+	current = Tracked(save.Ignored, current)
 	layout, err := describeLocalLayout(save)
 	if err != nil {
 		return nil, err
@@ -380,6 +383,7 @@ func RemovedFiles(save target.Save, current omnisave.Revision) ([]string, error)
 // flow that ends in ApplyCurrent can refuse an impossible adoption before
 // spending a preservation or a prompt on it.
 func CanApply(save target.Save, current omnisave.Revision) error {
+	current = Tracked(save.Ignored, current)
 	if current.ID == "" || len(current.Files) == 0 {
 		return fmt.Errorf("apply needs a non-empty current revision")
 	}
@@ -409,7 +413,7 @@ func PlannedMaterialization(destination target.SaveDestination, current omnisave
 	if err != nil {
 		return target.Save{}, err
 	}
-	save := target.Save{Scope: destination.Scope, Slot: destination.Slot, Cloud: destination.Cloud, ID: destination.ID, TargetID: destination.TargetID, GameID: destination.GameID,
+	save := target.Save{Scope: destination.Scope, Slot: destination.Slot, Cloud: destination.Cloud, Ignored: destination.Ignored, ID: destination.ID, TargetID: destination.TargetID, GameID: destination.GameID,
 		Kind: destination.Kind, Metadata: destination.Metadata, LocationAliases: destination.LocationAliases}
 	for _, file := range planned {
 		location, relative, _ := strings.Cut(file.revision.Path, "/")
@@ -427,6 +431,7 @@ func CanMaterialize(destination target.SaveDestination, current omnisave.Revisio
 }
 
 func materializationPlan(destination target.SaveDestination, current omnisave.Revision) ([]plannedFile, error) {
+	current = Tracked(destination.Ignored, current)
 	if destination.ID == "" || destination.TargetID == "" || destination.GameID == "" || current.ID == "" || len(current.Files) == 0 {
 		return nil, fmt.Errorf("materialize needs a save destination and non-empty current")
 	}

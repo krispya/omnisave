@@ -1,7 +1,7 @@
 // Package gamesave owns the contract for Game Save Adapters: game-specific
-// knowledge of save slots: the profiles, characters, or slots a game keeps
-// independently. Location providers find whole saves; sandboxed extensions
-// interpret the save slots inside them.
+// knowledge of which files in a save sync ignores, and of save slots: the
+// profiles, characters, or slots a game keeps independently. Location
+// providers find whole saves; sandboxed extensions refine them.
 package gamesave
 
 import (
@@ -16,6 +16,9 @@ import (
 type Adapter interface {
 	ID() string
 	Supports(target.GameIdentity) bool
+	// Ignored names the files sync leaves out of this game's saves, whole or
+	// slot. Discovered slots already carry it.
+	Ignored() target.IgnoredFiles
 	Discover(context.Context, target.InstalledGame, []target.SaveDestination) ([]Slot, error)
 }
 

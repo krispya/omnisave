@@ -29,6 +29,26 @@
       ]
     },
     {
+      "name": "files the game never loads stay out of the profile",
+      "target": "steam:fixture",
+      "roots": ["[saves]/SlayTheSpire2/steam"],
+      "files": [
+        "[saves]/SlayTheSpire2/steam/100/profile1/saves/current_run.save",
+        "[saves]/SlayTheSpire2/steam/100/profile1/saves/current_run.save.backup",
+        "[saves]/SlayTheSpire2/steam/100/profile1/saves/current_run.save.tmp",
+        "[saves]/SlayTheSpire2/steam/100/profile1/saves/progress.1774755134.JSN.corrupt",
+        "[saves]/SlayTheSpire2/steam/100/profile1/saves/history/1774755134.run",
+        "[saves]/SlayTheSpire2/steam/100/profile1/saves/history/1774755134.run.backup",
+        "[saves]/SlayTheSpire2/steam/100/profile1/saves/history/1774826308.1774826400.JSN.corrupt",
+        "[saves]/SlayTheSpire2/steam/100/profile1/replays/latest.mcr"
+      ],
+      "slots": [
+        {"directory": "[saves]/SlayTheSpire2/steam/100/profile1", "label": "Profile 1", "files": ["saves/current_run.save", "saves/current_run.save.backup", "saves/history/1774755134.run"], "cloud_prefix": "profile1", "cloud_account": "100"},
+        {"directory": "[saves]/SlayTheSpire2/steam/100/profile2", "label": "Profile 2", "files": [], "cloud_prefix": "profile2", "cloud_account": "100"},
+        {"directory": "[saves]/SlayTheSpire2/steam/100/profile3", "label": "Profile 3", "files": [], "cloud_prefix": "profile3", "cloud_account": "100"}
+      ]
+    },
+    {
       "name": "empty profiles on multiple accounts stay distinct without account labels",
       "target": "steam:fixture",
       "roots": ["SlayTheSpire2/steam"],

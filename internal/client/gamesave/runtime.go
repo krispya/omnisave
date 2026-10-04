@@ -3,6 +3,7 @@ package gamesave
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 
@@ -20,8 +21,10 @@ const (
 
 // script is frozen at load; each discovery gets an isolated, bounded thread.
 type script struct {
-	id       string
-	keys     []string
+	id      string
+	keys    []string
+	ignored target.IgnoredFiles
+	// discover is nil for a game whose adapter only ignores files.
 	discover starlark.Callable
 }
 
@@ -54,15 +57,38 @@ func loadScript(source []byte) (*script, error) {
 			return nil, fmt.Errorf("save extension game key must be namespace:value")
 		}
 	}
+	ignored, err := ignoredPatterns(globals["IGNORED"])
+	if err != nil {
+		return nil, err
+	}
 	fn, ok := globals["discover"].(starlark.Callable)
-	if !ok {
-		return nil, fmt.Errorf("save extension needs discover(snapshot)")
+	if !ok && globals["discover"] != nil {
+		return nil, fmt.Errorf("save extension discover must be a function")
 	}
 	globals.Freeze()
-	return &script{id: id, keys: keys, discover: fn}, nil
+	return &script{id: id, keys: keys, ignored: ignored, discover: fn}, nil
 }
 
-func (s *script) ID() string { return s.id }
+// ignoredPatterns validates IGNORED: relative path.Match patterns that cannot
+// name anything outside a save location.
+func ignoredPatterns(value starlark.Value) (target.IgnoredFiles, error) {
+	if value == nil {
+		return nil, nil
+	}
+	patterns, err := stringList(value)
+	if err != nil {
+		return nil, fmt.Errorf("save extension IGNORED must be a string list")
+	}
+	for _, pattern := range patterns {
+		if _, err := path.Match(pattern, ""); err != nil || !relativePath(pattern, false) {
+			return nil, fmt.Errorf("save extension IGNORED patterns must be relative path patterns")
+		}
+	}
+	return patterns, nil
+}
+
+func (s *script) ID() string                   { return s.id }
+func (s *script) Ignored() target.IgnoredFiles { return s.ignored }
 func (s *script) Supports(identity target.GameIdentity) bool {
 	for _, identifier := range identity.Identifiers {
 		for _, key := range s.keys {
@@ -85,6 +111,9 @@ func (s *script) Discover(ctx context.Context, game target.InstalledGame, whole 
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("save extension discovery cancelled")
 	}
+	if s.discover == nil {
+		return nil, nil
+	}
 	snap := newDirectorySnapshot(ctx, game, whole)
 	t, stop := extensionThread(ctx)
 	defer stop()
@@ -100,7 +129,7 @@ func (s *script) Discover(ctx context.Context, game target.InstalledGame, whole 
 		return nil, fmt.Errorf("save extension must return a bounded list of save slots")
 	}
 	for i := 0; i < list.Len(); i++ {
-		slot, err := snap.materialize(s.id, list.Index(i))
+		slot, err := snap.materialize(s.id, s.ignored, list.Index(i))
 		if err != nil {
 			return nil, err
 		}

@@ -9,6 +9,7 @@ Save Sync keeps a bound Local Save and its omnisave aligned. Each pass compares 
 ## Behavior
 
 - Save slots synchronize only their selected native boundary. Restoring one preserves sibling slots and shared settings. STS2 runs, backups, and dependent history are restored together.
+- Files a Game Save Adapter ignores are never captured, restored, replaced, or deleted, in a whole save or a slot. Older revisions that still carry them compare and restore without them, and the next commit drops them.
 - Save slot cloud reconciliation preserves shared and sibling registry entries, uses game-provided eligibility for empty slots, matches registry names in any case, and verifies the connected account before mutation. Unknown cloud extras inside the selected slot keep restoration pending; deliberately local-only files remain in snapshots.
 - When local content, baseline, and Current Revision all agree, nothing changes.
 - When only local content moved, it commits as a new revision and becomes current. When only the Current Revision moved, it is applied locally and becomes the new baseline.

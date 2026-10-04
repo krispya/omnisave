@@ -85,6 +85,36 @@ func TestExtensionsCannotBypassNativeOwnership(t *testing.T) {
 	}
 }
 
+// A game without slots can still leave files out of its whole save.
+func TestAnExtensionCanOnlyIgnoreFiles(t *testing.T) {
+	bundle := fstest.MapFS{"rules.star": {Data: []byte(extensionHeader + `IGNORED = ["*.tmp", "logs/*.txt"]` + "\n")}}
+	adapters, err := gamesave.LoadExtensions(bundle, "rules.star")
+	if err != nil {
+		t.Fatal(err)
+	}
+	slots, err := adapters[0].Discover(context.Background(), target.InstalledGame{ID: "game"}, nil)
+	if err != nil || len(slots) != 0 {
+		t.Fatal("an extension without discover offered slots")
+	}
+	for relative, ignored := range map[string]bool{
+		"save.tmp": true, "nested/save.tmp": true, "logs/run.txt": true, "old/logs/run.txt": true,
+		"logs/nested/run.txt": false, "save.dat": false, "tmp": false,
+	} {
+		if adapters[0].Ignored().Ignores(relative) != ignored {
+			t.Fatalf("%s: ignored should be %v", relative, ignored)
+		}
+	}
+}
+
+func TestIgnoredPatternsCannotNameFilesOutsideTheSave(t *testing.T) {
+	for _, ignored := range []string{`["../outside"]`, `["/absolute"]`, `["[unclosed"]`, `["C:\\save"]`, `"*.tmp"`} {
+		bundle := fstest.MapFS{"rules.star": {Data: []byte(extensionHeader + "IGNORED = " + ignored + "\n")}}
+		if _, err := gamesave.LoadExtensions(bundle, "rules.star"); err == nil {
+			t.Fatalf("IGNORED = %s was accepted", ignored)
+		}
+	}
+}
+
 func TestConflictingExtensionsAreRejected(t *testing.T) {
 	content := []byte(extensionHeader + "def discover(snapshot):\n    return []\n")
 	bundle := fstest.MapFS{"one/rules.star": {Data: content}, "two/rules.star": {Data: []byte(strings.Replace(string(content), "fixture.slots", "fixture.other", 1))}}

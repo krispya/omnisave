@@ -3,6 +3,8 @@ package target
 
 import (
 	"context"
+	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -91,9 +93,12 @@ type Save struct {
 	// Scope identifies portable history compatibility; Slot names only
 	// this machine's save slot, such as "Profile 1", and is empty for a
 	// whole save. Neither is inferred from file names by sync.
-	Scope    omnisave.SaveScope
-	Slot     string
-	Cloud    *CloudScope
+	Scope omnisave.SaveScope
+	Slot  string
+	Cloud *CloudScope
+	// Ignored names files inside the boundary that Files leaves out and sync
+	// never touches. Revision files it names are disregarded too.
+	Ignored  IgnoredFiles
 	ID       string
 	TargetID string
 	GameID   string
@@ -106,6 +111,48 @@ type Save struct {
 	// the aliases are what let the two be recognized as the same place.
 	// Empty means the save's locations answer only to their own identities.
 	LocationAliases []string
+}
+
+// IgnoredFiles are a game's patterns for files inside its save boundary that
+// the game never reads back as save state, such as diagnostics or redundant
+// copies. Sync never captures, restores, replaces, or deletes them (ADR-021).
+// Each pattern uses path.Match syntax on slash-separated paths and matches the
+// end of a path within its save location, so "*.tmp" matches at any depth.
+type IgnoredFiles []string
+
+// Ignores reports whether relative, a slash-separated path within one save
+// location, names an ignored file.
+func (ignored IgnoredFiles) Ignores(relative string) bool {
+	segments := strings.Split(relative, "/")
+	for _, pattern := range ignored {
+		depth := strings.Count(pattern, "/") + 1
+		if depth > len(segments) {
+			continue
+		}
+		if matched, _ := path.Match(pattern, strings.Join(segments[len(segments)-depth:], "/")); matched {
+			return true
+		}
+	}
+	return false
+}
+
+// Without returns files less the ignored ones. A file that is its location's
+// whole path is matched by its name, as its revision path spells it.
+func (ignored IgnoredFiles) Without(files []File) []File {
+	if len(ignored) == 0 {
+		return files
+	}
+	kept := make([]File, 0, len(files))
+	for _, file := range files {
+		relative := filepath.ToSlash(file.RelativePath)
+		if relative == "" {
+			relative = filepath.Base(file.Path)
+		}
+		if !ignored.Ignores(relative) {
+			kept = append(kept, file)
+		}
+	}
+	return kept
 }
 
 // SaveLocationKind describes how revision paths map into a prospective
@@ -138,6 +185,8 @@ type SaveDestination struct {
 	Scope omnisave.SaveScope
 	Slot  string
 	Cloud *CloudScope
+	// Ignored mirrors Save.Ignored, so placement skips ignored revision files.
+	Ignored IgnoredFiles
 	// ID remains the Local Save identity after the current revision is materialized.
 	ID        string
 	TargetID  string
