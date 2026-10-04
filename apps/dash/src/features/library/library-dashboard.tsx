@@ -1,4 +1,4 @@
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useEffect, useMemo, useRef, useState } from 'react';
 import {
   deleteGame,
   deleteOmnisave,
@@ -22,14 +22,10 @@ import {
 import { buildLibrary } from './build-library.js';
 import { FixMatchDialog } from './fix-match-dialog.js';
 import { GameLibrary } from './game-library.js';
+import { deletionShown, withoutDeleted, type DeleteTarget } from './library-deletion.js';
 import { LibrarySortControl, sortLibrary, storedLibrarySort } from './library-sort.js';
 import { NowPlaying } from './now-playing.js';
 import type { LibraryResource, LibrarySnapshot } from './use-library.js';
-
-type DeleteTarget =
-  | { type: 'game'; game: GameSummary }
-  | { type: 'game-saves'; game: GameSummary }
-  | { type: 'save'; game: GameSummary; save: Omnisave; name: string };
 
 function upsertCatalogGame(catalog: CatalogGame[], game: CatalogGame) {
   return catalog.some((candidate) => candidate.id === game.id)
@@ -71,6 +67,8 @@ export function LibraryDashboard({
   const [revisionError, setRevisionError] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
   const [deleting, setDeleting] = useState(false);
+  // The server confirmed the deletion; the dialog waits for the Library to show it.
+  const [deleted, setDeleted] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [fixMatchTarget, setFixMatchTarget] = useState<GameSummary>();
   const [librarySort, setLibrarySort] = useState(storedLibrarySort);
@@ -88,6 +86,22 @@ export function LibraryDashboard({
   );
 
   useEffect(() => onSnapshot(snapshot), [onSnapshot, snapshot]);
+
+  // The Library on screen, which a confirmed deletion is removed from.
+  const shownSnapshot = useRef(snapshot);
+  useEffect(() => {
+    shownSnapshot.current = snapshot;
+  }, [snapshot]);
+
+  // A confirmed deletion closes its dialog only once the Library on screen no
+  // longer shows it, so the dialog and the list change together.
+  useEffect(() => {
+    if (deleted && deleteTarget && !deletionShown(snapshot, deleteTarget)) {
+      setDeleteTarget(undefined);
+      setDeleted(false);
+      setDeleting(false);
+    }
+  }, [deleted, deleteTarget, snapshot]);
 
   // History and revision-action errors belong to the selected save.
   useEffect(() => setRevisionError(''), [selectedSaveID]);
@@ -200,21 +214,13 @@ export function LibraryDashboard({
     try {
       if (deleteTarget.type === 'game') {
         await deleteGame(token, deleteTarget.game.id);
-        if (selectedGameID === deleteTarget.game.id) onCloseGame();
       } else {
         const savesToDelete =
           deleteTarget.type === 'game-saves' ? deleteTarget.game.saves : [deleteTarget.save];
         for (const save of savesToDelete) {
           await deleteOmnisave(token, save.id);
         }
-
-        if (deleteTarget.type === 'save' && selectedSaveID === deleteTarget.save.id) {
-          const nextSave = deleteTarget.game.saves.find((save) => save.id !== deleteTarget.save.id);
-          setSelectedSaveID(nextSave?.id ?? '');
-        }
       }
-      await onReload();
-      setDeleteTarget(undefined);
     } catch (deleteFailure) {
       setDeleteError(
         deleteFailure instanceof Error
@@ -225,9 +231,18 @@ export function LibraryDashboard({
               ? 'Could not delete these saves.'
               : 'Could not delete this save.'
       );
-    } finally {
       setDeleting(false);
+      return;
     }
+
+    if (deleteTarget.type === 'game' && selectedGameID === deleteTarget.game.id) onCloseGame();
+    if (deleteTarget.type === 'save' && selectedSaveID === deleteTarget.save.id) {
+      const nextSave = deleteTarget.game.saves.find((save) => save.id !== deleteTarget.save.id);
+      setSelectedSaveID(nextSave?.id ?? '');
+    }
+    // Shown now rather than after a reload; server events reconcile the rest.
+    setDeleted(true);
+    onReplace(withoutDeleted(shownSnapshot.current, deleteTarget));
   }
 
   const visibleError = error || snapshot.error;
