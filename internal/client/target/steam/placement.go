@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/krisbaumgartner/omnisave/internal/client/saveprofile/steamcloud"
@@ -109,15 +110,26 @@ func execHelper(ctx context.Context, request steamworks.Request) (steamworks.Res
 }
 
 // stderrTail keeps the last meaningful line of helper noise for an error.
+// The Steamworks library prints the signed-in account's Steam ID among its
+// startup diagnostics, so those lines are skipped and any number as long as a
+// Steam ID is masked: a helper failure never carries the account into a report.
 func stderrTail(raw string) string {
 	lines := strings.Split(strings.TrimSpace(raw), "\n")
 	for index := len(lines) - 1; index >= 0; index-- {
 		line := strings.TrimSpace(lines[index])
-		if line != "" && !strings.HasPrefix(line, "[S_API]") {
-			return ": " + line
+		if line != "" && !steamworksNoise(line) {
+			return ": " + steamIDLength.ReplaceAllString(line, "<account>")
 		}
 	}
 	return ""
+}
+
+var steamIDLength = regexp.MustCompile(`[0-9]{15,20}`)
+
+// steamworksNoise is the library's own startup chatter, such as
+// "SteamInternal_SetMinidumpSteamID: Caching Steam ID: …".
+func steamworksNoise(line string) bool {
+	return strings.HasPrefix(line, "[S_API]") || strings.Contains(line, "Minidump") || strings.Contains(line, "breakpad")
 }
 
 var _ target.PlacementFinisher = (*Adapter)(nil)
