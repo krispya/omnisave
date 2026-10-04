@@ -21,7 +21,8 @@ import (
 
 // directorySnapshot exposes opaque roots and read-only immediate directories.
 // Native absolute paths stay in the host; extensions receive no write, network,
-// import, or file-content capability. Capture always includes the complete slot.
+// import, or file-content capability. Capture includes the complete slot, less
+// the adapter's ignored files.
 type directorySnapshot struct {
 	ctx   context.Context
 	game  target.InstalledGame
@@ -101,7 +102,7 @@ func (s *directorySnapshot) directories(_ *starlark.Thread, _ *starlark.Builtin,
 	return starlark.NewList(names), nil
 }
 
-func (s *directorySnapshot) materialize(adapter string, value starlark.Value) (Slot, error) {
+func (s *directorySnapshot) materialize(adapter string, ignored target.IgnoredFiles, value starlark.Value) (Slot, error) {
 	slot := Slot{}
 	d, ok := value.(*starlark.Dict)
 	if !ok {
@@ -141,9 +142,9 @@ func (s *directorySnapshot) materialize(adapter string, value starlark.Value) (S
 	if err != nil {
 		return slot, err
 	}
-	slot.Destination = target.SaveDestination{ID: id, TargetID: s.game.TargetID, GameID: s.game.ID, Kind: "local", Scope: scope, Slot: label, Cloud: cloud,
+	slot.Destination = target.SaveDestination{ID: id, TargetID: s.game.TargetID, GameID: s.game.ID, Kind: "local", Scope: scope, Slot: label, Cloud: cloud, Ignored: ignored,
 		Locations: []target.SaveLocation{{ID: location, Path: native, Kind: target.SaveLocationDirectory}}}
-	slot.Save = target.Save{ID: id, TargetID: s.game.TargetID, GameID: s.game.ID, Kind: "local", Scope: scope, Slot: label, Cloud: cloud, Files: files}
+	slot.Save = target.Save{ID: id, TargetID: s.game.TargetID, GameID: s.game.ID, Kind: "local", Scope: scope, Slot: label, Cloud: cloud, Ignored: ignored, Files: ignored.Without(files)}
 	return slot, nil
 }
 

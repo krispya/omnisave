@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/krisbaumgartner/omnisave/internal/client/binding"
+	"github.com/krisbaumgartner/omnisave/internal/client/target"
 	"github.com/krisbaumgartner/omnisave/internal/client/tracking"
 	"github.com/krisbaumgartner/omnisave/internal/omnisave"
 )
@@ -62,7 +63,7 @@ func (r *reconciliation) syncBound(ctx context.Context, c candidate, bound track
 	d.baseline = &baseline
 
 	if current.ID == baseline.ID {
-		if binding.MatchesManifest(manifest, c.save.LocationAliases, baseline) {
+		if binding.MatchesManifest(manifest, c.save, baseline) {
 			// Proved equal the expensive way; remember how the files stood so
 			// the next pass can reach the same answer by looking at them.
 			r.state.RecordVerified(c.local, signature)
@@ -89,7 +90,7 @@ func (r *reconciliation) syncBound(ctx context.Context, c candidate, bound track
 	}
 
 	// The Current Revision moved away from the baseline.
-	if binding.MatchesManifest(manifest, c.save.LocationAliases, current) {
+	if binding.MatchesManifest(manifest, c.save, current) {
 		// Local already carries the Current Revision's content; only the baseline lags.
 		if err := r.state.RecordSynced(c.local, remoteSave.ID, current.ID); err != nil {
 			r.failed(title, err)
@@ -99,7 +100,7 @@ func (r *reconciliation) syncBound(ctx context.Context, c candidate, bound track
 		r.Report.SyncedWith(title, name, time.Now())
 		return nil
 	}
-	if binding.MatchesManifest(manifest, c.save.LocationAliases, baseline) {
+	if binding.MatchesManifest(manifest, c.save, baseline) {
 		if r.Gate.holdPull(c.local.GameID) {
 			// Defer pulls that a running game could overwrite from memory.
 			r.outcome.Deferred++
@@ -179,7 +180,7 @@ type divergence struct {
 // Omnisave (FDR-005, decision 4).
 func (r *reconciliation) resolveDivergence(ctx context.Context, c candidate, d divergence) error {
 	title, name := c.local.DisplayTitle(), omnisaveDisplayName(d.remoteSave)
-	d.matched, d.contentKnown = matchHistory(d.manifest, c.save.LocationAliases, d.history)
+	d.matched, d.contentKnown = matchHistory(d.manifest, c.save, d.history)
 	if d.contentKnown && d.matched.ID == d.current.ID {
 		// Only reachable without a baseline: the local content is the Current
 		// Revision, so nothing has diverged — the binding just never recorded
@@ -480,7 +481,7 @@ func (r *reconciliation) recordedPreservation(c candidate, d divergence) (earlie
 		r.state.ClearPendingPreservation(c.local)
 		return nil, nil, nil
 	}
-	if binding.MatchesManifest(d.manifest, c.save.LocationAliases, current) {
+	if binding.MatchesManifest(d.manifest, c.save, current) {
 		return &preservedProgress{omnisave: *recorded, revision: current}, nil, nil
 	}
 	if d.baseline != nil && current.ID == d.baseline.ID {
@@ -493,11 +494,11 @@ func (r *reconciliation) recordedPreservation(c candidate, d divergence) (earlie
 // matchHistory finds the newest revision whose content equals the local
 // manifest. Any hit means the server already holds this exact content, so
 // nothing needs preserving before this Device moves on.
-func matchHistory(manifest []omnisave.RevisionFile, aliases []string, history []omnisave.Revision) (omnisave.Revision, bool) {
+func matchHistory(manifest []omnisave.RevisionFile, save target.Save, history []omnisave.Revision) (omnisave.Revision, bool) {
 	var matched omnisave.Revision
 	found := false
 	for _, revision := range history {
-		if !binding.MatchesManifest(manifest, aliases, revision) {
+		if !binding.MatchesManifest(manifest, save, revision) {
 			continue
 		}
 		if !found || revision.CreatedAt.After(matched.CreatedAt) {

@@ -72,7 +72,7 @@ Infrastructure jargon. If only contributors say the word, it goes here.
 
 **Portable Store**. The tool-independent directory of artifacts, manifests, and records from which save history can be recovered without the server database. A committed deletion is recorded there as an immutable **deletion marker**, so restoring an older copy cannot undo it. See [ADR-012](adr/ADR-012-portable-save-store.md) and [ADR-014](adr/ADR-014-durable-proof-before-forgetting.md).
 
-**Adapter**. The Client's knowledge of one application, such as Steam or RetroArch: it finds that application's installations (**targets**), their games, and their Local Saves. A **Game Save Adapter** is the game-specific counterpart: a sandboxed client extension that finds a game's save slots inside its whole save. See [ADR-021](adr/ADR-021-independent-save-boundaries.md).
+**Adapter**. The Client's knowledge of one application, such as Steam or RetroArch: it finds that application's installations (**targets**), their games, and their Local Saves. A **Game Save Adapter** is the game-specific counterpart: a sandboxed client extension that finds a game's save slots inside its whole save and names its **ignored files**, which sync never captures, restores, or deletes. See [ADR-021](adr/ADR-021-independent-save-boundaries.md).
 
 **Save Profile**. Where one game keeps its saves, as path rules for each operating system and runtime they apply to. See [ADR-018](adr/ADR-018-embedded-save-profiles.md).
 

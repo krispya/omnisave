@@ -86,8 +86,8 @@ func (r *reconciliation) completePlacement(ctx context.Context, c candidate, p t
 	if err != nil {
 		return err
 	}
-	if !binding.MatchesManifest(manifest, c.save.LocationAliases, p.Current) {
-		if p.Before.ID == "" || !binding.MatchesManifest(manifest, c.save.LocationAliases, p.Before) {
+	if !binding.MatchesManifest(manifest, c.save, p.Current) {
+		if p.Before.ID == "" || !binding.MatchesManifest(manifest, c.save, p.Before) {
 			return errors.New("pending restore held: local files changed")
 		}
 		if err := binding.ApplyCurrent(ctx, r.Server, c.save, p.Before, p.Current); err != nil {
@@ -97,7 +97,7 @@ func (r *reconciliation) completePlacement(ctx context.Context, c candidate, p t
 			// land, store failures must keep the restore journal.
 			if p.BindingID == "" {
 				unchanged, checkErr := binding.ManifestContext(ctx, c.save)
-				if checkErr == nil && binding.MatchesManifest(unchanged, c.save.LocationAliases, p.Before) {
+				if checkErr == nil && binding.MatchesManifest(unchanged, c.save, p.Before) {
 					r.state.ClearPlacement(c.local)
 					if persistErr := r.checkpoint(); persistErr != nil {
 						r.state.RecordPlacement(c.local, p)
@@ -115,8 +115,9 @@ func (r *reconciliation) completePlacement(ctx context.Context, c candidate, p t
 		if err != nil {
 			return err
 		}
+		before := binding.Tracked(p.Save.Ignored, p.Before)
 		for index, file := range files {
-			evidence.Before[file.Path] = p.Before.Files[index].Artifact.SHA256
+			evidence.Before[file.Path] = before.Files[index].Artifact.SHA256
 		}
 	}
 	if err := c.finish(ctx, c.save, evidence); err != nil {

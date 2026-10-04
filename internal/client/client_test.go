@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
@@ -757,5 +758,40 @@ func TestScannerOffersSlotsAlongsideTheWholeSave(t *testing.T) {
 	game := scans[0].Games[0]
 	if len(game.Saves) != 1 || len(game.Slots.Found) != 3 || game.Slots.Found[0].Save.Slot != "Profile 1" {
 		t.Fatal("scanner replaced whole-save discovery instead of offering explicit slot boundaries")
+	}
+}
+
+func TestScannerLeavesIgnoredFilesOutOfTheWholeSave(t *testing.T) {
+	root := t.TempDir()
+	install := writeSteamApp(t, root, "2868840", "Slay the Spire 2", "STS2")
+	profile := filepath.Join(install, "SlayTheSpire2", "steam", "100", "profile1")
+	for _, name := range []string{"saves/progress.save", "saves/history/1.run", "saves/history/1.run.backup", "replays/latest.mcr"} {
+		native := filepath.Join(profile, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(native), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(native, []byte(name), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	profiles, err := ludusavi.New([]byte("Slay the Spire 2:\n  files:\n    <base>/SlayTheSpire2/steam/<storeUserId>:\n      tags: [save]\n  steam:\n    id: 2868840\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scans, err := client.NewScanner(profiles, steamtarget.New(steamlocator.NewInstaller(root))).Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	game := scans[0].Games[0]
+	var captured []string
+	for _, file := range game.Saves[0].Files {
+		captured = append(captured, filepath.ToSlash(file.RelativePath))
+	}
+	slices.Sort(captured)
+	if !slices.Equal(captured, []string{"100/profile1/saves/history/1.run", "100/profile1/saves/progress.save"}) {
+		t.Fatalf("whole save captured %v", captured)
+	}
+	if len(game.Saves[0].Ignored) == 0 || len(game.Destinations[0].Ignored) == 0 {
+		t.Fatal("the whole save and its destination do not carry the ignored files")
 	}
 }

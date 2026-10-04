@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/krisbaumgartner/omnisave/internal/catalog"
@@ -96,6 +97,59 @@ func (f *slotFixture) scan(t *testing.T) []client.TargetScan {
 		}
 	}
 	t.Fatal("fixture game has no extension")
+	return nil
+}
+
+// scanBeforeIgnoring discovers the slots as a client from before the adapter
+// ignored files did: every file in each profile is captured.
+func (f *slotFixture) scanBeforeIgnoring(t *testing.T) []client.TargetScan {
+	t.Helper()
+	scans := f.scan(t)
+	for index, slot := range scans[0].Games[0].Slots.Found {
+		location := slot.Destination.Locations[0]
+		files, err := gamesave.DirectoryFiles(context.Background(), location.Path, location.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		slot.Save.Files, slot.Save.Ignored, slot.Destination.Ignored = files, nil, nil
+		scans[0].Games[0].Slots.Found[index] = slot
+	}
+	return scans
+}
+
+func (f *slotFixture) exists(name string) bool {
+	_, err := os.Stat(filepath.Join(f.root, name))
+	return err == nil
+}
+
+// rewind makes an earlier revision current, as restoring it from Dash does.
+func (f *slotFixture) rewind(t *testing.T, omnisaveID, current, earlier string) {
+	t.Helper()
+	if _, err := f.server.RestoreCurrentRevision(context.Background(), omnisaveID, omnisave.RestoreRevision{ExpectedCurrentRevisionID: &current, RevisionID: earlier}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// revisionPaths lists a revision's files by their path within the slot.
+func (f *slotFixture) revisionPaths(t *testing.T, omnisaveID, revisionID string) []string {
+	t.Helper()
+	revisions, err := f.server.ListRevisions(context.Background(), omnisaveID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, revision := range revisions {
+		if revision.ID != revisionID {
+			continue
+		}
+		var paths []string
+		for _, file := range revision.Files {
+			_, relative, _ := strings.Cut(file.Path, "/")
+			paths = append(paths, relative)
+		}
+		slices.Sort(paths)
+		return paths
+	}
+	t.Fatal("revision not found")
 	return nil
 }
 
@@ -224,6 +278,58 @@ func TestSlotRewindRestoresRunAndBackupWithoutTouchingSiblings(t *testing.T) {
 		if f.read(t, name) != content {
 			t.Fatal("rewind touched unrelated content")
 		}
+	}
+}
+
+// Files the game never loads stay on this Device: they never reach a
+// revision, and a rewind neither restores nor removes them.
+func TestIgnoredFilesStayOutOfHistoryAndSurviveRewind(t *testing.T) {
+	f := newSlotFixture(t)
+	f.track(t)
+	bound := f.bindingFor(t, "Profile 1")
+	before := *bound.LastSyncedRevisionID
+	f.write(t, "profile1/saves/history/1.run", "finished run")
+	f.write(t, "profile1/saves/history/1.run.backup", "finished run")
+	f.write(t, "profile1/replays/latest.mcr", "replay")
+	f.sync(t, f.scan(t), savesync.Prompts{})
+	current := *f.bindingFor(t, "Profile 1").LastSyncedRevisionID
+	if paths := f.revisionPaths(t, bound.OmnisaveID, current); !slices.Equal(paths, []string{"saves/current_run.save", "saves/current_run.save.backup", "saves/history/1.run", "saves/progress.save"}) {
+		t.Fatalf("revision holds %v", paths)
+	}
+	f.rewind(t, bound.OmnisaveID, current, before)
+	outcome, _ := f.sync(t, f.scan(t), savesync.Prompts{})
+	if outcome.Pulled != 1 || f.exists("profile1/saves/history/1.run") {
+		t.Fatal("rewind did not remove the newer run")
+	}
+	if f.read(t, "profile1/saves/history/1.run.backup") != "finished run" || f.read(t, "profile1/replays/latest.mcr") != "replay" {
+		t.Fatal("rewind touched ignored files")
+	}
+}
+
+// A revision minted before the adapter ignored a file still carries it. The
+// next commit drops it, and the older revision still restores over the copy
+// this Device kept.
+func TestARevisionFromBeforeAFileWasIgnoredStillRestores(t *testing.T) {
+	f := newSlotFixture(t)
+	f.write(t, "profile1/saves/history/1.run", "first run")
+	f.write(t, "profile1/saves/history/1.run.backup", "first run")
+	f.sync(t, f.scanBeforeIgnoring(t), savesync.Prompts{})
+	bound := f.bindingFor(t, "Profile 1")
+	before := *bound.LastSyncedRevisionID
+	f.write(t, "profile1/saves/history/2.run", "second run")
+	f.write(t, "profile1/saves/history/2.run.backup", "second run")
+	f.sync(t, f.scan(t), savesync.Prompts{})
+	current := *f.bindingFor(t, "Profile 1").LastSyncedRevisionID
+	if slices.Contains(f.revisionPaths(t, bound.OmnisaveID, current), "saves/history/1.run.backup") {
+		t.Fatal("the next commit kept an ignored file")
+	}
+	f.rewind(t, bound.OmnisaveID, current, before)
+	outcome, _ := f.sync(t, f.scan(t), savesync.Prompts{})
+	if outcome.Pulled != 1 || f.exists("profile1/saves/history/2.run") {
+		t.Fatal("the older revision did not restore")
+	}
+	if f.read(t, "profile1/saves/history/1.run.backup") != "first run" || f.read(t, "profile1/saves/history/2.run.backup") != "second run" {
+		t.Fatal("restore touched ignored files")
 	}
 }
 

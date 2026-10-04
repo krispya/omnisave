@@ -2,6 +2,18 @@
 ADAPTER_ID = "sts2.vanilla"
 GAME_KEYS = ["steam.app:2868840"]
 
+# Files the game never loads (ADR-021). Top-level *.save.backup files stay:
+# the game falls back to them when a save is missing or unreadable.
+IGNORED = [
+    # History lists skip run backups; each repeats its finished run.
+    "saves/history/*.run.backup",
+    # The last combat's replay, read only into bug reports.
+    "replays/latest.mcr",
+    # Interrupted writes and unreadable saves the game has set aside.
+    "*.tmp",
+    "*.corrupt",
+]
+
 def discover(snapshot):
     # Only Steam is verified; other launchers keep the whole save.
     if snapshot.target != "steam":
