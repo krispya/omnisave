@@ -1,7 +1,7 @@
 # ADR-021: Track Save Slots Through Game Save Adapters, and Whole Saves Otherwise
 
 **Date:** 2026-10-01
-**Status:** Accepted for separate-file boundaries; initial STS2 support is experimental. Because slots are the default, its remaining game-level validation must pass before release.
+**Status:** Accepted for separate-file boundaries. STS2 restores were validated in the game on 2026-10-03; resuming a restored run and rewinding with Steam Cloud remain experimental.
 
 ## Context
 
@@ -197,7 +197,7 @@ More difficult:
 ### Slay the Spire 2 investigation, 2026-10-01
 
 **Result: implemented experimental support for independent vanilla profiles,
-with game-level restore validation still pending.** The inspected installed macOS arm64 build
+validated in the game on 2026-10-03 (below).** The inspected installed macOS arm64 build
 reports `v0.107.1`. Live saves, the installed assembly, and Steam's local cached
 registry were inspected read-only. No game was launched and no live save or cloud
 entry was changed. Public decompiled source corroborates the findings, but differs
@@ -279,22 +279,33 @@ Device-local slot number.
 Initial support is vanilla STS2 through Steam. Account directories must already
 be known from the native save tree; without one, the client cannot safely offer
 independent destinations. Modded namespaces and cross-account multiplayer
-ownership are not supported. Profile paths support explicit slot placement, but
-actual game acceptance of movement between slots remains unverified. Changing
+ownership are not supported. Profile paths support explicit slot placement, and
+the game loads a history placed into another slot number (validated below). Changing
 scope retires incompatible local mappings and leaves their server histories
 available; it does not convert aggregate history into slot history.
 
+### Live validation, 2026-10-03
+
+The current build placed a Profile 1 history into empty Profile 2 on a real
+macOS installation with Steam Cloud enabled, then launched the game through
+Steam with Profile 2 selected. Everything was rolled back afterwards.
+
+- Omnisave verified the connected Steam account through the game's Steamworks
+  library and registered 227 eligible files under `profile2/`; no other cloud
+  entry changed.
+- The game's startup sync deleted nothing. It copied each registered file down
+  once, because its cloud timestamp was newer, with identical bytes.
+- The game opened `profile2` and parsed the restored progress without
+  replacing it. Its only warnings were the four Profile 1 produces on every
+  launch. The main menu loaded the restored run's character.
+- No profile, progress, run, or history file names a profile number or Steam
+  account, so a history placed into another slot number loads as that slot.
+
 ### Remaining game-level validation
 
-- Restore into an isolated empty STS2 slot and verify the game's displayed
-  progress, active-run loading, and profile selection behavior.
-- Verify the same workflow with Steam Cloud enabled, including restart and
-  cloud reconciliation, without changing sibling profiles or device settings.
-- Verify game acceptance of placement into another slot number before treating
-  it as stable support. Cross-account co-op and mods need their own verification.
-- Verify placement into another Steam account's slot. Nothing prevents it yet,
-  and the history carries no account context to refuse it with.
-- Verify the connected-account check against the Steamworks library STS2
-  ships; an unsupported user interface version leaves restores pending.
+- Resume the restored active run through Continue.
+- Rewind an occupied slot with Steam Cloud enabled, including the deletion of
+  newer run history from the cloud, and restart.
+- Cross-account co-op and mods need their own verification.
 - Future packed-slot support requires a verified container reader and writer;
   Dark Souls currently retains whole-save histories.
