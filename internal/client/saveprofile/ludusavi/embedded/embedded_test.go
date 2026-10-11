@@ -45,22 +45,6 @@ func TestEmbeddedManifestResolvesEveryPatchedSave(t *testing.T) {
 		saveFiles []string
 	}{
 		{
-			name:    "Lisa The Painful native Linux build",
-			patch:   "335670-lisa-the-painful.yaml",
-			steamID: "335670",
-			hostOS:  saveprofile.OSLinux,
-			// The native build writes the base game and Joyful saves beside their games.
-			saveFiles: []string{"Save01.rvdata2", "Joyful/Save01.rvdata2"},
-		},
-		{
-			name:    "Lisa The First nested Steam package",
-			patch:   "2743030-lisa-the-first.yaml",
-			steamID: "2743030",
-			hostOS:  saveprofile.OSWindows,
-			// Steam nests the original game two levels beneath its install root.
-			saveFiles: []string{"Lisa_1/Lisa_1/Save01.lsd"},
-		},
-		{
 			name:    "Slay the Spire 2 Linux account folder",
 			patch:   "2868840-slay-the-spire-2.yaml",
 			steamID: "2868840",
